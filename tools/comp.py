@@ -1468,8 +1468,8 @@ def run_comparison():
         if png_files:
             total_size_before = sum(f.stat().st_size for f in png_files)
 
-            # Detect CPU threads for parallel execution
-            oxipng_workers = psutil.cpu_count(logical=True)
+            # Detect CPU threads for parallel execution, using half of available
+            oxipng_workers = max(1, psutil.cpu_count(logical=True) // 2)
 
             def optimize_worker(file_path):
                 subprocess.run(

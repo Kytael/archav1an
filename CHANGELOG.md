@@ -13,6 +13,7 @@ All notable changes to the Linux Port of Auto-Boost-Av1an will be documented in 
 - **Granular Control**: Install specific components (e.g., just `svt-av1` or `oxipng`) without running the full suite.
 
 ### Changed
+- **Optimization**: Updated `tools/comp.py` to limit `oxipng` to 50% of CPU threads (matching Windows behavior) to prevent system overload.
 - **Robustness**: Added strict error handling to all build steps; dependencies now stop immediately on failure.
 - **Structure**: Split installation logic into `setup/` directory.
 
