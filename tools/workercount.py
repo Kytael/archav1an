@@ -66,9 +66,10 @@ def get_optimal_workers():
         "-y",
         "--workers", "1",
         "--verbose",
-        "-e", "svt-av1", 
-        "-v", " --preset 6 --crf 30", 
-        "--set-thread-affinity", "2"
+        "-e", "svt-av1",
+        "-m", "bestsource",
+        "--cache-mode", "temp",
+        "-v", " --preset 4 --crf 30 --lp 3",
     ]
 
     try:
@@ -132,13 +133,25 @@ def get_optimal_workers():
     # Calculate Max Workers by CPU (Threads / 3 for --lp 3 optimization)
     max_workers_cpu = int(cpu_threads / 3)
 
-    # The final count is the bottleneck of the two
-    final_workers = max(1, min(max_workers_ram, max_workers_cpu))
+    # Determine raw worker count (bottleneck of RAM and CPU)
+    raw_worker_count = min(max_workers_ram, max_workers_cpu)
+
+    # High-spec detection: >6 physical cores AND >20GB RAM
+    # High-spec machines can handle the full count without the -1 safety margin
+    ram_threshold_bytes = 20 * (1024 ** 3)
+    physical_cores = psutil.cpu_count(logical=False) or cpu_threads
+
+    if physical_cores > 6 and total_ram > ram_threshold_bytes:
+        final_workers = max(1, raw_worker_count)
+        print(f"   - High Spec detected ({physical_cores} physical cores, >{ram_threshold_bytes // (1024**3)}GB RAM). Using full count.")
+    else:
+        final_workers = max(1, raw_worker_count - 1)
+        print(f"   - Standard Spec. Reducing worker count by 1 for stability.")
 
     print("\n------------------------------------------------")
     print(f"   - Total System RAM: {total_ram // (1024**2)} MB")
     print(f"   - Peak RAM (1 Worker): {max_total_rss // (1024**2)} MB")
-    print(f"   - CPU Threads: {cpu_threads}")
+    print(f"   - CPU Threads: {cpu_threads} ({physical_cores} physical)")
     print(f"   - Calculated Optimal Workers: {final_workers}")
     print("------------------------------------------------")
     
@@ -158,7 +171,7 @@ if __name__ == "__main__":
     try:
         with open(CONFIG_FILE, "w") as f:
             f.write(f"workers={workers}\n")
-        print("\nOne-time test complete. Auto worker count set, please run .bat file again.")
-        print("You may manually edit tools\\workercount-config.txt if needed")
+        print("\nOne-time test complete. Auto worker count set, please run the script again.")
+        print("You may manually edit tools/workercount-config.txt if needed")
     except Exception as e:
         print(f"Error writing config file: {e}")

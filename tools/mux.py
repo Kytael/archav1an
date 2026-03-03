@@ -168,6 +168,8 @@ def mux_files():
         # Check for matching source file in Input folder
         possible_sources = [
             os.path.join(input_dir, f"{base_name}.mkv"),
+            os.path.join(input_dir, f"{base_name}.mp4"),
+            os.path.join(input_dir, f"{base_name}.m2ts"),
             os.path.join(input_dir, f"{base_name}-source.mkv"),
         ]
         source_mkv = None
@@ -254,11 +256,20 @@ def mux_files():
                     f"[{base_name}] Step {current_step}/{total_steps} (VFR Fix)",
                 )
 
-            # Cleanup
+            # Cleanup temp mux files
             if os.path.exists(temp_mkv):
                 os.remove(temp_mkv)
             if os.path.exists(timestamp_file):
                 os.remove(timestamp_file)
+
+            # Delete intermediate AV1 file after successful mux (mirrors Windows behavior)
+            if os.path.exists(final_output) and os.path.exists(av1_file):
+                print(f"[{base_name}] Deleting intermediate AV1 file...")
+                try:
+                    os.remove(av1_file)
+                    print(f"[{base_name}] Deleted: {os.path.basename(av1_file)}")
+                except OSError as e:
+                    print(f"[{base_name}] [WARN] Could not delete intermediate file: {e}")
 
         except subprocess.CalledProcessError:
             print(f"\n[FAIL] Could not process {base_name}. Skipping.")
