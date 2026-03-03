@@ -46,7 +46,11 @@ import sys
 import gc
 import os
 import re
-import wakepy
+try:
+    import wakepy
+    _wakepy_available = True
+except ImportError:
+    _wakepy_available = False
 import json
 import csv
 import numpy as np
@@ -326,7 +330,18 @@ verbose = args.verbose
 resume = args.resume
 no_boosting = args.no_boosting
 convert_yuv420p10 = args.convert_to_YUV420P10
-av1an_workers = args.workers
+# Worker Logic — mirror Windows behavior
+# The .sh scripts always pass --workers $WORKER_COUNT, so we use it for both passes.
+av1an_workers_arg = args.workers
+if int(av1an_workers_arg) > 1:
+    fast_pass_workers = av1an_workers_arg
+    final_pass_workers = av1an_workers_arg
+    workers_specified = True
+else:
+    fast_pass_workers = av1an_workers_arg
+    final_pass_workers = av1an_workers_arg
+    workers_specified = False
+av1an_workers = av1an_workers_arg
 photon_noise_val = int(args.photon_noise)
 
 if args.debug:
@@ -767,34 +782,43 @@ def fast_pass() -> None:
     if fast_params:
         encoder_params += f"{fast_params}"
 
+    # Add --lp 4 when running multiple workers on fast pass (mirrors Windows behavior)
+    if workers_specified and int(fast_pass_workers) > 1:
+        encoder_params += " --lp 4"
+
     if verbose:
         console.print(f'Fast params: "{encoder_params}"')
 
-    # Av1an command - Native
+    # Av1an command — use same worker count as final pass, add bestsource for speed
     av1an_cmd = [
         str(av1an_exe),
         "-i",
         vpy_file.name,  # Just the filename
         "-e",
         "svt-av1",
+        "-m",
+        "bestsource",
+        "--cache-mode",
+        "temp",
         "-c",
         "mkvmerge",
-        "-w",
-        "1",
-        "-x",
-        "0",
         "--resume",
-        "--verbose",
-        "--split-method",
-        "none",
+        "-w",
+        str(fast_pass_workers),  # Use calculated workers, not hardcoded 1
+    ]
+
+    if external_scenes_file:
+        av1an_cmd.extend(["-s", str(external_scenes_file)])
+
+    av1an_cmd.extend([
         "-v",
         encoder_params,
         "-o",
         fast_output_file.name,  # Just the filename
-    ]
+    ])
 
     print("-" * 50)
-    print(f"Running Fast Pass (Native) in: {obscure_user_path(str(tmp_dir))}")
+    print(f"Running Fast Pass in: {obscure_user_path(str(tmp_dir))}")
     print(f"Command:\n{obscure_user_path(' '.join(av1an_cmd))}")
     print("-" * 50)
 
