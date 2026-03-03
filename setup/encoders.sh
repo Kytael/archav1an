@@ -26,7 +26,7 @@ install_encoders() {
         fi
 
         if [ -d "svt-av1-psy" ]; then rm -rf svt-av1-psy; fi
-        git clone https://github.com/5fish/svt-av1-psy.git
+        git clone --branch v2.3.0-C --depth 1 https://github.com/5fish/svt-av1-psy.git
         cd svt-av1-psy
         git checkout 2f788d04 || log_warn "Commit 2f788d04 not found. Using latest main."
         
@@ -50,7 +50,7 @@ install_encoders() {
         log_info "Compiling FFVship..."
         
         if [ -d "Vship" ]; then rm -rf Vship; fi
-        git clone https://codeberg.org/Line-fr/Vship.git
+        git clone --branch v5.0.0 --depth 1 https://codeberg.org/Line-fr/Vship.git
         cd Vship
         
         if command -v nvcc &> /dev/null; then

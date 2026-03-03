@@ -20,7 +20,7 @@ install_vs_plugins() {
     # 1. WWXD
     log_info "Compiling VapourSynth-WWXD..."
     if [ -d "vapoursynth-wwxd" ]; then rm -rf vapoursynth-wwxd; fi
-    git clone https://github.com/dubhater/vapoursynth-wwxd.git
+    git clone --branch v1.0 --depth 1 https://github.com/dubhater/vapoursynth-wwxd.git
     cd vapoursynth-wwxd
     
     # Compile manually
@@ -35,7 +35,7 @@ install_vs_plugins() {
     # 2. VSZIP
     log_info "Compiling VSZIP..."
     if [ -d "vszip" ]; then rm -rf vszip; fi
-    git clone https://github.com/dnjulek/vapoursynth-zip.git vszip
+    git clone --branch R13 --depth 1 https://github.com/dnjulek/vapoursynth-zip.git vszip
     cd vszip
     
     # Using existing build script that handles Zig
@@ -58,7 +58,7 @@ install_vs_plugins() {
     # 3. SubText
     log_info "Compiling SubText..."
     if [ -d "subtext" ]; then rm -rf subtext; fi
-    git clone https://github.com/vapoursynth/subtext.git
+    git clone --branch R5 --depth 1 https://github.com/vapoursynth/subtext.git
     cd subtext
     mkdir build && cd build
     meson setup .. --buildtype=release

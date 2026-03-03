@@ -25,7 +25,7 @@ install_svt_av1() {
         cd build_tmp || exit 1
 
         if [ -d "svt-av1-psy" ]; then rm -rf svt-av1-psy; fi
-        git clone https://github.com/5fish/svt-av1-psy.git || { log_error "Failed to clone SVT-AV1-PSY"; cd ..; return 1; }
+        git clone --branch v2.3.0-C --depth 1 https://github.com/5fish/svt-av1-psy.git || { log_error "Failed to clone SVT-AV1-PSY"; cd ..; return 1; }
         cd svt-av1-psy || { log_error "Failed to cd into svt-av1-psy"; cd ..; cd ..; return 1; }
         
         mkdir -p Build/linux

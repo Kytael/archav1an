@@ -18,7 +18,7 @@ install_vapoursynth() {
     
     # 1. VapourSynth
     if [ -d "vapoursynth" ]; then rm -rf vapoursynth; fi
-    git clone https://github.com/vapoursynth/vapoursynth.git || { log_error "Failed to clone VapourSynth"; cd ..; return 1; }
+    git clone --branch R73 --depth 1 https://github.com/vapoursynth/vapoursynth.git || { log_error "Failed to clone VapourSynth"; cd ..; return 1; }
     cd vapoursynth || { log_error "Failed to cd into vapoursynth"; cd ..; cd ..; return 1; }
     ./autogen.sh || { log_error "VapourSynth autogen failed"; cd ..; cd ..; return 1; }
     ./configure || { log_error "VapourSynth configure failed"; cd ..; cd ..; return 1; }
@@ -41,7 +41,7 @@ install_vapoursynth() {
     log_info "Compiling FFMS2..."
     if [ -d "ffms2" ]; then rm -rf ffms2; fi
     # Use tag 5.0 (compatible with FFmpeg 6.x on Ubuntu 24.04)
-    git clone --branch 5.0 https://github.com/FFMS/ffms2.git || { log_error "Failed to clone FFMS2"; cd ..; return 1; }
+    git clone --branch 5.0 --depth 1 https://github.com/FFMS/ffms2.git || { log_error "Failed to clone FFMS2"; cd ..; return 1; }
     cd ffms2 || { log_error "Failed to cd into ffms2"; cd ..; cd ..; return 1; }
     ./autogen.sh || { log_error "FFMS2 autogen failed"; cd ..; cd ..; return 1; }
     ./configure --enable-shared || { log_error "FFMS2 configure failed"; cd ..; cd ..; return 1; }

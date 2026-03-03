@@ -19,7 +19,7 @@ install_wwxd() {
 
     log_info "Compiling VapourSynth-WWXD..."
     if [ -d "vapoursynth-wwxd" ]; then rm -rf vapoursynth-wwxd; fi
-    git clone https://github.com/dubhater/vapoursynth-wwxd.git || { log_error "Failed to clone WWXD"; cd ..; return 1; }
+    git clone --branch v1.0 --depth 1 https://github.com/dubhater/vapoursynth-wwxd.git || { log_error "Failed to clone WWXD"; cd ..; return 1; }
     cd vapoursynth-wwxd || { log_error "Failed to cd into vapoursynth-wwxd"; cd ..; cd ..; return 1; }
     
     # Check for VapourSynth headers

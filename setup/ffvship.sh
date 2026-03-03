@@ -13,7 +13,7 @@ install_ffvship() {
         cd build_tmp || exit 1
 
         if [ -d "Vship" ]; then rm -rf Vship; fi
-        git clone https://codeberg.org/Line-fr/Vship.git || { log_error "Failed to clone Vship"; cd ..; return 1; }
+        git clone --branch v5.0.0 --depth 1 https://codeberg.org/Line-fr/Vship.git || { log_error "Failed to clone Vship"; cd ..; return 1; }
         cd Vship || { log_error "Failed to cd into Vship"; cd ..; cd ..; return 1; }
         
         if command -v nvcc &> /dev/null; then

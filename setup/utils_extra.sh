@@ -43,7 +43,7 @@ install_utils_extra() {
         cd build_tmp || exit 1
         
         if [ -d "fssimu2" ]; then rm -rf fssimu2; fi
-        git clone https://github.com/gianni-rosato/fssimu2.git
+        git clone --branch 0.1.2 --depth 1 https://github.com/gianni-rosato/fssimu2.git
         cd fssimu2
         
         log_info "Building fssimu2..."

@@ -19,7 +19,7 @@ install_subtext() {
 
     log_info "Compiling SubText..."
     if [ -d "subtext" ]; then rm -rf subtext; fi
-    git clone https://github.com/vapoursynth/subtext.git || { log_error "Failed to clone SubText"; cd ..; return 1; }
+    git clone --branch R5 --depth 1 https://github.com/vapoursynth/subtext.git || { log_error "Failed to clone SubText"; cd ..; return 1; }
     cd subtext || { log_error "Failed to cd into subtext"; cd ..; cd ..; return 1; }
     mkdir build && cd build
     meson setup .. --buildtype=release || { log_error "SubText meson setup failed"; cd ..; cd ..; cd ..; return 1; }

@@ -19,7 +19,7 @@ install_vszip() {
     
     log_info "Compiling VSZIP..."
     if [ -d "vszip" ]; then rm -rf vszip; fi
-    git clone https://github.com/dnjulek/vapoursynth-zip.git vszip || { log_error "Failed to clone VSZIP"; cd ..; return 1; }
+    git clone --branch R13 --depth 1 https://github.com/dnjulek/vapoursynth-zip.git vszip || { log_error "Failed to clone VSZIP"; cd ..; return 1; }
     cd vszip || { log_error "Failed to cd into vszip"; cd ..; cd ..; return 1; }
     
     cd build-help
