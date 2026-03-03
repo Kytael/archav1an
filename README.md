@@ -27,6 +27,12 @@ Pick based on your content type and desired quality:
 |--------|---------|-------------|
 | `run_linux_sports_crf33.sh` | Optimized | ✅ Best for high-motion content |
 
+### 🎞️ DIRECT ENCODE (SINGLE PASS, NO BOOST)
+| Script | Quality | Description |
+|--------|---------|-------------|
+| `av1an-batch-anime-crf30.sh` | Standard | Single-pass anime encode, no Auto-Boost |
+| `av1an-batch-liveaction-crf30.sh` | Standard | Single-pass live action encode, no Auto-Boost |
+
 ### 🚀 PROGRESSION BOOST (PER-SCENE OPTIMIZATION)
 | Script | Quality | Description |
 |--------|---------|-------------|
@@ -128,7 +134,7 @@ Manual install (Recommended Build Command):
 git clone https://github.com/5fish/svt-av1-psy
 cd svt-av1-psy
 mkdir -p Build/linux && cd Build/linux
-cmake ../.. -G"Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DSVT_AV1_PGO=ON -DSVT_AV1_LTO=ON
+cmake ../.. -G"Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DENABLE_AVX512=ON -DNATIVE=ON -DSVT_AV1_PGO=ON -DSVT_AV1_LTO=ON
 make -j $(nproc)
 sudo make install
 ```

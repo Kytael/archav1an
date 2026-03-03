@@ -2,7 +2,34 @@
 
 All notable changes to the Linux Port of Auto-Boost-Av1an will be documented in this file.
 
+## [2.1.0-linux] - 2026-03-03
+
+### Fixed
+- **Critical: Fast Pass Performance** (`Auto-Boost-Av1an.py`): Fast pass was hardcoded to `-w 1` regardless of the `--workers` argument passed by the shell script, causing ~1 fps encode on multi-core machines. Now uses the same worker count as the final pass.
+- **Fast Pass: Missing `bestsource`**: Added `-m bestsource --cache-mode temp` to the fast pass av1an command, matching Windows behavior for faster/more reliable demuxing.
+- **Fast Pass: Missing `--lp 4`**: When running with multiple workers, `--lp 4` is now appended to fast pass encoder params (mirrors Windows `fast_pass_workers > 1` logic).
+- **Fast Pass: Unnecessary flags**: Removed `-x 0` and `--split-method none` from fast pass; external scenes are now passed with `-s` when available.
+
+### Added
+- **`av1an-batch-anime-crf30.sh`**: New single-pass direct Av1an encode script for Anime (no Auto-Boost). Mirrors `av1an-batch-anime-crf30.bat`.
+- **`av1an-batch-liveaction-crf30.sh`**: New single-pass direct Av1an encode script for Live Action with `--autocrop`. Mirrors `av1an-batch-liveaction-crf30.bat`.
+
+### Changed
+- **Encoder Params — All Scripts**: Updated all 7 run scripts to v1.66 5fish SVT-AV1-PSY parameter set:
+    - Anime scripts: `--lineart-psy-bias 4/5`, `--texture-psy-bias 2/4`, `--hbd-mds 0` (fast) / `1` (final), `--keyint 305`, `--noise-level-thr 16000`, `--filtering-noise-detection 4/1`
+    - Live Action scripts: `--tune 3`, `--hbd-mds 0/1`, `--keyint 305`, `--ac-bias 0.8/1.0/1.2`, `--filtering-noise-detection 4/1`
+    - Sports script: `--hbd-mds 0/1`, `--keyint 305`, removed `--complex-hvs 1`
+    - Removed `--aggressive` flag from CRF 18 scripts (anime and live action)
+    - Removed `--lp 3` from shell script params (now handled internally by `Auto-Boost-Av1an.py`)
+- **`workercount.py`**: Updated benchmark av1an command to match Windows (`-m bestsource --cache-mode temp`, `--preset 4 --lp 3`). Added high-spec detection: machines with >6 physical cores and >20GB RAM now skip the -1 safety reduction.
+- **`cleanup.py`**: Ported 5 missing cleanup steps from Windows: (1) temp folder fastpass exception (preserves folder if non-fastpass MKV files exist inside), (2) `filter/*.ffindex` deletion, (3) `Input/logs/` deletion, (4) `Input/*.bsindex` deletion, (5) `tools/ssimu2_bench_temp/` deletion.
+- **`mux.py`**: Now deletes the intermediate `*-av1.mkv` file after successful mux (frees disk space, mirrors Windows). Added `.mp4` and `.m2ts` as source fallbacks in `possible_sources`.
+- **`Auto-Boost-Av1an.py`**: Made `wakepy` import optional (try/except) to prevent crash on systems without it installed.
+- **`setup/svt_av1.sh`**: Removed pinned commit (`2f788d04`); now clones and builds from the latest `main` branch. Added `-DENABLE_AVX512=ON -DNATIVE=ON` cmake flags for full performance on modern CPUs.
+- **`README.md`**: Updated manual SVT-AV1-PSY build command to include `-DENABLE_AVX512=ON -DNATIVE=ON`. Added Direct Encode scripts section to the script selection table.
+
 ## [2.0.0-linux] - 2026-02-01
+
 
 ### Added
 - **Modular Installer**: Replaced monolithic script with `setup.sh` and individual modules in `setup/`.

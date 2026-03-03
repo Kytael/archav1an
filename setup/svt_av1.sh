@@ -27,13 +27,13 @@ install_svt_av1() {
         if [ -d "svt-av1-psy" ]; then rm -rf svt-av1-psy; fi
         git clone https://github.com/5fish/svt-av1-psy.git || { log_error "Failed to clone SVT-AV1-PSY"; cd ..; return 1; }
         cd svt-av1-psy || { log_error "Failed to cd into svt-av1-psy"; cd ..; cd ..; return 1; }
-        git checkout 2f788d04 || log_warn "Commit 2f788d04 not found. Using latest main."
         
         mkdir -p Build/linux
         cd Build/linux || { log_error "Failed to cd into Build/linux"; cd ..; cd ..; cd ..; return 1; }
         
         cmake ../.. -G"Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DENABLE_AVX512=ON -DNATIVE=ON \
             -DSVT_AV1_PGO=ON -DSVT_AV1_LTO=ON || { log_error "SVT-AV1 cmake failed"; cd ..; cd ..; cd ..; return 1; }
         
         make -j "$(nproc)" || { log_error "SVT-AV1 make failed"; cd ..; cd ..; cd ..; return 1; }
