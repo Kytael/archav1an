@@ -11,7 +11,7 @@ install_python_libs() {
     # Use --ignore-installed to avoid conflicts with apt-installed packages
     # Added dependencies for tools/comp.py (anitopy, pyperclip, requests, natsort, colorama)
     pip3 install vsjetpack numpy rich vstools psutil anitopy pyperclip requests \
-        requests_toolbelt natsort colorama wakepy \
+        requests_toolbelt natsort colorama wakepy Cython \
         --break-system-packages --ignore-installed || { log_error "Failed to install Python libraries"; return 1; }
 
     # Remove the pip-installed vapoursynth which conflicts with the source build we are about to do
@@ -24,7 +24,7 @@ install_python_libs() {
 uninstall_python_libs() {
     log_info "Uninstalling Python Libraries..."
     pip3 uninstall -y vsjetpack numpy rich vstools psutil anitopy pyperclip \
-        requests requests_toolbelt natsort colorama wakepy \
+        requests requests_toolbelt natsort colorama wakepy Cython \
         --break-system-packages
     log_success "Python libraries uninstalled."
 }

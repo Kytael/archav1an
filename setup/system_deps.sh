@@ -15,7 +15,7 @@ install_system_deps() {
         software-properties-common ffmpeg x264 mkvtoolnix mkvtoolnix-gui 
         python3 python3-pip git curl wget build-essential cmake pkg-config 
         autoconf automake libtool yasm nasm clang libavcodec-dev libavformat-dev 
-        libavutil-dev libswscale-dev libavdevice-dev libavfilter-dev cython3 
+        libavutil-dev libswscale-dev libavdevice-dev libavfilter-dev  
         libzimg-dev python3-numpy python3-psutil python3-rich jq mediainfo 
         opus-tools x265 xclip meson ninja-build libass-dev nvidia-cuda-toolkit
         # Dependencies for fssimu2 (added here for convenience)
@@ -34,7 +34,7 @@ uninstall_system_deps() {
             software-properties-common ffmpeg x264 mkvtoolnix mkvtoolnix-gui 
             python3 python3-pip git curl wget build-essential cmake pkg-config 
             autoconf automake libtool yasm nasm clang libavcodec-dev libavformat-dev 
-            libavutil-dev libswscale-dev libavdevice-dev libavfilter-dev cython3 
+            libavutil-dev libswscale-dev libavdevice-dev libavfilter-dev  
             libzimg-dev python3-numpy python3-psutil python3-rich jq mediainfo 
             opus-tools x265 xclip meson ninja-build libass-dev nvidia-cuda-toolkit
             libjpeg-turbo8-dev libwebp-dev libavif-dev
