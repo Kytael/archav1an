@@ -10,9 +10,15 @@ install_fssimu2() {
         log_info "Installing fssimu2 (Zig Build)..."
         
         local ZIG_VERSION="0.15.1"
-        local ZIG_TARBALL="zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+        local ARCH=$(uname -m)
+        local ZIG_ARCH="x86_64"
+        if [ "$ARCH" = "aarch64" ]; then
+            ZIG_ARCH="aarch64"
+        fi
+        
+        local ZIG_TARBALL="zig-${ZIG_ARCH}-linux-${ZIG_VERSION}.tar.xz"
         local ZIG_URL="https://ziglang.org/download/${ZIG_VERSION}/${ZIG_TARBALL}"
-        local ZIG_DIR="zig-x86_64-linux-${ZIG_VERSION}"
+        local ZIG_DIR="zig-${ZIG_ARCH}-linux-${ZIG_VERSION}"
         
         if [ ! -f "/usr/local/bin/zig" ] || ! zig version 2>/dev/null | grep -q "${ZIG_VERSION}"; then
             log_info "Downloading Zig ${ZIG_VERSION}..."

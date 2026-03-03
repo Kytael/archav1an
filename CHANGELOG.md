@@ -5,6 +5,7 @@ All notable changes to the Linux Port of Auto-Boost-Av1an will be documented in 
 ## [2.1.0-linux] - 2026-03-03
 
 ### Fixed
+- **Installer: aarch64 Support** (`setup/fssimu2.sh`): Fixed an architecture bug where the Zig download URL incorrectly hardcoded to `x86_64`, causing an "Exec format error" during automated installation on ARM64 devices. Now dynamically checks `uname -m` to download the correct binary.
 - **Critical: Fast Pass Performance** (`Auto-Boost-Av1an.py`): Fast pass was hardcoded to `-w 1` regardless of the `--workers` argument passed by the shell script, causing ~1 fps encode on multi-core machines. Now uses the same worker count as the final pass.
 - **Fast Pass: Missing `bestsource`**: Added `-m bestsource --cache-mode temp` to the fast pass av1an command, matching Windows behavior for faster/more reliable demuxing.
 - **Fast Pass: Missing `--lp 4`**: When running with multiple workers, `--lp 4` is now appended to fast pass encoder params (mirrors Windows `fast_pass_workers > 1` logic).
