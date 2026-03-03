@@ -55,9 +55,9 @@ for f in Input/*.mkv; do
     echo "Processing \"$f\"..."
     echo "-------------------------------------------------------------------------------"
 
-    # Live Action High (CRF 25) Params
+    # Live Action High (CRF 25) Params — v1.66 5fish svt-av1-psy
     python3 tools/dispatch.py -i "$f" -o "$OUTPUT_FILE" --scenes "$SCENE_FILE" \
-        --quality high \
+        --quality 25 \
         --autocrop \
         --ssimu2 "$SSIMU2_TOOL" \
         --ssimu2-cpu-workers "$SSIMU2_WORKERS" \
@@ -67,8 +67,8 @@ for f in Input/*.mkv; do
         --workers "$WORKER_COUNT" \
         --fast-speed 8 \
         --final-speed 4 \
-        --fast-params "--ac-bias 1.0 --complex-hvs 1 --keyint -1 --variance-boost-strength 2 --enable-dlf 2 --luminance-qp-bias 20 --tune 3" \
-        --final-params "--ac-bias 1.0 --complex-hvs 1 --keyint -1 --variance-boost-strength 2 --enable-dlf 2 --luminance-qp-bias 20 --tune 3 --lp 3"
+        --fast-params "--lp 3 --tune 3 --hbd-mds 0 --keyint 305 --ac-bias 1.0 --filtering-noise-detection 4" \
+        --final-params "--lp 3 --tune 3 --hbd-mds 1 --keyint 305 --ac-bias 1.0 --filtering-noise-detection 4"
 
 done
 

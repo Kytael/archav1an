@@ -55,19 +55,19 @@ for f in Input/*.mkv; do
     echo "Processing \"$f\"..."
     echo "-------------------------------------------------------------------------------"
 
-    # Anime Standard (CRF 30) Params
+    # Anime Standard (CRF 30) Params — v1.66 5fish svt-av1-psy
     python3 tools/dispatch.py -i "$f" -o "$OUTPUT_FILE" --scenes "$SCENE_FILE" \
-        --quality medium \
+        --quality 30 \
         --ssimu2 "$SSIMU2_TOOL" \
         --ssimu2-cpu-workers "$SSIMU2_WORKERS" \
         --resume \
         --verbose \
-        --photon-noise 3 \
+        --photon-noise 2 \
         --workers "$WORKER_COUNT" \
         --fast-speed 8 \
         --final-speed 4 \
-        --fast-params "--ac-bias 1.0 --tune 3 --enable-dlf 2 --keyint -1 --luminance-qp-bias 20 --qm-min 8 --chroma-qm-min 10" \
-        --final-params "--ac-bias 1.0 --tune 3 --enable-dlf 2 --keyint -1 --luminance-qp-bias 20 --qm-min 8 --chroma-qm-min 10 --lp 3"
+        --fast-params "--lp 3 --tune 0 --hbd-mds 0 --keyint 305 --noise-level-thr 16000 --lineart-psy-bias 4 --texture-psy-bias 2 --filtering-noise-detection 4" \
+        --final-params "--lp 3 --tune 0 --hbd-mds 1 --keyint 305 --noise-level-thr 16000 --lineart-psy-bias 4 --texture-psy-bias 2 --filtering-noise-detection 4"
 
 done
 

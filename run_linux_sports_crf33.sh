@@ -58,8 +58,7 @@ for f in Input/*.mkv; do
     echo "Processing \"$f\"..."
     echo "-------------------------------------------------------------------------------"
 
-    # Sports / High-Motion (CRF 33) Params
-    # Uses --tf-strength 3 for better temporal filtering on fast motion content
+    # Sports / High-Motion (CRF 33) Params — v1.66 5fish svt-av1-psy
     python3 tools/dispatch.py -i "$f" -o "$OUTPUT_FILE" --scenes "$SCENE_FILE" \
         --quality 33 \
         --autocrop \
@@ -71,8 +70,8 @@ for f in Input/*.mkv; do
         --workers "$WORKER_COUNT" \
         --fast-speed 8 \
         --final-speed 4 \
-        --fast-params "--ac-bias 0.6 --complex-hvs 1 --sharp-tx 0 --sharpness 1 --tf-strength 3 --keyint -1 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2 --tune 3" \
-        --final-params "--ac-bias 0.6 --complex-hvs 1 --sharp-tx 0 --sharpness 1 --tf-strength 3 --keyint -1 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2 --tune 3 --lp 3"
+        --fast-params "--lp 3 --tune 3 --hbd-mds 0 --keyint 305 --ac-bias 0.6 --sharp-tx 0 --sharpness 1 --tf-strength 3 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2" \
+        --final-params "--lp 3 --tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.6 --sharp-tx 0 --sharpness 1 --tf-strength 3 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2"
 
 done
 

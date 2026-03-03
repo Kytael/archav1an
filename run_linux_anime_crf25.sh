@@ -55,9 +55,9 @@ for f in Input/*.mkv; do
     echo "Processing \"$f\"..."
     echo "-------------------------------------------------------------------------------"
 
-    # Anime High (CRF 25) Params
+    # Anime High (CRF 25) Params — v1.66 5fish svt-av1-psy
     python3 tools/dispatch.py -i "$f" -o "$OUTPUT_FILE" --scenes "$SCENE_FILE" \
-        --quality high \
+        --quality 25 \
         --ssimu2 "$SSIMU2_TOOL" \
         --ssimu2-cpu-workers "$SSIMU2_WORKERS" \
         --resume \
@@ -66,8 +66,8 @@ for f in Input/*.mkv; do
         --workers "$WORKER_COUNT" \
         --fast-speed 8 \
         --final-speed 4 \
-        --fast-params "--ac-bias 1.0 --complex-hvs 1 --keyint -1 --variance-boost-strength 1 --enable-dlf 2 --noise-level-thr 16000 --variance-md-bias 1 --cdef-bias 1 --luminance-qp-bias 20 --qm-min 8 --keyint -1 --tune 0 --balancing-q-bias 1 --chroma-qmc-bias 2 --filtering-noise-detection 4 --balancing-r0-based-layer-offset 0 --chroma-qm-min 10" \
-        --final-params "--ac-bias 1.0 --complex-hvs 1 --keyint -1 --variance-boost-strength 1 --enable-dlf 2 --noise-level-thr 16000 --variance-md-bias 1 --cdef-bias 1 --luminance-qp-bias 20 --qm-min 8 --keyint -1 --tune 0 --balancing-q-bias 1 --chroma-qmc-bias 2 --filtering-noise-detection 4 --balancing-r0-based-layer-offset 0 --chroma-qm-min 10 --lp 3"
+        --fast-params "--lp 3 --tune 0 --hbd-mds 0 --keyint 305 --noise-level-thr 16000 --lineart-psy-bias 4 --texture-psy-bias 2 --filtering-noise-detection 4" \
+        --final-params "--lp 3 --tune 0 --hbd-mds 1 --keyint 305 --noise-level-thr 16000 --lineart-psy-bias 4 --texture-psy-bias 2 --filtering-noise-detection 4"
 
 done
 
