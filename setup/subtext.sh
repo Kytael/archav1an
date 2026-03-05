@@ -21,6 +21,10 @@ install_subtext() {
     if [ -d "subtext" ]; then rm -rf subtext; fi
     git clone --branch R5 --depth 1 https://github.com/vapoursynth/subtext.git || { log_error "Failed to clone SubText"; cd ..; return 1; }
     cd subtext || { log_error "Failed to cd into subtext"; cd ..; cd ..; return 1; }
+    
+    # avcodec_close() was removed in FFmpeg 6.0; replace with avcodec_free_context()
+    sed -i 's/avcodec_close(d->avctx)/avcodec_free_context(\&d->avctx)/g' src/image.cpp
+    
     mkdir build && cd build
     meson setup .. --buildtype=release || { log_error "SubText meson setup failed"; cd ..; cd ..; cd ..; return 1; }
     ninja || { log_error "SubText ninja build failed"; cd ..; cd ..; cd ..; return 1; }
