@@ -1,4 +1,6 @@
 #!/bin/bash
+# If called with sh instead of bash (e.g. via sudo ./setup.sh), re-exec with bash
+if [ -z "$BASH_VERSION" ]; then exec bash "$0" "$@"; fi
 
 # Auto-Boost-Av1an Setup Script
 # Modularized Installer with Dependency Resolution
