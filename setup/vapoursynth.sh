@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 
 # Source common functions if not already sourced
 if [ -z "$COMMON_SOURCED" ]; then
@@ -58,10 +58,31 @@ install_vapoursynth() {
         ln -sf "/usr/local/lib/libffms2.so" "$VS_PLUGIN_PATH/libffms2.so"
     fi
 
+    # 3. BestSource (Alternative and preferred VapourSynth Source plugin)
+    log_info "Compiling BestSource..."
+    if [ -d "bestsource" ]; then rm -rf bestsource; fi
+    git clone --depth 1 --recurse-submodules https://github.com/vapoursynth/bestsource.git || { log_error "Failed to clone BestSource"; cd ..; return 1; }
+    cd bestsource || { log_error "Failed to cd into bestsource"; cd ..; cd ..; return 1; }
+    
+    # Export explicitly so meson finds the custom FFmpeg master build
+    export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+    pip install meson --break-system-packages || true
+    meson setup build || { log_error "BestSource meson setup failed"; cd ..; cd ..; return 1; }
+    ninja -C build || { log_error "BestSource ninja build failed"; cd ..; cd ..; return 1; }
+    ninja -C build install || { log_error "BestSource ninja install failed"; cd ..; cd ..; return 1; }
+    
+    # Ninja install typically places bestsource in /usr/local/lib/x86_64-linux-gnu/vapoursynth/ on Ubuntu 24.04
+    # We should ensure VapourSynth can find it.
+    if ls /usr/local/lib/x86_64-linux-gnu/vapoursynth/libbestsource* 1> /dev/null 2>&1; then
+        log_info "Linking BestSource to VapourSynth plugin folder..."
+        ln -sf /usr/local/lib/x86_64-linux-gnu/vapoursynth/libbestsource* "$VS_PLUGIN_PATH/"
+    fi
+    cd ..
+    
     ldconfig
     cd .. # Exit build_tmp
     
-    log_success "VapourSynth and FFMS2 installed."
+    log_success "VapourSynth, FFMS2, and BestSource installed."
 }
 
 uninstall_vapoursynth() {
