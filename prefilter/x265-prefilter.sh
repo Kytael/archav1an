@@ -26,7 +26,7 @@ TOOL_SCRIPT="$ROOT_DIR/tools/x265-prefilter.py"
 # Check for x265
 if ! command -v x265 &> /dev/null; then
     echo "[ERROR] x265 not found in PATH."
-    echo "Install with: sudo apt install x265"
+    echo "Install with: sudo pacman -S x265 (Arch) or sudo apt install x265 (Ubuntu)"
     exit 1
 fi
 

@@ -94,7 +94,7 @@ def find_mkvmerge():
     if path:
         return path
     print("[ERROR] Could not find mkvmerge. Please install mkvtoolnix:")
-    print("        sudo apt install mkvtoolnix")
+    print("        sudo pacman -S mkvtoolnix-cli (Arch) or sudo apt install mkvtoolnix (Ubuntu)")
     sys.exit(1)
 
 

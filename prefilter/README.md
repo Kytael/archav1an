@@ -72,14 +72,14 @@ the source resolution (upscaling is not allowed).
 
 ### For NVIDIA scripts:
 - NVEncC installed and in PATH (https://github.com/rigaya/NVEnc)
-- FFmpeg installed (`sudo apt install ffmpeg`)
-- MediaInfo installed (`sudo apt install mediainfo`)
+- FFmpeg installed (`pacman -S ffmpeg / apt install ffmpeg`)
+- MediaInfo installed (`pacman -S mediainfo / apt install mediainfo`)
 - NVIDIA GPU with NVENC support
 
 ### For x265 scripts:
 - VapourSynth installed with FFMS2 and placebo plugins
 - vsdenoise and vstools Python packages
-- x265 installed (`sudo apt install x265`)
+- x265 installed (`pacman -S x265 / apt install x265`)
 - vspipe installed
-- FFmpeg installed (`sudo apt install ffmpeg`)
-- MediaInfo installed (`sudo apt install mediainfo`)
+- FFmpeg installed (`pacman -S ffmpeg / apt install ffmpeg`)
+- MediaInfo installed (`pacman -S mediainfo / apt install mediainfo`)

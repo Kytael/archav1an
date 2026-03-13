@@ -38,7 +38,7 @@ cd "$(dirname "$0")"
 if ! command -v mkvmerge &> /dev/null; then
     echo ""
     echo "[ERROR] mkvmerge not found. Please install mkvtoolnix:"
-    echo "        sudo apt install mkvtoolnix"
+    echo "        sudo pacman -S mkvtoolnix-cli (Arch) or sudo apt install mkvtoolnix (Ubuntu)"
     exit 1
 fi
 

@@ -185,7 +185,7 @@ def main():
     # Tools check
     if not shutil.which(X265_EXE):
         print(
-            f"Error: x265 not found (checked '{X265_EXE}'). Install with 'apt install x265' or 'apt install x265-files'."
+            f"Error: x265 not found (checked '{X265_EXE}'). Install with 'pacman -S x265' (Arch) or 'apt install x265' (Ubuntu) or 'apt install x265-files'."
         )
         return
     if not shutil.which(VSPIPE_EXE):

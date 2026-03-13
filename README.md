@@ -1,6 +1,6 @@
-# Auto-Boost-Av1an for Ubuntu
+# Auto-Boost-Av1an for Linux
 
-This guide explains how to set up and run Auto-Boost-Av1an on Ubuntu.
+This guide explains how to set up and run Auto-Boost-Av1an on Linux (Arch-based distros like CachyOS, and Ubuntu/Debian).
 
 ---
 
@@ -83,6 +83,12 @@ If you prefer to install manually, follow the steps below.
 
 Install basic tools, FFmpeg, and x264 (required for scene detection):
 
+**Arch-based (CachyOS, Manjaro, etc.):**
+```bash
+sudo pacman -S ffmpeg x264 mkvtoolnix-cli mkvtoolnix-gui python python-pip git curl
+```
+
+**Ubuntu/Debian:**
 ```bash
 sudo apt update
 sudo apt install -y ffmpeg x264 mkvtoolnix mkvtoolnix-gui python3 python3-pip git curl
@@ -91,8 +97,13 @@ sudo apt install -y ffmpeg x264 mkvtoolnix mkvtoolnix-gui python3 python3-pip gi
 ### 2. VapourSynth
 
 Install VapourSynth and its Python bindings.
-For Ubuntu, you might need to add the `vs-repo` or use the default repositories if available (Ubuntu 24.04+ has newer versions).
 
+**Arch-based:**
+```bash
+sudo pacman -S vapoursynth
+```
+
+**Ubuntu:**
 ```bash
 sudo apt install -y vapoursynth libvapoursynth-dev python3-vapoursynth
 ```
@@ -148,10 +159,9 @@ The script relies on the following plugins:
 3.  **VSZIP**: For metrics calculation (fallback if `fssimu2` is missing).
 
 **Install FFMS2:**
-```bash
-sudo apt install -y libffms2-4 libffms2-dev
-# OR compile from source (recommended for latest ffmpeg support)
-```
+
+*Arch-based:* `sudo pacman -S ffms2` or compile from source.
+*Ubuntu:* `sudo apt install -y libffms2-4 libffms2-dev` or compile from source (recommended for latest ffmpeg support).
 
 **Install WWXD (Critical Fix):**
 You MUST link against the math library.

@@ -20,7 +20,7 @@ echo ""
 # Check for dependencies
 if ! command -v x265 &> /dev/null; then
     echo "Error: x265 not found in PATH."
-    echo "Install with: sudo apt install x265"
+    echo "Install with: sudo pacman -S x265 (Arch) or sudo apt install x265 (Ubuntu)"
     exit 1
 fi
 

@@ -110,7 +110,7 @@ def main():
                 print(f"[Dispatch] Warning: MediaInfo execution failed: {e}")
         else:
             print("[Dispatch] Warning: mediainfo not found in PATH.")
-            print("[Dispatch] Install it with: sudo apt install mediainfo")
+            print("[Dispatch] Install it with: sudo pacman -S mediainfo (Arch) or sudo apt install mediainfo (Ubuntu)")
 
     # --- Check for special flags ---
     # v1.5: --convert-to-YUV420P10 for non-standard chroma subsampling (4:2:2, 4:4:4, etc.)

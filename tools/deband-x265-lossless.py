@@ -184,11 +184,11 @@ def run_ffmpeg_mux(video_file, audio_source, output_file):
 def main():
     if not X265_EXE:
         print("Error: x265 not found in PATH.")
-        print("Install with: sudo apt install x265")
+        print("Install with: sudo pacman -S x265 (Arch) or sudo apt install x265 (Ubuntu)")
         return
     if not FFMPEG_EXE:
         print("Error: FFmpeg not found in PATH.")
-        print("Install with: sudo apt install ffmpeg")
+        print("Install with: sudo pacman -S ffmpeg (Arch) or sudo apt install ffmpeg (Ubuntu)")
         return
 
     # Check vspipe

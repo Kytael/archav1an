@@ -1,6 +1,6 @@
 # Auto-Boost-Av1an Dependencies (Linux)
 
-This project relies on the following specific versions and forks of software. The `install_deps_ubuntu.sh` script installs these automatically.
+This project relies on the following specific versions and forks of software. The `setup.sh` script installs these automatically on both Arch-based (CachyOS, Manjaro, etc.) and Debian/Ubuntu systems.
 
 ## Core Tools
 
@@ -9,11 +9,11 @@ This project relies on the following specific versions and forks of software. Th
 | **Av1an** | Latest Git (Master) | [rust-av/Av1an](https://github.com/rust-av/Av1an) |
 | **SVT-AV1-PSY** | Latest Git (main) | [5fish/svt-av1-psy](https://github.com/5fish/svt-av1-psy) <br> *Built with Clang, PGO, LTO, AVX512, NATIVE.* |
 | **VapourSynth** | Latest Git (Master) | [vapoursynth/vapoursynth](https://github.com/vapoursynth/vapoursynth) |
-| **FFmpeg** | Repository Version | Standard Ubuntu/Debian Repos (`apt install ffmpeg`) |
-| **MKVToolNix** | Repository Version | Standard Ubuntu/Debian Repos (`mkvmerge`, `mkvpropedit`) |
-| **x265** | Repository Version | CLI Tool (`apt install x265`) for Lossless Intermediary |
-| **Opus Tools** | Repository Version | `opusenc` (`apt install opus-tools`) |
-| **xclip** | Repository Version | Clipboard support for `comp.py` (`apt install xclip`) |
+| **FFmpeg** | Repository Version | `pacman -S ffmpeg` (Arch) / `apt install ffmpeg` (Ubuntu) |
+| **MKVToolNix** | Repository Version | `pacman -S mkvtoolnix-cli` (Arch) / `apt install mkvtoolnix` (Ubuntu) |
+| **x265** | Repository Version | `pacman -S x265` (Arch) / `apt install x265` (Ubuntu) |
+| **Opus Tools** | Repository Version | `pacman -S opus-tools` (Arch) / `apt install opus-tools` (Ubuntu) |
+| **xclip** | Repository Version | `pacman -S xclip` (Arch) / `apt install xclip` (Ubuntu) |
 | **fssimu2** | Latest Git (Main) | [gianni-rosato/fssimu2](https://github.com/gianni-rosato/fssimu2) <br> *Metrics Tool (Zig Build, supports x86_64 & aarch64).* |
 | **vship / FFVship** | Latest Git (Main) | [Line-fr/Vship](https://github.com/Line-fr/Vship) <br> *GPU Metrics Tool (CUDA/HIP)* |
 | **NVEncC** | Manual Install | [rigaya/NVEnc](https://github.com/rigaya/NVEnc) <br> *Optional: NVIDIA GPU denoise tool* |

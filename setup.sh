@@ -42,8 +42,12 @@ DEPENDENCIES["subtext"]="vapoursynth"
 is_installed() {
     local tool=$1
     case "$tool" in
-        "system_deps") 
-            dpkg -s build-essential &> /dev/null
+        "system_deps")
+            if [ "$DISTRO_FAMILY" = "arch" ]; then
+                pacman -Qi base-devel &> /dev/null
+            else
+                dpkg -s build-essential &> /dev/null
+            fi
             ;;
         "python_libs")
             pip3 show vsjetpack &> /dev/null
@@ -67,18 +71,21 @@ is_installed() {
             command -v fssimu2 &> /dev/null
             ;;
         "wwxd")
-            [ -f "$(pkg-config --variable=libdir vapoursynth 2>/dev/null)/vapoursynth/libwwxd.so" ] || \
-            [ -f "/usr/lib/x86_64-linux-gnu/vapoursynth/libwwxd.so" ] || \
+            local wwxd_path
+            wwxd_path="$(get_vs_plugin_path)"
+            [ -f "$wwxd_path/libwwxd.so" ] || \
             [ -f "/usr/local/lib/vapoursynth/libwwxd.so" ]
             ;;
         "vszip")
-            [ -f "$(pkg-config --variable=libdir vapoursynth 2>/dev/null)/vapoursynth/libvszip.so" ] || \
-            [ -f "/usr/lib/x86_64-linux-gnu/vapoursynth/libvszip.so" ] || \
+            local vszip_path
+            vszip_path="$(get_vs_plugin_path)"
+            [ -f "$vszip_path/libvszip.so" ] || \
             [ -f "/usr/local/lib/vapoursynth/libvszip.so" ]
             ;;
         "subtext")
-            [ -f "$(pkg-config --variable=libdir vapoursynth 2>/dev/null)/vapoursynth/libsubtext.so" ] || \
-            [ -f "/usr/lib/x86_64-linux-gnu/vapoursynth/libsubtext.so" ] || \
+            local subtext_path
+            subtext_path="$(get_vs_plugin_path)"
+            [ -f "$subtext_path/libsubtext.so" ] || \
             [ -f "/usr/local/lib/vapoursynth/libsubtext.so" ]
             ;;
         *) return 1 ;;

@@ -15,7 +15,7 @@ X265_EXE = shutil.which("x265")
 if not X265_EXE:
     # Fallback/Check
     print(
-        "[ERROR] x265 executable not found in PATH. Please install it (sudo apt install x265)."
+        "[ERROR] x265 executable not found in PATH. Please install it (sudo pacman -S x265 (Arch) or sudo apt install x265 (Ubuntu))."
     )
     sys.exit(1)
 

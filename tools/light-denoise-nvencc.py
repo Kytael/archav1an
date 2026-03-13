@@ -93,7 +93,7 @@ def main():
         return
     if shutil.which(MKVMERGE_EXE) is None:
         print(f"Error: {MKVMERGE_EXE} not found in PATH.")
-        print("Install it with: sudo apt install mkvtoolnix")
+        print("Install it with: sudo pacman -S mkvtoolnix-cli (Arch) or sudo apt install mkvtoolnix (Ubuntu)")
         return
 
     mkv_files = glob.glob("*.mkv")

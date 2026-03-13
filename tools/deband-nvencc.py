@@ -124,7 +124,7 @@ def main():
         return
     if not FFMPEG_EXE:
         print("Error: FFmpeg not found in PATH.")
-        print("Install with: sudo apt install ffmpeg")
+        print("Install with: sudo pacman -S ffmpeg (Arch) or sudo apt install ffmpeg (Ubuntu)")
         return
 
     # Load Settings

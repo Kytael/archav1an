@@ -7,24 +7,34 @@ fi
 
 install_python_libs() {
     log_info "Installing Python Libraries..."
-    
-    # Use --ignore-installed to avoid conflicts with apt-installed packages
-    # Added dependencies for tools/comp.py (anitopy, pyperclip, requests, natsort, colorama)
+
+    local PIP_FLAGS=""
+    if [ "$DISTRO_FAMILY" = "debian" ]; then
+        # Debian/Ubuntu uses externally-managed Python; need this flag
+        PIP_FLAGS="--break-system-packages --ignore-installed"
+    fi
+
     pip3 install vsjetpack numpy rich vstools psutil anitopy pyperclip requests \
         requests_toolbelt natsort colorama wakepy Cython \
-        --break-system-packages --ignore-installed || { log_error "Failed to install Python libraries"; return 1; }
+        $PIP_FLAGS || { log_error "Failed to install Python libraries"; return 1; }
 
     # Remove the pip-installed vapoursynth which conflicts with the source build we are about to do
     log_info "Removing pip-installed VapourSynth to avoid version mismatch..."
-    pip3 uninstall -y vapoursynth --break-system-packages || true
-    
+    pip3 uninstall -y vapoursynth $PIP_FLAGS || true
+
     log_success "Python libraries installed."
 }
 
 uninstall_python_libs() {
     log_info "Uninstalling Python Libraries..."
+
+    local PIP_FLAGS=""
+    if [ "$DISTRO_FAMILY" = "debian" ]; then
+        PIP_FLAGS="--break-system-packages"
+    fi
+
     pip3 uninstall -y vsjetpack numpy rich vstools psutil anitopy pyperclip \
         requests requests_toolbelt natsort colorama wakepy Cython \
-        --break-system-packages
+        $PIP_FLAGS
     log_success "Python libraries uninstalled."
 }

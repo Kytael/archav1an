@@ -18,7 +18,7 @@ echo "This script will remux files and copy over a forced aspect ratio from"
 echo "source files."
 echo ""
 echo "Requirements: mkvtoolnix (mkvmerge) must be installed."
-echo "              sudo apt install mkvtoolnix"
+echo "              sudo pacman -S mkvtoolnix-cli (Arch) or sudo apt install mkvtoolnix (Ubuntu)"
 echo ""
 echo "The script looks for '*-output.mkv' files and their matching sources."
 echo "==============================================================================="
@@ -31,7 +31,7 @@ fi
 
 # Check for mkvmerge
 if ! command -v mkvmerge &> /dev/null; then
-    echo "[ERROR] mkvmerge not found. Install with: sudo apt install mkvtoolnix"
+    echo "[ERROR] mkvmerge not found. Install with: sudo pacman -S mkvtoolnix-cli (Arch) or sudo apt install mkvtoolnix (Ubuntu)"
     exit 1
 fi
 
