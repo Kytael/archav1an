@@ -4,6 +4,9 @@
 # Applies a light denoise using NVEncC (--vpp-fft3d sigma=0.2)
 # and encodes in NVEnc lossless mode.
 
+
+# Activate Python venv
+source "$(dirname "$(realpath "$0")")/../activate-venv.sh"
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 TOOLS_DIR="$ROOT_DIR/tools"

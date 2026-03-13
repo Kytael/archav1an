@@ -6,6 +6,9 @@
 
 cd "$(dirname "$0")"
 
+
+# Activate Python venv
+source "$(dirname "$(realpath "$0")")/activate-venv.sh"
 touch "tools/sh-used-$(basename "$0").txt"
 
 WORKER_COUNT=4
@@ -27,7 +30,7 @@ echo "Starting Av1an Batch (Live Action CRF 30) with $WORKER_COUNT workers..."
 mkdir -p Input Output
 shopt -s nullglob
 
-for f in Input/*.mkv Input/*.mp4 Input/*.m2ts; do
+for f in [Ii]nput/*.[Mm][Kk][Vv] [Ii]nput/*.[Mm][Pp]4 [Ii]nput/*.[Mm]2[Tt][Ss]; do
     [ -f "$f" ] || continue
     filename=$(basename -- "$f")
     stem="${filename%.*}"

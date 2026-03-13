@@ -41,7 +41,6 @@ This project relies on the following specific versions and forks of software. Th
 *   `requests_toolbelt`
 *   `natsort`
 *   `colorama`
-*   `wakepy` (prevent system sleep during encoding)
 *   `vsdenoise` (included in vsjetpack - DFTTest wrapper)
 
 ## Build Tools

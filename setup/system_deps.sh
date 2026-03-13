@@ -11,13 +11,32 @@ install_system_deps_arch() {
 
     log_info "Installing System Packages (pacman)..."
     local DEPS=(
-        ffmpeg x264 mkvtoolnix-cli mkvtoolnix-gui
+        ffmpeg ffms2 x264 mkvtoolnix-cli mkvtoolnix-gui
         python python-pip git curl wget base-devel cmake pkgconf
         autoconf automake libtool yasm nasm clang
         zimg python-numpy python-psutil python-rich jq mediainfo
-        opus-tools x265 xclip meson ninja libass cuda
+        opus-tools x265 xclip meson ninja libass
         libjpeg-turbo libwebp libavif xxhash
+        vulkan-headers vulkan-icd-loader
     )
+
+    # Detect GPU and add appropriate packages
+    detect_gpu
+
+    if [ "$GPU_VENDOR" = "nvidia" ] || [ "$GPU_VENDOR" = "both" ]; then
+        log_info "Adding NVIDIA CUDA packages..."
+        DEPS+=(cuda)
+    fi
+
+    if [ "$GPU_VENDOR" = "amd" ] || [ "$GPU_VENDOR" = "both" ]; then
+        # Check if hipcc is already available (e.g., from opencl-amd or opencl-amd-dev)
+        if command -v hipcc &> /dev/null || [ -f "/opt/rocm/bin/hipcc" ]; then
+            log_info "AMD HIP compiler (hipcc) already available, skipping ROCm HIP install."
+        else
+            log_info "Adding AMD ROCm/HIP packages..."
+            DEPS+=(hip-runtime-amd)
+        fi
+    fi
 
     pacman -S --needed --noconfirm "${DEPS[@]}" || { log_error "Failed to install system dependencies via pacman"; return 1; }
 

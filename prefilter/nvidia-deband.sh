@@ -2,6 +2,9 @@
 # Auto-Boost-Av1an: NVIDIA Deband Script
 # Applies libplacebo deband filter using NVEncC (NVIDIA GPU required)
 
+
+# Activate Python venv
+source "$(dirname "$(realpath "$0")")/../activate-venv.sh"
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 TOOL_SCRIPT="$ROOT_DIR/tools/deband-nvencc.py"

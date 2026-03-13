@@ -3,12 +3,6 @@ import subprocess
 import os
 import shutil
 
-try:
-    from wakepy import keep
-
-    WAKEPY_AVAILABLE = True
-except ImportError:
-    WAKEPY_AVAILABLE = False
 
 
 def main():
@@ -123,8 +117,8 @@ def main():
         )
 
     # --- Construct Final Command ---
-    # Use standard python3
-    final_cmd = ["python3", av1an_script]
+    # Use the same Python interpreter that's running this script (venv-aware)
+    final_cmd = [sys.executable, av1an_script]
 
     # Parameters to inject
     # Note: BT.601 parameters set to 6-6-6
@@ -169,16 +163,7 @@ def main():
     # --- Execute ---
     try:
         sys.stdout.flush()
-
-        if WAKEPY_AVAILABLE:
-            print("[Dispatch] Preventing system sleep via wakepy...")
-            # Wrap the encoding process in wakepy's keep.running() context
-            with keep.running():
-                subprocess.check_call(final_cmd)
-        else:
-            print("[Dispatch] wakepy not available, system may sleep during encoding.")
-            subprocess.check_call(final_cmd)
-
+        subprocess.check_call(final_cmd)
     except subprocess.CalledProcessError as e:
         sys.exit(e.returncode)
     except FileNotFoundError:

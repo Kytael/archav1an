@@ -10,6 +10,9 @@
 # - CPU encoding is slower than NVIDIA GPU.
 # =============================================================================
 
+
+# Activate Python venv
+source "$(dirname "$(realpath "$0")")/../activate-venv.sh"
 echo "Place your mkv file in this folder then run this."
 echo "It will apply filters (Denoise/Deband/Downscale) based on settings.txt"
 echo "and encode in x265 lossless 10-bit mode (CPU)."

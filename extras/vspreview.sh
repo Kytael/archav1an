@@ -10,6 +10,9 @@
 #   - Use Ctrl+MouseWheel to zoom in and out
 # =============================================================================
 
+
+# Activate Python venv
+source "$(dirname "$(realpath "$0")")/../activate-venv.sh"
 echo "Place your mkv file(s) in this folder then run this script."
 echo "It will open vspreview for viewing your mkv files."
 echo ""

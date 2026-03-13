@@ -67,8 +67,9 @@ install_vapoursynth() {
 
     # Export explicitly so meson finds the custom FFmpeg master build
     export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
-    if [ "$DISTRO_FAMILY" = "debian" ]; then
-        pip install meson --break-system-packages || true
+    # Ensure meson is available (installed via pacman on Arch, or use venv pip)
+    if ! command -v meson &> /dev/null && [ -d "$VENV_DIR" ]; then
+        "$VENV_DIR/bin/pip" install meson || true
     fi
     meson setup build || { log_error "BestSource meson setup failed"; cd ..; cd ..; return 1; }
     ninja -C build || { log_error "BestSource ninja build failed"; cd ..; cd ..; return 1; }

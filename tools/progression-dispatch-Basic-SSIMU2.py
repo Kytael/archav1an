@@ -3,7 +3,6 @@ import sys
 import re
 import subprocess
 import glob
-from wakepy import keep
 
 
 def main():
@@ -219,10 +218,7 @@ def main():
 
     try:
         sys.stdout.flush()
-        print("[Dispatch] Preventing system sleep via wakepy...")
-        with keep.running():
-            subprocess.run(cmd, check=True)
-
+        subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
         sys.exit(e.returncode)
 

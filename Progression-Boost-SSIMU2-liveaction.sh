@@ -1,6 +1,9 @@
 #!/bin/bash
 
 # Notepad++ is suggested for editing this file.
+
+# Activate Python venv
+source "$(dirname "$(realpath "$0")")/activate-venv.sh"
 ssimu2_quality="82"
 echo "You may use a text editor to edit this file to adjust ssimu2_quality="
 echo ""

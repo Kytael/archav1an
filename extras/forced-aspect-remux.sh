@@ -4,6 +4,9 @@
 # Use this script after AV1 encoding is complete.
 # This script will remux files and copy over a forced aspect ratio from source files.
 
+
+# Activate Python venv
+source "$(dirname "$(realpath "$0")")/../activate-venv.sh"
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 TOOLS_DIR="$ROOT_DIR/tools"

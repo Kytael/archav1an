@@ -3,6 +3,9 @@
 # Uses x265 (lossless) and DFTTest (VapourSynth)
 
 # Set up paths
+
+# Activate Python venv
+source "$(dirname "$(realpath "$0")")/../activate-venv.sh"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 TOOLS_DIR="$ROOT_DIR/tools"

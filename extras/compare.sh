@@ -2,6 +2,9 @@
 # Auto-Boost-Av1an: Comparison Script
 # Runs VapourSynth comparison via tools/comp.py
 
+
+# Activate Python venv
+source "$(dirname "$(realpath "$0")")/../activate-venv.sh"
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 TOOL_SCRIPT="$ROOT_DIR/tools/comp.py"

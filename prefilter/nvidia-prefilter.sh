@@ -9,6 +9,9 @@
 # - NVIDIA GPU required.
 # =============================================================================
 
+
+# Activate Python venv
+source "$(dirname "$(realpath "$0")")/../activate-venv.sh"
 echo "Place your mkv file in this folder then run this."
 echo "It will apply filters (Denoise/Deband/Downscale) based on settings.txt"
 echo "and encode in NVENC lossless mode h265 10-bit."

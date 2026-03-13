@@ -4,6 +4,9 @@
 # Note: NTFS "compact" compression is Windows-only.
 # This script reports disk usage instead.
 
+
+# Activate Python venv
+source "$(dirname "$(realpath "$0")")/../activate-venv.sh"
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 TOOLS_DIR="$ROOT_DIR/tools"

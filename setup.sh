@@ -50,7 +50,7 @@ is_installed() {
             fi
             ;;
         "python_libs")
-            pip3 show vsjetpack &> /dev/null
+            [ -d "$VENV_DIR" ] && "$VENV_DIR/bin/pip" show vsjetpack &> /dev/null
             ;;
         "vapoursynth")
             command -v vspipe &> /dev/null
@@ -320,8 +320,25 @@ show_menu() {
 }
 
 # Main Execution Flow
+# Parse -y/--yes flag from any position
+for arg in "$@"; do
+    if [ "$arg" == "-y" ] || [ "$arg" == "--yes" ]; then
+        AUTO_YES=true
+    fi
+done
+
 check_root
 check_distro
+detect_gpu
+
+# Filter out -y/--yes from positional args
+ARGS=()
+for arg in "$@"; do
+    if [ "$arg" != "-y" ] && [ "$arg" != "--yes" ]; then
+        ARGS+=("$arg")
+    fi
+done
+set -- "${ARGS[@]}"
 
 if [ "$1" == "--install" ] && [ -n "$2" ]; then
     if [[ "$2" =~ ^[Aa]$ ]]; then
@@ -331,7 +348,6 @@ if [ "$1" == "--install" ] && [ -n "$2" ]; then
     fi
 elif [ "$1" == "--uninstall" ] && [ -n "$2" ]; then
     if [[ "$2" =~ ^[Aa]$ ]]; then
-        # For CLI, we might want to ask confirmation or force if -y is passed, but for now reuse simple logic
         if ask_yes_no "Are you sure you want to uninstall EVERYTHING?" "N"; then
             uninstall_all_tools
         fi

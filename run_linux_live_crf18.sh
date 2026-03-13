@@ -4,6 +4,9 @@
 cd "$(dirname "$0")"
 
 # Create marker for tagging
+
+# Activate Python venv
+source "$(dirname "$(realpath "$0")")/activate-venv.sh"
 touch "tools/sh-used-$(basename "$0").txt"
 
 WORKER_COUNT=4
@@ -30,7 +33,7 @@ echo "SSIMU2 Mode: $SSIMU2_TOOL | SSIMU2 Workers: $SSIMU2_WORKERS"
 mkdir -p Input Output
 shopt -s nullglob
 
-for f in Input/*.mkv; do
+for f in [Ii]nput/*.[Mm][Kk][Vv] [Ii]nput/*.[Mm][Pp]4 [Ii]nput/*.[Mm]2[Tt][Ss]; do
     filename=$(basename -- "$f")
     stem="${filename%.*}"
     OUTPUT_FILE="Output/${stem}-av1.mkv"
