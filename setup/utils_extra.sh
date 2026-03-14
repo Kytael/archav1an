@@ -7,18 +7,27 @@ fi
 
 install_utils_extra() {
     # 1. oxipng
-    if ! command -v oxipng &> /dev/null; then
-        log_info "Installing oxipng..."
-        source "$HOME/.cargo/env"
-        cargo install oxipng
-        
-        if [ -f "$HOME/.cargo/bin/oxipng" ]; then
-            cp "$HOME/.cargo/bin/oxipng" /usr/local/bin/oxipng
-            chmod +x /usr/local/bin/oxipng
-            log_success "oxipng installed."
+    if command -v pacman &> /dev/null; then
+        if ! pacman -Qi oxipng &> /dev/null; then
+            log_info "Installing oxipng via pacman..."
+            pacman -S --noconfirm oxipng || log_error "Failed to install oxipng with pacman"
+        else
+            log_info "oxipng is already installed (pacman)."
         fi
     else
-        log_info "oxipng is already installed."
+        if ! command -v oxipng &> /dev/null; then
+            log_info "Installing oxipng via cargo..."
+            [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
+            cargo install oxipng
+
+            if [ -f "$HOME/.cargo/bin/oxipng" ]; then
+                cp "$HOME/.cargo/bin/oxipng" /usr/local/bin/oxipng
+                chmod +x /usr/local/bin/oxipng
+                log_success "oxipng installed."
+            fi
+        else
+            log_info "oxipng is already installed."
+        fi
     fi
 
     # 2. fssimu2

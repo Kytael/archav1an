@@ -53,13 +53,24 @@ is_installed() {
             [ -d "$VENV_DIR" ] && "$VENV_DIR/bin/pip" show vsjetpack &> /dev/null
             ;;
         "vapoursynth")
-            command -v vspipe &> /dev/null
+            if command -v pacman &> /dev/null; then
+                # On Arch, check that BestSource plugin is also installed
+                pacman -Qi vapoursynth-plugin-bestsource &> /dev/null
+            else
+                command -v vspipe &> /dev/null
+            fi
             ;;
         "av1an")
-            command -v av1an &> /dev/null
+            if command -v pacman &> /dev/null; then
+                # On Arch, require pacman-installed av1an (not a stale cargo build)
+                pacman -Qi av1an &> /dev/null
+            else
+                command -v av1an &> /dev/null
+            fi
             ;;
         "svt_av1")
-            command -v SvtAv1EncApp &> /dev/null
+            # Check for PSY fork at /usr/local/bin, not the standard pacman svt-av1
+            [ -f /usr/local/bin/SvtAv1EncApp ]
             ;;
         "ffvship")
             command -v FFVship &> /dev/null

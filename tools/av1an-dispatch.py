@@ -160,17 +160,19 @@ def main():
 
     final_cmd.extend(["--encoder", "svt-av1"])
 
-    if quality:
-        final_cmd.extend(["--crf", quality])
     if workers:
-        final_cmd.extend(["--workers", workers])
+        final_cmd.extend(["-w", workers])
     if photon_noise and photon_noise != "0":
         final_cmd.extend(["--photon-noise", photon_noise])
+
+    # CRF and preset are svt-av1 encoder params, not av1an flags
     if speed:
         encoder_params = f"--preset {speed} " + encoder_params
+    if quality:
+        encoder_params = f"--crf {quality} " + encoder_params
 
     if encoder_params.strip():
-        final_cmd.extend(["--video-params", encoder_params.strip()])
+        final_cmd.extend(["-v", encoder_params.strip()])
 
     print(f"[av1an-dispatch] Running: {' '.join(final_cmd)}")
 

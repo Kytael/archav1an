@@ -1708,7 +1708,7 @@ if not resume or not scene_detection_scenes_file.exists():
             "--audio-params", "-an",
             "--concat", "mkvmerge"
         ]
-        scene_detection_x264_process = subprocess.Popen(command, text=True)
+        scene_detection_x264_process = subprocess.Popen(command, text=True, stderr=subprocess.DEVNULL)
 
 
     if scene_detection_perform_av1an:
@@ -1737,7 +1737,7 @@ if not resume or not scene_detection_scenes_file.exists():
             *zone_default.scene_detection_av1an_parameters(),
             "--force-keyframes", ",".join(scene_detection_av1an_force_keyframes)
         ]
-        scene_detection_process = subprocess.Popen(command, text=True)
+        scene_detection_process = subprocess.Popen(command, text=True, stderr=subprocess.DEVNULL)
 
         
     if not scene_detection_diffs_available:
@@ -3294,8 +3294,8 @@ if metric_has_metric:
             "--scenes", probing_scenes_file,
             *zone_default.probing_av1an_parameters(f"[K[0m[1;3m> Progression Boost [0m[3m{probing_output_file.stem}[0m[1;3m <[0m")
         ]
-        return subprocess.Popen(command, text=True)
-    
+        return subprocess.Popen(command, text=True, stderr=subprocess.DEVNULL)
+
     probing_first_tmp_dir = progression_boost_temp_dir / f"probe-encode-first.tmp"
     probing_first_done_file = probing_first_tmp_dir / "done.json"
     probing_first_scenes_file = progression_boost_temp_dir / f"probe-encode-first.scenes.json"

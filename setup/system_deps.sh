@@ -6,14 +6,14 @@ if [ -z "$COMMON_SOURCED" ]; then
 fi
 
 install_system_deps_arch() {
-    log_info "Updating pacman..."
-    pacman -Sy
+    log_info "Updating system packages..."
+    pacman -Syu --noconfirm
 
     log_info "Installing System Packages (pacman)..."
     local DEPS=(
         ffmpeg ffms2 x264 mkvtoolnix-cli mkvtoolnix-gui
         python python-pip git curl wget base-devel cmake pkgconf
-        autoconf automake libtool yasm nasm clang
+        autoconf automake libtool yasm nasm clang llvm
         zimg python-numpy python-psutil python-rich jq mediainfo
         opus-tools x265 xclip meson ninja libass
         libjpeg-turbo libwebp libavif xxhash
@@ -40,28 +40,8 @@ install_system_deps_arch() {
 
     pacman -S --needed --noconfirm "${DEPS[@]}" || { log_error "Failed to install system dependencies via pacman"; return 1; }
 
-    log_info "Compiling FFmpeg master from source to satisfy BestSource (libavcodec >= 61.19.0)..."
-    local CDIR="/tmp/ffmpeg_master_build"
-    mkdir -p "$CDIR"
-    cd "$CDIR"
-    if [ -d "ffmpeg" ]; then rm -rf ffmpeg; fi
-    git clone --depth 1 https://github.com/FFmpeg/FFmpeg.git ffmpeg || { log_error "Failed to clone ffmpeg repo"; return 1; }
-    cd ffmpeg
-    ./configure \
-      --prefix="/usr/local" \
-      --enable-shared \
-      --enable-gpl \
-      --enable-libx264 \
-      --enable-libx265 \
-      --enable-libass \
-      --enable-libfreetype \
-      --disable-doc \
-      --disable-programs || { log_error "FFmpeg configure failed"; return 1; }
-    make -j"$(nproc)" || { log_error "FFmpeg make failed"; return 1; }
-    make install || { log_error "FFmpeg make install failed"; return 1; }
-    ldconfig
-
-    log_success "System packages and FFmpeg libraries installed."
+    # Arch/CachyOS has modern FFmpeg (8.x) — no need to compile from source
+    log_success "System packages installed."
 }
 
 install_system_deps_debian() {
@@ -83,10 +63,11 @@ install_system_deps_debian() {
 
     log_info "Compiling FFmpeg master from source to satisfy BestSource (libavcodec >= 61.19.0)..."
     local CDIR="/tmp/ffmpeg_master_build"
+    local ORIG_DIR="$(pwd)"
     mkdir -p "$CDIR"
     cd "$CDIR"
     if [ -d "ffmpeg" ]; then rm -rf ffmpeg; fi
-    git clone --depth 1 https://github.com/FFmpeg/FFmpeg.git ffmpeg || { log_error "Failed to clone ffmpeg repo"; return 1; }
+    git clone --depth 1 https://github.com/FFmpeg/FFmpeg.git ffmpeg || { cd "$ORIG_DIR"; log_error "Failed to clone ffmpeg repo"; return 1; }
     cd ffmpeg
     ./configure \
       --prefix="/usr/local" \
@@ -97,10 +78,11 @@ install_system_deps_debian() {
       --enable-libass \
       --enable-libfreetype \
       --disable-doc \
-      --disable-programs || { log_error "FFmpeg configure failed"; return 1; }
-    make -j"$(nproc)" || { log_error "FFmpeg make failed"; return 1; }
-    make install || { log_error "FFmpeg make install failed"; return 1; }
+      --disable-programs || { cd "$ORIG_DIR"; log_error "FFmpeg configure failed"; return 1; }
+    make -j"$(nproc)" || { cd "$ORIG_DIR"; log_error "FFmpeg make failed"; return 1; }
+    make install || { cd "$ORIG_DIR"; log_error "FFmpeg make install failed"; return 1; }
     ldconfig
+    cd "$ORIG_DIR"
 
     log_success "System packages and FFmpeg libraries installed."
 }

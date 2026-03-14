@@ -24,6 +24,7 @@ install_ffvship() {
             detect_gpu
         fi
 
+        local ORIG_DIR="$(pwd)"
         mkdir -p build_tmp
         cd build_tmp || exit 1
 
@@ -45,8 +46,18 @@ install_ffvship() {
 
         make buildFFVSHIP || { log_error "FFVship make buildFFVSHIP failed"; cd ..; cd ..; return 1; }
         make install PREFIX=/usr/local || { log_error "FFVship make install failed"; cd ..; cd ..; return 1; }
-        cd ..
-        cd .. # Exit build_tmp
+
+        # On Arch, pacman VapourSynth uses /usr/lib/vapoursynth, not /usr/local/lib/vapoursynth
+        if command -v pacman &> /dev/null && [ -d /usr/lib/vapoursynth ]; then
+            if [ -f /usr/local/lib/vapoursynth/libvship.so ]; then
+                log_info "Linking libvship.so to pacman VapourSynth plugin path..."
+                ln -sf /usr/local/lib/vapoursynth/libvship.so /usr/lib/vapoursynth/libvship.so
+            elif [ -f /usr/local/lib/libvship.so ]; then
+                ln -sf /usr/local/lib/libvship.so /usr/lib/vapoursynth/libvship.so
+            fi
+        fi
+
+        cd "$ORIG_DIR"
 
         log_success "FFVship installed."
     else
