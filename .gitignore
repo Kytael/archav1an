@@ -5,9 +5,22 @@ __pycache__/
 
 # Temporary/Output Folders
 Input/
+input/
 Output/
+build_tmp/
+cropdetect-temp/
+logs/
 .temp/
 *.log
+
+# Runtime markers
+tools/sh-used-*.txt
+tools/workercount-config.txt
+tools/workercount-ssimu2.txt
+
+# Index files
+*.bsindex
+*.ffindex
 
 # Editor
 .vscode/
