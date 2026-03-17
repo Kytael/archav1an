@@ -8,6 +8,9 @@ if [ -z "$BASH_VERSION" ]; then exec bash "$0" "$@"; fi
 BASE_DIR="$(dirname "$(realpath "$0")")"
 SETUP_DIR="$BASE_DIR/setup"
 
+# Restore terminal settings on exit (builds/read -n 1 can leave terminal in raw mode)
+trap 'stty sane 2>/dev/null' EXIT
+
 # Source all modules
 source "$SETUP_DIR/common.sh"
 COMMON_SOURCED=true
