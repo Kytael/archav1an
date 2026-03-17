@@ -13,6 +13,7 @@ source "$SETUP_DIR/common.sh"
 COMMON_SOURCED=true
 source "$SETUP_DIR/system_deps.sh"
 source "$SETUP_DIR/python_libs.sh"
+source "$SETUP_DIR/ffmpeg.sh"
 source "$SETUP_DIR/vapoursynth.sh"
 source "$SETUP_DIR/av1an.sh"
 source "$SETUP_DIR/svt_av1.sh"
@@ -28,15 +29,16 @@ source "$SETUP_DIR/subtext.sh"
 # DEPS[tool]="dep1 dep2"
 declare -A DEPENDENCIES
 DEPENDENCIES["python_libs"]="system_deps"
-DEPENDENCIES["vapoursynth"]="python_libs system_deps"
-DEPENDENCIES["av1an"]="vapoursynth system_deps"
+DEPENDENCIES["ffmpeg"]="system_deps svt_av1"
+DEPENDENCIES["vapoursynth"]="python_libs system_deps ffmpeg"
+DEPENDENCIES["av1an"]="vapoursynth ffmpeg system_deps"
 DEPENDENCIES["svt_av1"]="system_deps"
-DEPENDENCIES["ffvship"]="system_deps"
+DEPENDENCIES["ffvship"]="system_deps ffmpeg"
 DEPENDENCIES["oxipng"]="system_deps"
 DEPENDENCIES["fssimu2"]="system_deps"
 DEPENDENCIES["wwxd"]="vapoursynth"
 DEPENDENCIES["vszip"]="vapoursynth"
-DEPENDENCIES["subtext"]="vapoursynth"
+DEPENDENCIES["subtext"]="vapoursynth ffmpeg"
 
 # Helper: Check if a tool is installed
 is_installed() {
@@ -44,7 +46,13 @@ is_installed() {
     case "$tool" in
         "system_deps")
             if [ "$DISTRO_FAMILY" = "arch" ]; then
-                pacman -Qi base-devel &> /dev/null
+                # Check for key packages, not just base-devel, so newly added deps trigger reinstall
+                pacman -Qi base-devel &> /dev/null && \
+                pacman -Qi pkgconf &> /dev/null && \
+                pacman -Qi clang &> /dev/null && \
+                pacman -Qi meson &> /dev/null && \
+                pacman -Qi dav1d &> /dev/null && \
+                pacman -Qi mimalloc &> /dev/null
             else
                 dpkg -s build-essential &> /dev/null
             fi
@@ -53,20 +61,13 @@ is_installed() {
             [ -d "$VENV_DIR" ] && "$VENV_DIR/bin/pip" show vsjetpack &> /dev/null
             ;;
         "vapoursynth")
-            if command -v pacman &> /dev/null; then
-                # On Arch, check that BestSource plugin is also installed
-                pacman -Qi vapoursynth-plugin-bestsource &> /dev/null
-            else
-                command -v vspipe &> /dev/null
-            fi
+            [ -f /usr/local/bin/vspipe ]
+            ;;
+        "ffmpeg")
+            [ -f /usr/local/bin/ffmpeg ]
             ;;
         "av1an")
-            if command -v pacman &> /dev/null; then
-                # On Arch, require pacman-installed av1an (not a stale cargo build)
-                pacman -Qi av1an &> /dev/null
-            else
-                command -v av1an &> /dev/null
-            fi
+            [ -f /usr/local/bin/av1an ]
             ;;
         "svt_av1")
             # Check for PSY fork at /usr/local/bin, not the standard pacman svt-av1
@@ -76,7 +77,7 @@ is_installed() {
             command -v FFVship &> /dev/null
             ;;
         "oxipng")
-            command -v oxipng &> /dev/null
+            [ -f /usr/local/bin/oxipng ]
             ;;
         "fssimu2")
             command -v fssimu2 &> /dev/null
@@ -169,6 +170,7 @@ install_tool() {
         case "$item" in
             "system_deps") install_system_deps ;;
             "python_libs") install_python_libs ;;
+            "ffmpeg") install_ffmpeg ;;
             "vapoursynth") install_vapoursynth ;;
             "av1an") install_av1an ;;
             "svt_av1") install_svt_av1 ;;
@@ -201,6 +203,7 @@ uninstall_tool() {
     case "$target_tool" in
         "system_deps") uninstall_system_deps ;;
         "python_libs") uninstall_python_libs ;;
+        "ffmpeg") uninstall_ffmpeg ;;
         "vapoursynth") uninstall_vapoursynth ;;
         "av1an") uninstall_av1an ;;
         "svt_av1") uninstall_svt_av1 ;;
@@ -215,15 +218,21 @@ uninstall_tool() {
 }
 
 install_all_tools() {
-    local all_tools=("system_deps" "python_libs" "vapoursynth" "av1an" "svt_av1" "ffvship" "oxipng" "fssimu2" "wwxd" "vszip" "subtext")
+    local all_tools=("system_deps" "python_libs" "svt_av1" "ffmpeg" "vapoursynth" "av1an" "ffvship" "oxipng" "fssimu2" "wwxd" "vszip" "subtext")
     log_info "Starting Full Installation..."
+    setup_build_tmpfs "$(pwd)/build_tmp"
     for t in "${all_tools[@]}"; do
         install_tool "$t" || { log_error "Failed to install $t. Aborting batch."; return 1; }
     done
+    # Unmount tmpfs if it was used
+    if mountpoint -q "$(pwd)/build_tmp" 2>/dev/null; then
+        umount "$(pwd)/build_tmp" 2>/dev/null
+        log_info "build_tmp tmpfs unmounted."
+    fi
 }
 
 uninstall_all_tools() {
-    local all_tools=("system_deps" "python_libs" "vapoursynth" "av1an" "svt_av1" "ffvship" "oxipng" "fssimu2" "wwxd" "vszip" "subtext")
+    local all_tools=("system_deps" "python_libs" "svt_av1" "ffmpeg" "vapoursynth" "av1an" "ffvship" "oxipng" "fssimu2" "wwxd" "vszip" "subtext")
     log_warn "Starting Full Uninstallation..."
     # Reverse order for uninstall
     for (( i=${#all_tools[@]}-1; i>=0; i-- )); do
@@ -246,15 +255,16 @@ show_menu() {
     printf "%-3s %-30s %s\n" "1" "Av1an" "$(get_status_icon av1an)"
     printf "%-3s %-30s %s\n" "2" "VapourSynth (+FFMS2)" "$(get_status_icon vapoursynth)"
     printf "%-3s %-30s %s\n" "3" "SVT-AV1-PSY" "$(get_status_icon svt_av1)"
-    printf "%-3s %-30s %s\n" "4" "FFVship" "$(get_status_icon ffvship)"
-    printf "%-3s %-30s %s\n" "5" "oxipng" "$(get_status_icon oxipng)"
-    printf "%-3s %-30s %s\n" "6" "fssimu2" "$(get_status_icon fssimu2)"
-    printf "%-3s %-30s %s\n" "7" "WWXD" "$(get_status_icon wwxd)"
-    printf "%-3s %-30s %s\n" "8" "VSZIP" "$(get_status_icon vszip)"
-    printf "%-3s %-30s %s\n" "9" "SubText" "$(get_status_icon subtext)"
+    printf "%-3s %-30s %s\n" "4" "FFmpeg" "$(get_status_icon ffmpeg)"
+    printf "%-3s %-30s %s\n" "5" "FFVship" "$(get_status_icon ffvship)"
+    printf "%-3s %-30s %s\n" "6" "oxipng" "$(get_status_icon oxipng)"
+    printf "%-3s %-30s %s\n" "7" "fssimu2" "$(get_status_icon fssimu2)"
+    printf "%-3s %-30s %s\n" "8" "WWXD" "$(get_status_icon wwxd)"
+    printf "%-3s %-30s %s\n" "9" "VSZIP" "$(get_status_icon vszip)"
+    printf "%-3s %-30s %s\n" "10" "SubText" "$(get_status_icon subtext)"
     echo "----------------------------------------------------------"
-    echo "10. System Deps Only"
-    echo "11. Python Libs Only"
+    echo "11. System Deps Only"
+    echo "12. Python Libs Only"
     if [ "$mode" == "INSTALL" ]; then
         echo "A. Install Everything (Full Setup)"
     else
@@ -305,14 +315,15 @@ show_menu() {
             1) tool="av1an" ;;
             2) tool="vapoursynth" ;;
             3) tool="svt_av1" ;;
-            4) tool="ffvship" ;;
-            5) tool="oxipng" ;;
-            6) tool="fssimu2" ;;
-            7) tool="wwxd" ;;
-            8) tool="vszip" ;;
-            9) tool="subtext" ;;
-            10) tool="system_deps" ;;
-            11) tool="python_libs" ;;
+            4) tool="ffmpeg" ;;
+            5) tool="ffvship" ;;
+            6) tool="oxipng" ;;
+            7) tool="fssimu2" ;;
+            8) tool="wwxd" ;;
+            9) tool="vszip" ;;
+            10) tool="subtext" ;;
+            11) tool="system_deps" ;;
+            12) tool="python_libs" ;;
             *) log_warn "Invalid option: $choice (skipping)"; continue ;;
         esac
         

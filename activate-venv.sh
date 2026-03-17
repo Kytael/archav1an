@@ -10,3 +10,13 @@ else
     echo "[WARN] Python venv not found at $VENV_DIR. Run setup.sh first."
     echo "       Falling back to system python3."
 fi
+
+# Ensure source-built libraries and VapourSynth plugins are found at runtime
+export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
+export VAPOURSYNTH_PLUGIN_PATH="/usr/local/lib/vapoursynth"
+export PATH="/usr/local/bin:$PATH"
+
+# Use mimalloc for faster multi-threaded memory allocation (SVT-AV1, av1an, etc.)
+if [ -f /usr/lib/libmimalloc.so ]; then
+    export LD_PRELOAD="/usr/lib/libmimalloc.so${LD_PRELOAD:+:$LD_PRELOAD}"
+fi

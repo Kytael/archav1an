@@ -64,10 +64,13 @@ get_python_site_packages() {
 
 # Helper: get the VapourSynth plugin path
 get_vs_plugin_path() {
-    if command -v pkg-config &> /dev/null && pkg-config --exists vapoursynth 2>/dev/null; then
+    # Prefer source-built VapourSynth at /usr/local
+    if [ -f /usr/local/lib/pkgconfig/vapoursynth.pc ]; then
+        echo "/usr/local/lib/vapoursynth"
+    elif command -v pkg-config &> /dev/null && pkg-config --exists vapoursynth 2>/dev/null; then
         echo "$(pkg-config --variable=libdir vapoursynth)/vapoursynth"
     elif [ "$DISTRO_FAMILY" = "arch" ]; then
-        echo "/usr/lib/vapoursynth"
+        echo "/usr/local/lib/vapoursynth"
     else
         echo "/usr/lib/x86_64-linux-gnu/vapoursynth"
     fi
@@ -76,6 +79,43 @@ get_vs_plugin_path() {
 # Virtual environment path for Python dependencies
 VENV_DIR="/opt/auto-boost-av1an/venv"
 export VENV_DIR
+
+# Set native build optimization flags for all source builds
+set_native_build_flags() {
+    export CC="clang"
+    export CXX="clang++"
+    export CFLAGS="-march=native -O3 -flto"
+    export CXXFLAGS="-march=native -O3 -flto"
+    export LDFLAGS="-flto -fuse-ld=lld"
+    export RUSTFLAGS="-C target-cpu=native -C opt-level=3"
+    export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+    export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
+    export LIBRARY_PATH="/usr/local/lib:${LIBRARY_PATH:-}"
+}
+
+# Set up build_tmp on tmpfs (RAM) for faster compilation
+# Falls back to disk if tmpfs mount fails (e.g., not enough RAM or no permissions)
+setup_build_tmpfs() {
+    local build_dir="${1:-build_tmp}"
+    mkdir -p "$build_dir"
+    if mountpoint -q "$build_dir" 2>/dev/null; then
+        log_info "build_tmp is already a tmpfs mount."
+        return 0
+    fi
+    local ram_gb=$(awk '/MemTotal/{printf "%d", $2/1024/1024}' /proc/meminfo)
+    if [ "$ram_gb" -ge 16 ]; then
+        local tmpfs_size="8G"
+        if [ "$ram_gb" -ge 64 ]; then
+            tmpfs_size="16G"
+        fi
+        if mount -t tmpfs -o size="$tmpfs_size" tmpfs "$build_dir" 2>/dev/null; then
+            log_info "build_tmp mounted as tmpfs (${tmpfs_size} RAM disk)."
+            return 0
+        fi
+    fi
+    log_info "Using disk-backed build_tmp (tmpfs unavailable or not enough RAM)."
+    return 0
+}
 
 # Helper: detect GPU vendor and set up HIP environment for AMD GPUs
 # Sets GPU_VENDOR to "amd", "nvidia", or "unknown"

@@ -10,13 +10,17 @@ install_wwxd() {
     VS_PLUGIN_PATH="$(get_vs_plugin_path)"
     mkdir -p "$VS_PLUGIN_PATH"
 
-    mkdir -p build_tmp
-    cd build_tmp || exit 1
+    set_native_build_flags
+
+    local ORIG_DIR="$(pwd)"
+    local BUILD_DIR="$ORIG_DIR/build_tmp"
+    mkdir -p "$BUILD_DIR"
+    cd "$BUILD_DIR" || exit 1
 
     log_info "Compiling VapourSynth-WWXD..."
     if [ -d "vapoursynth-wwxd" ]; then rm -rf vapoursynth-wwxd; fi
-    git clone --branch v1.0 --depth 1 https://github.com/dubhater/vapoursynth-wwxd.git || { log_error "Failed to clone WWXD"; cd ..; return 1; }
-    cd vapoursynth-wwxd || { log_error "Failed to cd into vapoursynth-wwxd"; cd ..; cd ..; return 1; }
+    git clone --branch v1.0 --depth 1 https://github.com/dubhater/vapoursynth-wwxd.git || { cd "$ORIG_DIR"; log_error "Failed to clone WWXD"; return 1; }
+    cd vapoursynth-wwxd || { cd "$ORIG_DIR"; log_error "Failed to cd into vapoursynth-wwxd"; return 1; }
 
     # Find VapourSynth headers dynamically
     local VS_INCLUDE=""
@@ -27,16 +31,14 @@ install_wwxd() {
     elif [ -d "/usr/include/vapoursynth" ]; then
         VS_INCLUDE="-I/usr/include/vapoursynth"
     else
-        log_error "VapourSynth headers not found. Please install VapourSynth first."
-        cd ..; cd ..; return 1
+        cd "$ORIG_DIR"; log_error "VapourSynth headers not found. Please install VapourSynth first."; return 1
     fi
 
-    gcc -o libwwxd.so -fPIC -shared -O3 -Wall -Wextra -I. $VS_INCLUDE src/*.c -lm || \
-        { log_error "Compilation failed"; cd ..; cd ..; return 1; }
+    clang -o libwwxd.so -fPIC -shared -march=native -O3 -flto -fuse-ld=lld -Wall -Wextra -I. $VS_INCLUDE src/*.c -lm || \
+        { cd "$ORIG_DIR"; log_error "Compilation failed"; return 1; }
 
-    cp libwwxd.so "$VS_PLUGIN_PATH/" || { log_error "Failed to copy libwwxd.so"; cd ..; cd ..; return 1; }
-    cd ..
-    cd .. # Exit build_tmp
+    cp libwwxd.so "$VS_PLUGIN_PATH/" || { cd "$ORIG_DIR"; log_error "Failed to copy libwwxd.so"; return 1; }
+    cd "$ORIG_DIR"
 
     log_success "WWXD installed."
 }

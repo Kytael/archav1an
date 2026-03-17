@@ -10,27 +10,28 @@ install_vszip() {
     VS_PLUGIN_PATH="$(get_vs_plugin_path)"
     mkdir -p "$VS_PLUGIN_PATH"
 
-    mkdir -p build_tmp
-    cd build_tmp || exit 1
+    local ORIG_DIR="$(pwd)"
+    local BUILD_DIR="$ORIG_DIR/build_tmp"
+    mkdir -p "$BUILD_DIR"
+    cd "$BUILD_DIR" || exit 1
 
     log_info "Compiling VSZIP..."
     if [ -d "vszip" ]; then rm -rf vszip; fi
-    git clone --branch R13 --depth 1 https://github.com/dnjulek/vapoursynth-zip.git vszip || { log_error "Failed to clone VSZIP"; cd ..; return 1; }
-    cd vszip || { log_error "Failed to cd into vszip"; cd ..; cd ..; return 1; }
+    git clone --branch R13 --depth 1 https://github.com/dnjulek/vapoursynth-zip.git vszip || { cd "$ORIG_DIR"; log_error "Failed to clone VSZIP"; return 1; }
+    cd vszip || { cd "$ORIG_DIR"; log_error "Failed to cd into vszip"; return 1; }
 
-    cd build-help
+    cd build-help || { cd "$ORIG_DIR"; log_error "Failed to cd into build-help"; return 1; }
     chmod +x build.sh
-    ./build.sh || { log_error "VSZIP build.sh failed"; cd ..; cd ..; cd ..; return 1; }
+    ./build.sh || { cd "$ORIG_DIR"; log_error "VSZIP build.sh failed"; return 1; }
 
     if [ -f "../zig-out/lib/libvszip.so" ]; then
-        cp "../zig-out/lib/libvszip.so" "$VS_PLUGIN_PATH/libvszip.so" || { log_error "Failed to copy libvszip.so"; cd ..; cd ..; cd ..; return 1; }
+        cp "../zig-out/lib/libvszip.so" "$VS_PLUGIN_PATH/libvszip.so" || { cd "$ORIG_DIR"; log_error "Failed to copy libvszip.so"; return 1; }
     else
-        log_error "VSZIP Compilation failed!"
+        cd "$ORIG_DIR"; log_error "VSZIP Compilation failed!"; return 1
     fi
-    cd ../..
 
     ldconfig
-    cd .. # Exit build_tmp
+    cd "$ORIG_DIR"
 
     log_success "VSZIP installed."
 }

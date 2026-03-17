@@ -10,29 +10,35 @@ install_subtext() {
     VS_PLUGIN_PATH="$(get_vs_plugin_path)"
     mkdir -p "$VS_PLUGIN_PATH"
 
-    mkdir -p build_tmp
-    cd build_tmp || exit 1
+    set_native_build_flags
+
+    local ORIG_DIR="$(pwd)"
+    local BUILD_DIR="$ORIG_DIR/build_tmp"
+    mkdir -p "$BUILD_DIR"
+    cd "$BUILD_DIR" || exit 1
 
     log_info "Compiling SubText..."
     if [ -d "subtext" ]; then rm -rf subtext; fi
-    git clone --branch R5 --depth 1 https://github.com/vapoursynth/subtext.git || { log_error "Failed to clone SubText"; cd ..; return 1; }
-    cd subtext || { log_error "Failed to cd into subtext"; cd ..; cd ..; return 1; }
+    git clone --branch R5 --depth 1 https://github.com/vapoursynth/subtext.git || { cd "$ORIG_DIR"; log_error "Failed to clone SubText"; return 1; }
+    cd subtext || { cd "$ORIG_DIR"; log_error "Failed to cd into subtext"; return 1; }
 
     # avcodec_close() was removed in FFmpeg 6.0; replace with avcodec_free_context()
     sed -i 's/avcodec_close(d->avctx)/avcodec_free_context(\&d->avctx)/g' src/image.cpp
 
-    mkdir build && cd build
-    meson setup .. --buildtype=release || { log_error "SubText meson setup failed"; cd ..; cd ..; cd ..; return 1; }
-    ninja || { log_error "SubText ninja build failed"; cd ..; cd ..; cd ..; return 1; }
+    mkdir build && cd build || { cd "$ORIG_DIR"; log_error "Failed to create/enter build dir"; return 1; }
+    CC=clang CXX=clang++ meson setup .. --buildtype=release \
+        -Dc_args="-march=native -O3" \
+        -Dcpp_args="-march=native -O3" \
+        -Db_lto=true || { cd "$ORIG_DIR"; log_error "SubText meson setup failed"; return 1; }
+    ninja || { cd "$ORIG_DIR"; log_error "SubText ninja build failed"; return 1; }
 
     if [ -f "libsubtext.so" ]; then
-        cp "libsubtext.so" "$VS_PLUGIN_PATH/" || { log_error "Failed to copy libsubtext.so"; cd ..; cd ..; cd ..; return 1; }
+        cp "libsubtext.so" "$VS_PLUGIN_PATH/" || { cd "$ORIG_DIR"; log_error "Failed to copy libsubtext.so"; return 1; }
     else
-        log_error "SubText compilation failed!"
+        cd "$ORIG_DIR"; log_error "SubText compilation failed!"; return 1
     fi
 
-    cd ../../..
-    cd .. # Exit build_tmp
+    cd "$ORIG_DIR"
 
     log_success "SubText installed."
 }

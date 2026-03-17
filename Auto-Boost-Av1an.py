@@ -785,7 +785,7 @@ def fast_pass() -> None:
     if verbose:
         console.print(f'Fast params: "{encoder_params}"')
 
-    # Av1an command — use same worker count as final pass, add bestsource for speed
+    # Av1an command — use same worker count as final pass
     av1an_cmd = [
         str(av1an_exe),
         "-i",

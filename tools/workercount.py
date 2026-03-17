@@ -117,41 +117,31 @@ def get_optimal_workers():
 
     # 3. Perform Calculations
     if max_total_rss == 0:
-        print("\nWarning: Could not measure RAM. Defaulting to 1 worker.")
+        print("\nWarning: Could not measure RAM. Defaulting to 2 workers.")
         cleanup_temp_folders()
-        return 1
+        return 2
 
     total_ram = psutil.virtual_memory().total
+    total_ram_gb = total_ram / (1024 ** 3)
     cpu_threads = os.cpu_count()
-
-    # Math: Leave 10% of TOTAL RAM free
-    safe_ram_limit = total_ram * 0.90
-    
-    # Calculate Max Workers by RAM (Safe Total / Peak Usage of 1 Worker)
-    max_workers_ram = int(safe_ram_limit / max_total_rss)
-    
-    # Calculate Max Workers by CPU (Threads / 3 for --lp 3 optimization)
-    max_workers_cpu = int(cpu_threads / 3)
-
-    # Determine raw worker count (bottleneck of RAM and CPU)
-    raw_worker_count = min(max_workers_ram, max_workers_cpu)
-
-    # High-spec detection: >6 physical cores AND >20GB RAM
-    # High-spec machines can handle the full count without the -1 safety margin
-    ram_threshold_bytes = 20 * (1024 ** 3)
     physical_cores = psutil.cpu_count(logical=False) or cpu_threads
 
-    if physical_cores > 6 and total_ram > ram_threshold_bytes:
-        final_workers = max(1, raw_worker_count)
-        print(f"   - High Spec detected ({physical_cores} physical cores, >{ram_threshold_bytes // (1024**3)}GB RAM). Using full count.")
-    else:
-        final_workers = max(1, raw_worker_count - 1)
-        print(f"   - Standard Spec. Reducing worker count by 1 for stability.")
+    # Worker count uses three constraints:
+    # 1. sqrt(cpu_threads) — models diminishing returns from cache/bandwidth contention
+    #    4T→2, 16T→4, 32T→5, 64T→8
+    # 2. RAM — measured peak per worker, leave 15% headroom
+    # 3. Hard cap at 8 — beyond this, av1an chunk overhead and mkvmerge concat cost dominate
+    max_workers_cpu = int(math.sqrt(cpu_threads))
+    max_workers_ram = int((total_ram * 0.85) / max_total_rss) if max_total_rss > 0 else 8
+    final_workers = min(max_workers_cpu, max_workers_ram, 8)
+    final_workers = max(2, final_workers)  # always at least 2
 
     print("\n------------------------------------------------")
     print(f"   - Total System RAM: {total_ram // (1024**2)} MB")
     print(f"   - Peak RAM (1 Worker): {max_total_rss // (1024**2)} MB")
     print(f"   - CPU Threads: {cpu_threads} ({physical_cores} physical)")
+    print(f"   - Max by CPU (sqrt): {max_workers_cpu}")
+    print(f"   - Max by RAM: {max_workers_ram}")
     print(f"   - Calculated Optimal Workers: {final_workers}")
     print("------------------------------------------------")
     

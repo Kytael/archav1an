@@ -9,15 +9,24 @@ install_system_deps_arch() {
     log_info "Updating system packages..."
     pacman -Syu --noconfirm
 
-    log_info "Installing System Packages (pacman)..."
+    log_info "Installing build tools and libraries (pacman)..."
     local DEPS=(
-        ffmpeg ffms2 x264 mkvtoolnix-cli mkvtoolnix-gui
-        python python-pip git curl wget base-devel cmake pkgconf
-        autoconf automake libtool yasm nasm clang llvm
-        zimg python-numpy python-psutil python-rich jq mediainfo
-        opus-tools x265 xclip meson ninja libass
-        libjpeg-turbo libwebp libavif xxhash
-        vulkan-headers vulkan-icd-loader
+        # Build tools
+        base-devel cmake pkgconf autoconf automake libtool
+        yasm nasm clang llvm lld openmp rust meson ninja git curl wget
+        # Runtime libraries (kept as pacman deps, source-built FFmpeg at /usr/local shadows these)
+        ffmpeg x264 x265 libass freetype2 fribidi fontconfig opus
+        zimg libjpeg-turbo libwebp libavif xxhash dav1d
+        # FFmpeg link dependencies
+        libvpx lame libvorbis libsoxr gnutls srt
+        vid.stab libbluray svt-av1
+        # Python and utilities
+        python python-pip python-numpy python-psutil python-rich cython
+        jq mediainfo mkvtoolnix-cli mkvtoolnix-gui xclip opus-tools
+        # Vulkan and VA-API (for FFVship and hardware decode)
+        vulkan-headers vulkan-icd-loader libva
+        # Performance
+        mimalloc
     )
 
     # Detect GPU and add appropriate packages
@@ -40,8 +49,7 @@ install_system_deps_arch() {
 
     pacman -S --needed --noconfirm "${DEPS[@]}" || { log_error "Failed to install system dependencies via pacman"; return 1; }
 
-    # Arch/CachyOS has modern FFmpeg (8.x) — no need to compile from source
-    log_success "System packages installed."
+    log_success "Build tools and system libraries installed."
 }
 
 install_system_deps_debian() {
@@ -55,8 +63,11 @@ install_system_deps_debian() {
         autoconf automake libtool yasm nasm clang libavcodec-dev libavformat-dev
         libavutil-dev libswscale-dev libavdevice-dev libavfilter-dev
         libzimg-dev python3-numpy python3-psutil python3-rich jq mediainfo
-        opus-tools x265 xclip meson ninja-build libass-dev nvidia-cuda-toolkit
-        libjpeg-turbo8-dev libwebp-dev libavif-dev libxxhash-dev
+        opus-tools x265 xclip meson ninja-build libass-dev nvidia-cuda-toolkit cython3
+        libjpeg-turbo8-dev libwebp-dev libavif-dev libxxhash-dev libdav1d-dev
+        libvpx-dev libmp3lame-dev libvorbis-dev libsoxr-dev libgnutls28-dev
+        libsrt-openssl-dev libvidstab-dev libbluray-dev libva-dev
+        libfribidi-dev libfontconfig-dev
     )
 
     apt install -y "${DEPS[@]}" || { log_error "Failed to install system dependencies via apt"; return 1; }

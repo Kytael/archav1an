@@ -30,6 +30,8 @@ import os
 from pathlib import Path
 import platform
 import re
+import select
+import sys
 # from scipy import fftpack, interpolate, signal, stats
 import shutil
 import subprocess
@@ -1708,7 +1710,7 @@ if not resume or not scene_detection_scenes_file.exists():
             "--audio-params", "-an",
             "--concat", "mkvmerge"
         ]
-        scene_detection_x264_process = subprocess.Popen(command, text=True, stderr=subprocess.DEVNULL)
+        scene_detection_x264_process = subprocess.Popen(command, text=True, stderr=subprocess.PIPE)
 
 
     if scene_detection_perform_av1an:
@@ -1737,7 +1739,7 @@ if not resume or not scene_detection_scenes_file.exists():
             *zone_default.scene_detection_av1an_parameters(),
             "--force-keyframes", ",".join(scene_detection_av1an_force_keyframes)
         ]
-        scene_detection_process = subprocess.Popen(command, text=True, stderr=subprocess.DEVNULL)
+        scene_detection_process = subprocess.Popen(command, text=True)
 
         
     if not scene_detection_diffs_available:
@@ -1868,7 +1870,22 @@ if not resume or not scene_detection_scenes_file.exists():
 
     if scene_detection_perform_x264:
         if scene_detection_x264_process.poll() is None:
-            print(f"\r\033[K{frame_print(0)} / Performing x264 based scene detection", end="", flush=True)
+            # Pass through av1an's stderr (progress bar) but filter out harmless FFmpeg audio warnings
+            import fcntl, os as _os
+            fd = scene_detection_x264_process.stderr.fileno()
+            flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+            fcntl.fcntl(fd, fcntl.F_SETFL, flags | _os.O_NONBLOCK)
+            while scene_detection_x264_process.poll() is None:
+                if select.select([scene_detection_x264_process.stderr], [], [], 0.5)[0]:
+                    try:
+                        chunk = _os.read(fd, 4096).decode("utf-8", errors="replace")
+                        # Filter out FFmpeg audio warning lines
+                        filtered = re.sub(r'[^\r\n]*WARN.*(?:audio|FFmpeg failed to encode)[^\r\n]*', '', chunk)
+                        if filtered.strip('\r\n'):
+                            sys.stderr.write(filtered)
+                            sys.stderr.flush()
+                    except (BlockingIOError, OSError):
+                        pass
         scene_detection_x264_process.wait()
         print(f"\r\033[K{frame_print(scene_detection_x264_total_frames_print)} / x264 based scene detection finished", end="\n", flush=True)
 
@@ -3294,7 +3311,7 @@ if metric_has_metric:
             "--scenes", probing_scenes_file,
             *zone_default.probing_av1an_parameters(f"[K[0m[1;3m> Progression Boost [0m[3m{probing_output_file.stem}[0m[1;3m <[0m")
         ]
-        return subprocess.Popen(command, text=True, stderr=subprocess.DEVNULL)
+        return subprocess.Popen(command, text=True)
 
     probing_first_tmp_dir = progression_boost_temp_dir / f"probe-encode-first.tmp"
     probing_first_done_file = probing_first_tmp_dir / "done.json"

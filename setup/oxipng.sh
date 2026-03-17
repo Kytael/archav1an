@@ -6,35 +6,40 @@ if [ -z "$COMMON_SOURCED" ]; then
 fi
 
 install_oxipng() {
-    if command -v pacman &> /dev/null; then
-        if ! pacman -Qi oxipng &> /dev/null; then
-            log_info "Installing oxipng via pacman..."
-            pacman -S --noconfirm oxipng || { log_error "Failed to install oxipng with pacman"; return 1; }
-        else
-            log_info "oxipng is already installed (pacman)."
-        fi
-    else
-        if ! command -v oxipng &> /dev/null; then
-            log_info "Installing oxipng via cargo..."
-            [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
-            cargo install oxipng || { log_error "Failed to install oxipng via cargo"; return 1; }
+    if [ -f /usr/local/bin/oxipng ]; then
+        log_info "oxipng (source-built) is already installed."
+        return 0
+    fi
 
-            if [ -f "$HOME/.cargo/bin/oxipng" ]; then
-                cp "$HOME/.cargo/bin/oxipng" /usr/local/bin/oxipng
-                chmod +x /usr/local/bin/oxipng
-                log_success "oxipng installed."
-            fi
+    log_info "Compiling oxipng from source with native optimizations..."
+    set_native_build_flags
+
+    # Ensure Rust is available
+    if ! command -v cargo &> /dev/null; then
+        if command -v pacman &> /dev/null; then
+            pacman -S --needed --noconfirm rust || { log_error "Failed to install Rust"; return 1; }
         else
-            log_info "oxipng is already installed."
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y || { log_error "Failed to install Rust via rustup"; return 1; }
+            source "$HOME/.cargo/env"
         fi
+    fi
+    [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
+    export PATH="$HOME/.cargo/bin:$PATH"
+
+    cargo install oxipng || { log_error "Failed to install oxipng via cargo"; return 1; }
+
+    if [ -f "$HOME/.cargo/bin/oxipng" ]; then
+        cp "$HOME/.cargo/bin/oxipng" /usr/local/bin/oxipng
+        chmod +x /usr/local/bin/oxipng
+        log_success "oxipng installed with LTO and -march=native."
+    else
+        log_warn "oxipng binary not found in cargo bin after install?"
+        return 1
     fi
 }
 
 uninstall_oxipng() {
     log_info "Uninstalling oxipng..."
-    if command -v pacman &> /dev/null; then
-        pacman -R --noconfirm oxipng 2>/dev/null || true
-    fi
     rm -vf /usr/local/bin/oxipng
     [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
     cargo uninstall oxipng 2>/dev/null || true
