@@ -6,7 +6,7 @@ if [ -z "$COMMON_SOURCED" ]; then
 fi
 
 install_av1an() {
-    if [ -f /usr/local/bin/av1an ]; then
+    if [ -f /usr/local/bin/av1an ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         log_info "av1an (source-built) is already installed."
         return 0
     fi

@@ -136,8 +136,10 @@ detect_gpu() {
         done
     fi
 
-    # Check for NVIDIA GPU
-    if lspci 2>/dev/null | grep -qi "VGA.*NVIDIA\|Display.*NVIDIA\|3D.*NVIDIA"; then
+    # Check for NVIDIA GPU (lspci fallback to nvidia-smi for WSL2)
+    if lspci 2>/dev/null | grep -qi "VGA.*NVIDIA\|Display.*NVIDIA\|3D.*NVIDIA" || \
+       nvidia-smi &>/dev/null || \
+       /usr/lib/wsl/lib/nvidia-smi &>/dev/null; then
         if [ "$GPU_VENDOR" = "amd" ]; then
             GPU_VENDOR="both"
         else
@@ -185,6 +187,16 @@ detect_gpu() {
         else
             log_warn "AMD GPU detected but could not determine gfx target."
             log_warn "You may need to set HSA_OVERRIDE_GFX_VERSION manually."
+        fi
+    fi
+
+    if [ "$GPU_VENDOR" = "nvidia" ] || [ "$GPU_VENDOR" = "both" ]; then
+        if [ -d "/opt/cuda/bin" ]; then
+            export PATH="/opt/cuda/bin:$PATH"
+            if [ ! -f /etc/profile.d/cuda.sh ]; then
+                echo 'export PATH="/opt/cuda/bin:$PATH"' > /etc/profile.d/cuda.sh
+                log_info "Added /opt/cuda/bin to system PATH via /etc/profile.d/cuda.sh"
+            fi
         fi
     fi
 

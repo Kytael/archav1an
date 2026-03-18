@@ -8,7 +8,7 @@ fi
 install_svt_av1() {
     # Check for PSY fork specifically — the standard svt-av1 from pacman won't have PSY flags
     local need_build=true
-    if [ -f /usr/local/bin/SvtAv1EncApp ]; then
+    if [ -f /usr/local/bin/SvtAv1EncApp ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         need_build=false
         log_info "SVT-AV1-PSY already installed at /usr/local/bin/SvtAv1EncApp."
     fi

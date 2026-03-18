@@ -6,7 +6,7 @@ if [ -z "$COMMON_SOURCED" ]; then
 fi
 
 install_ffvship() {
-    if command -v FFVship &> /dev/null; then
+    if command -v FFVship &> /dev/null && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         log_info "FFVship is already installed."
         return 0
     fi

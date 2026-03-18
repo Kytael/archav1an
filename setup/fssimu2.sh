@@ -6,7 +6,7 @@ if [ -z "$COMMON_SOURCED" ]; then
 fi
 
 install_fssimu2() {
-    if command -v fssimu2 &> /dev/null; then
+    if command -v fssimu2 &> /dev/null && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         log_info "fssimu2 is already installed."
         return 0
     fi

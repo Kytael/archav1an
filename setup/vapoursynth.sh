@@ -6,7 +6,7 @@ if [ -z "$COMMON_SOURCED" ]; then
 fi
 
 install_vapoursynth() {
-    if [ -f /usr/local/bin/vspipe ]; then
+    if [ -f /usr/local/bin/vspipe ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         log_info "VapourSynth (source-built) is already installed."
         return 0
     fi

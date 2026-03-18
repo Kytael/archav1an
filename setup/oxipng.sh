@@ -6,7 +6,7 @@ if [ -z "$COMMON_SOURCED" ]; then
 fi
 
 install_oxipng() {
-    if [ -f /usr/local/bin/oxipng ]; then
+    if [ -f /usr/local/bin/oxipng ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         log_info "oxipng (source-built) is already installed."
         return 0
     fi

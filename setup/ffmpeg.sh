@@ -6,7 +6,7 @@ if [ -z "$COMMON_SOURCED" ]; then
 fi
 
 install_dav1d() {
-    if [ -f /usr/local/lib/libdav1d.so ]; then
+    if [ -f /usr/local/lib/libdav1d.so ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         log_info "dav1d (source-built) is already installed."
         return 0
     fi
@@ -74,7 +74,7 @@ _ffmpeg_configure() {
 }
 
 install_ffmpeg() {
-    if [ -f /usr/local/bin/ffmpeg ]; then
+    if [ -f /usr/local/bin/ffmpeg ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         log_info "FFmpeg (source-built) is already installed."
         return 0
     fi

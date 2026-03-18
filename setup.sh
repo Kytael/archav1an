@@ -158,6 +158,7 @@ install_tool() {
             return 0
         fi
         install_queue+=("$target_tool")
+        FORCE_REINSTALL=1
     fi
 
     echo ""
@@ -192,6 +193,7 @@ install_tool() {
         fi
     done
     
+    FORCE_REINSTALL=0
     log_success "Operation completed."
 }
 
