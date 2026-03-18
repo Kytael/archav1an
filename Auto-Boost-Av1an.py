@@ -869,7 +869,16 @@ def final_pass() -> None:
 
     try:
         # Run in tmp_dir so it picks up files from current dir
-        subprocess.run(av1an_cmd, check=True, cwd=tmp_dir)
+        # Use Popen with process group so Ctrl+C can kill the entire tree
+        proc = subprocess.Popen(av1an_cmd, cwd=tmp_dir, start_new_session=True)
+        proc.wait()
+        if proc.returncode != 0:
+            raise subprocess.CalledProcessError(proc.returncode, av1an_cmd)
+    except KeyboardInterrupt:
+        import signal as _signal
+        os.killpg(proc.pid, _signal.SIGTERM)
+        proc.wait()
+        raise SystemExit(1)
     except subprocess.CalledProcessError as e:
         console.print(f"[red]Final pass failed:[/red]\n{e}")
         raise SystemExit(1)

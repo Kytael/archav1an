@@ -1609,6 +1609,9 @@ if not resume or not scene_detection_scenes_file.exists():
         scene_detection_has_external = False
 
 
+    def _x264_status():
+        return ""
+
     if scene_detection_perform_x264:
         scene_detection_x264_output_file.unlink(missing_ok=True)
         scene_detection_x264_stats_dir.mkdir(exist_ok=True)
@@ -1684,8 +1687,7 @@ if not resume or not scene_detection_scenes_file.exists():
             "av1an",
             "-y"
         ]
-        if verbose < 2:
-            command += ["--quiet"]
+        # Don't add --quiet here — we need indicatif progress output via PTY
         if verbose >= 3:
             command += ["--verbose"]
         command += [
@@ -1709,37 +1711,53 @@ if not resume or not scene_detection_scenes_file.exists():
             "--force", "--video-params", f"[K[0m[1;3m> Progressive Scene Detection [0m[3mx264-based-scene-detection[0m[1;3m <[0m",
             "--concat", "mkvmerge"
         ]
-        scene_detection_x264_process = subprocess.Popen(command, text=True, stderr=subprocess.PIPE)
-
-        # Start background thread to pass through av1an's stderr in real-time
-        import threading
-        def _x264_stderr_reader(proc):
-            import fcntl, os as _os
-            fd = proc.stderr.fileno()
-            flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-            fcntl.fcntl(fd, fcntl.F_SETFL, flags | _os.O_NONBLOCK)
-            while proc.poll() is None:
-                if select.select([proc.stderr], [], [], 0.5)[0]:
+        import pty, threading
+        _x264_pty_master, _x264_pty_slave = pty.openpty()
+        scene_detection_x264_process = subprocess.Popen(command, text=False, stdout=subprocess.DEVNULL, stderr=_x264_pty_slave)
+        os.close(_x264_pty_slave)  # Close slave in parent — child has it
+        _x264_progress = ["starting..."]
+        def _x264_stderr_reader(master_fd):
+            import fcntl
+            flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+            fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+            buf = ""
+            while scene_detection_x264_process.poll() is None:
+                if select.select([master_fd], [], [], 0.5)[0]:
                     try:
-                        chunk = _os.read(fd, 4096).decode("utf-8", errors="replace")
-                        filtered = re.sub(r'[^\r\n]*WARN.*(?:audio|FFmpeg failed to encode)[^\r\n]*', '', chunk)
-                        if filtered.strip('\r\n'):
-                            sys.stderr.write(filtered)
-                            sys.stderr.flush()
+                        chunk = os.read(master_fd, 4096).decode("utf-8", errors="replace")
+                        buf += chunk
+                        # Parse latest progress from \r-delimited lines
+                        parts = buf.split("\r")
+                        if len(parts) > 1:
+                            for part in parts[:-1]:
+                                # Strip ANSI escape codes for parsing
+                                clean = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', part).strip()
+                                if clean:
+                                    m = re.search(r'(\d+)/(\d+)\s*\((\d+)%\)', clean)
+                                    if m:
+                                        _x264_progress[0] = f"{m.group(1)}/{m.group(2)} ({m.group(3)}%)"
+                                    else:
+                                        m2 = re.search(r'(\d+)\s*frames', clean)
+                                        if m2:
+                                            _x264_progress[0] = f"{m2.group(1)} frames"
+                            buf = parts[-1]
                     except (BlockingIOError, OSError):
                         pass
             # Drain remaining
             try:
-                remaining = proc.stderr.read()
-                if remaining:
-                    filtered = re.sub(r'[^\r\n]*WARN.*(?:audio|FFmpeg failed to encode)[^\r\n]*', '', remaining)
-                    if filtered.strip('\r\n'):
-                        sys.stderr.write(filtered)
-                        sys.stderr.flush()
-            except (BlockingIOError, OSError):
+                while True:
+                    chunk = os.read(master_fd, 4096)
+                    if not chunk:
+                        break
+            except OSError:
                 pass
-        scene_detection_x264_thread = threading.Thread(target=_x264_stderr_reader, args=(scene_detection_x264_process,), daemon=True)
-        scene_detection_x264_thread.start()
+            os.close(master_fd)
+        _x264_thread = threading.Thread(target=_x264_stderr_reader, args=(_x264_pty_master,), daemon=True)
+        _x264_thread.start()
+        def _x264_status():
+            if scene_detection_x264_process.poll() is None:
+                return f" | x264: {_x264_progress[0]}"
+            return " | x264: done"
 
 
     if scene_detection_perform_av1an:
@@ -1782,7 +1800,7 @@ if not resume or not scene_detection_scenes_file.exists():
             scene_detection_min = np.empty((scene_detection_luma_clip.num_frames,), dtype=np.float32)
             scene_detection_max = np.empty((scene_detection_luma_clip.num_frames,), dtype=np.float32)
             for current_frame, frame in enumerate(scene_detection_luma_clip.frames(backlog=48)):
-                print(f"\r\033[K{frame_print(current_frame)} / Measuring frame luminance / {current_frame / (time.time() - start):.2f} fps", end="\r", flush=True)
+                print(f"\r\033[K{frame_print(current_frame)} / Measuring frame luminance / {current_frame / (time.time() - start):.2f} fps{_x264_status()}", end="\r", flush=True)
                 scene_detection_diffs[current_frame] = frame.props["LumaDiff"]
                 scene_detection_average[current_frame] = frame.props["LumaAverage"]
                 scene_detection_min[current_frame] = frame.props["LumaMin"]
@@ -1841,7 +1859,7 @@ if not resume or not scene_detection_scenes_file.exists():
                 start = time.time() - 0.000001
                 for offset_frame, frame in enumerate(scene_detection_clip.frames(backlog=48)):
                     current_frame = zone["start_frame"] + offset_frame
-                    print(f"\r\033[K{frame_print(current_frame)} / Detecting scenes / {offset_frame / (time.time() - start):.2f} fps", end="", flush=True)
+                    print(f"\r\033[K{frame_print(current_frame)} / Detecting scenes / {offset_frame / (time.time() - start):.2f} fps{_x264_status()}", end="", flush=True)
 
                     if not scene_detection_diffs_available:
                         scene_detection_diffs[current_frame] = frame.props["LumaDiff"]
@@ -1898,7 +1916,7 @@ if not resume or not scene_detection_scenes_file.exists():
 
 
     if scene_detection_perform_x264:
-        scene_detection_x264_thread.join()
+        _x264_thread.join()
         scene_detection_x264_process.wait()
         print(f"\r\033[K{frame_print(scene_detection_x264_total_frames_print)} / x264 based scene detection finished", end="\n", flush=True)
 
