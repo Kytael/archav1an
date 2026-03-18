@@ -58,9 +58,9 @@ for f in [Ii]nput/*.[Mm][Kk][Vv] [Ii]nput/*.[Mm][Pp]4 [Ii]nput/*.[Mm]2[Tt][Ss]; 
     echo "Processing \"$f\"..."
     echo "-------------------------------------------------------------------------------"
 
-    # Anime Standard (CRF 30) Params — v1.66 5fish svt-av1-psy
+    # Anime Standard (CRF 32) Params — v1.66 5fish svt-av1-psy
     python3 tools/dispatch.py -i "$f" -o "$OUTPUT_FILE" --scenes "$SCENE_FILE" \
-        --quality 30 \
+        --quality 32 \
         --ssimu2 "$SSIMU2_TOOL" \
         --ssimu2-cpu-workers "$SSIMU2_WORKERS" \
         --resume \
