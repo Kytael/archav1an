@@ -152,7 +152,7 @@ try:
     enc = core.ffms2.Source(source=r"{encoded_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")[::SKIP]
     
     # Init vship
-    res = core.vship.SSIMULACRA2(src, enc, numStream = 3)
+    res = core.vship.SSIMULACRA2(src, enc, numStream = 4)
     
     start = time.time()
     frames = [0]

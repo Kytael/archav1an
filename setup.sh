@@ -281,6 +281,7 @@ show_menu() {
     fi
     echo "Q. Quit"
     echo "=========================================================="
+    stty sane 2>/dev/null
     read -p "Select option(s) (e.g., 1 3 5): " choice_input
     
     # Toggle Mode
@@ -302,6 +303,7 @@ show_menu() {
             fi
         fi
         
+        stty sane 2>/dev/null
         echo "Press Enter to return to menu..."
         read
         show_menu "$mode"

@@ -1707,10 +1707,39 @@ if not resume or not scene_detection_scenes_file.exists():
             "--pix-format", "yuv420p10le",
             "--workers", "2",
             "--force", "--video-params", f"[K[0m[1;3m> Progressive Scene Detection [0m[3mx264-based-scene-detection[0m[1;3m <[0m",
-            "--audio-params", "-an",
             "--concat", "mkvmerge"
         ]
         scene_detection_x264_process = subprocess.Popen(command, text=True, stderr=subprocess.PIPE)
+
+        # Start background thread to pass through av1an's stderr in real-time
+        import threading
+        def _x264_stderr_reader(proc):
+            import fcntl, os as _os
+            fd = proc.stderr.fileno()
+            flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+            fcntl.fcntl(fd, fcntl.F_SETFL, flags | _os.O_NONBLOCK)
+            while proc.poll() is None:
+                if select.select([proc.stderr], [], [], 0.5)[0]:
+                    try:
+                        chunk = _os.read(fd, 4096).decode("utf-8", errors="replace")
+                        filtered = re.sub(r'[^\r\n]*WARN.*(?:audio|FFmpeg failed to encode)[^\r\n]*', '', chunk)
+                        if filtered.strip('\r\n'):
+                            sys.stderr.write(filtered)
+                            sys.stderr.flush()
+                    except (BlockingIOError, OSError):
+                        pass
+            # Drain remaining
+            try:
+                remaining = proc.stderr.read()
+                if remaining:
+                    filtered = re.sub(r'[^\r\n]*WARN.*(?:audio|FFmpeg failed to encode)[^\r\n]*', '', remaining)
+                    if filtered.strip('\r\n'):
+                        sys.stderr.write(filtered)
+                        sys.stderr.flush()
+            except (BlockingIOError, OSError):
+                pass
+        scene_detection_x264_thread = threading.Thread(target=_x264_stderr_reader, args=(scene_detection_x264_process,), daemon=True)
+        scene_detection_x264_thread.start()
 
 
     if scene_detection_perform_av1an:
@@ -1869,23 +1898,7 @@ if not resume or not scene_detection_scenes_file.exists():
 
 
     if scene_detection_perform_x264:
-        if scene_detection_x264_process.poll() is None:
-            # Pass through av1an's stderr (progress bar) but filter out harmless FFmpeg audio warnings
-            import fcntl, os as _os
-            fd = scene_detection_x264_process.stderr.fileno()
-            flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-            fcntl.fcntl(fd, fcntl.F_SETFL, flags | _os.O_NONBLOCK)
-            while scene_detection_x264_process.poll() is None:
-                if select.select([scene_detection_x264_process.stderr], [], [], 0.5)[0]:
-                    try:
-                        chunk = _os.read(fd, 4096).decode("utf-8", errors="replace")
-                        # Filter out FFmpeg audio warning lines
-                        filtered = re.sub(r'[^\r\n]*WARN.*(?:audio|FFmpeg failed to encode)[^\r\n]*', '', chunk)
-                        if filtered.strip('\r\n'):
-                            sys.stderr.write(filtered)
-                            sys.stderr.flush()
-                    except (BlockingIOError, OSError):
-                        pass
+        scene_detection_x264_thread.join()
         scene_detection_x264_process.wait()
         print(f"\r\033[K{frame_print(scene_detection_x264_total_frames_print)} / x264 based scene detection finished", end="\n", flush=True)
 

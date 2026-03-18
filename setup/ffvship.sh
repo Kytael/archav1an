@@ -44,9 +44,8 @@ install_ffvship() {
         log_info "Building FFVship with HIP (AMD)..."
         make build || { cd "$ORIG_DIR"; log_error "FFVship HIP build failed"; return 1; }
     else
-        log_warn "Neither nvcc nor hipcc found. Attempting Vulkan build (slower)."
-        log_warn "For AMD GPUs, install hip-runtime-amd for better performance."
-        make buildVulkan || { cd "$ORIG_DIR"; log_error "FFVship buildVulkan failed (no Vulkan SDK?)"; return 1; }
+        log_warn "Neither nvcc nor hipcc found. Attempting Vulkan build."
+        make buildVulkan || { cd "$ORIG_DIR"; log_error "FFVship Vulkan build failed"; return 1; }
     fi
 
     make buildFFVSHIP || { cd "$ORIG_DIR"; log_error "FFVship make buildFFVSHIP failed"; return 1; }

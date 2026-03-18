@@ -206,6 +206,7 @@ AUTO_YES=false
 ask_yes_no() {
     local prompt="$1"
     local default="$2" # Y or N
+    stty sane 2>/dev/null
 
     if [ "$AUTO_YES" = true ]; then
         echo "$prompt [auto-yes]"

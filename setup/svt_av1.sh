@@ -15,7 +15,7 @@ install_svt_av1() {
 
     if $need_build; then
         log_info "Compiling SVT-AV1-PSY (5fish Fork)..."
-        
+
         # Ensure llvm-profdata for PGO
         if ! command -v llvm-profdata &> /dev/null; then
             # On Debian, try to find a versioned binary

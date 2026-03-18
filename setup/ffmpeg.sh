@@ -120,17 +120,13 @@ install_ffmpeg() {
         -c:a aac -b:a 128k \
         "$BUILD_DIR/pgo_test_h264.mkv" 2>/dev/null || log_warn "PGO h264 encode workload failed"
 
-    # Decode h264 back (common path: reading source files)
-    ffmpeg -y -i "$BUILD_DIR/pgo_test_h264.mkv" \
-        -c:v libsvtav1 -preset 12 -crf 50 \
-        -frames:v 120 \
-        "$BUILD_DIR/pgo_test_av1.mkv" 2>/dev/null || log_warn "PGO av1 encode workload failed"
+    # Note: SVT-AV1 and dav1d PGO workloads skipped — Clang's -fprofile-generate corrupts
+    # the SVT-AV1 encoder config struct (zeroed width/height/CRF). This is a Clang bug,
+    # not fixable without patching FFmpeg source. Acceptable because FFmpeg's SVT-AV1 code
+    # is a thin wrapper, and SVT-AV1 itself has its own PGO via -DSVT_AV1_PGO=ON.
+    # The h264 encode + filter workloads still profile the decode/demux/filter hot paths.
 
-    # Decode AV1 back (exercises dav1d decode path)
-    ffmpeg -y -i "$BUILD_DIR/pgo_test_av1.mkv" \
-        -f null - 2>/dev/null || log_warn "PGO av1 decode workload failed"
-
-    # Transcode with filters (exercises zimg, ass, etc.)
+    # Transcode with filters (exercises zimg, scaling, pixel format conversion)
     ffmpeg -y -i "$BUILD_DIR/pgo_test_h264.mkv" \
         -vf "scale=1280:720,format=yuv420p10le" \
         -c:v libx264 -preset ultrafast -crf 28 \

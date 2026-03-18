@@ -993,7 +993,7 @@ def calculate_metric() -> None:
 
             # Run Vship
             result = core.vship.SSIMULACRA2(
-                cut_source_clip, cut_encoded_clip, numStream=3
+                cut_source_clip, cut_encoded_clip, numStream=4
             )
 
             def get_ssimu2props_vship(n, f):
