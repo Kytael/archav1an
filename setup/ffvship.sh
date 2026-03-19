@@ -37,7 +37,18 @@ install_ffvship() {
     git clone --branch v5.0.0 --depth 1 https://codeberg.org/Line-fr/Vship.git || { cd "$ORIG_DIR"; log_error "Failed to clone Vship"; return 1; }
     cd Vship || { cd "$ORIG_DIR"; log_error "Failed to cd into Vship"; return 1; }
 
-    if command -v nvcc &> /dev/null; then
+    # GPU_BACKEND override: set to "cuda", "hip", or "vulkan" to force a specific build
+    # e.g.: GPU_BACKEND=vulkan FORCE_REINSTALL=1 sudo ./setup.sh --install ffvship
+    if [ "${GPU_BACKEND,,}" = "cuda" ]; then
+        log_info "Building FFVship with CUDA (forced via GPU_BACKEND)..."
+        make buildcuda || { cd "$ORIG_DIR"; log_error "FFVship buildcuda failed"; return 1; }
+    elif [ "${GPU_BACKEND,,}" = "hip" ]; then
+        log_info "Building FFVship with HIP (forced via GPU_BACKEND)..."
+        make build || { cd "$ORIG_DIR"; log_error "FFVship HIP build failed"; return 1; }
+    elif [ "${GPU_BACKEND,,}" = "vulkan" ]; then
+        log_info "Building FFVship with Vulkan (forced via GPU_BACKEND)..."
+        make buildVulkan || { cd "$ORIG_DIR"; log_error "FFVship Vulkan build failed"; return 1; }
+    elif command -v nvcc &> /dev/null; then
         log_info "Building FFVship with CUDA (NVIDIA)..."
         make buildcuda || { cd "$ORIG_DIR"; log_error "FFVship buildcuda failed"; return 1; }
     elif command -v hipcc &> /dev/null; then

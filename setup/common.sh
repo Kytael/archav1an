@@ -213,6 +213,24 @@ detect_gpu() {
     export GPU_VENDOR GPU_GFX_TARGET
 }
 
+# Helper: detect if running under WSL2
+is_wsl2() {
+    uname -r | grep -qi microsoft
+}
+
+# Ensure WSL2 GPU driver libraries are in ldconfig (needed for CUDA)
+setup_wsl2_libs() {
+    if ! is_wsl2; then
+        return 0
+    fi
+
+    if ! ldconfig -p | grep -q "/usr/lib/wsl/lib"; then
+        echo "/usr/lib/wsl/lib" > /etc/ld.so.conf.d/wsl2-lib.conf
+        ldconfig
+        log_info "Added /usr/lib/wsl/lib to ldconfig."
+    fi
+}
+
 AUTO_YES=false
 
 ask_yes_no() {
