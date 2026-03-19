@@ -33,7 +33,7 @@ echo "SSIMU2 Mode: $SSIMU2_TOOL | SSIMU2 Workers: $SSIMU2_WORKERS"
 mkdir -p Input Output
 shopt -s nullglob
 
-for f in [Ii]nput/*.[Mm][Kk][Vv] [Ii]nput/*.[Mm][Pp]4 [Ii]nput/*.[Mm]2[Tt][Ss]; do
+for f in Input/*.[Mm][Kk][Vv] Input/*.[Mm][Pp]4 Input/*.[Mm]2[Tt][Ss]; do
     filename=$(basename -- "$f")
     stem="${filename%.*}"
     OUTPUT_FILE="Output/${stem}-av1.mkv"

@@ -30,7 +30,7 @@ echo "Starting Av1an Batch (Anime CRF 32) with $WORKER_COUNT workers..."
 mkdir -p Input Output
 shopt -s nullglob
 
-for f in [Ii]nput/*.[Mm][Kk][Vv] [Ii]nput/*.[Mm][Pp]4 [Ii]nput/*.[Mm]2[Tt][Ss]; do
+for f in Input/*.[Mm][Kk][Vv] Input/*.[Mm][Pp]4 Input/*.[Mm]2[Tt][Ss]; do
     [ -f "$f" ] || continue
     filename=$(basename -- "$f")
     stem="${filename%.*}"
