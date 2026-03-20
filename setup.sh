@@ -358,8 +358,8 @@ done
 
 check_root
 check_distro
+setup_wsl2_cuda
 detect_gpu
-setup_wsl2_libs
 
 # Filter out -y/--yes from positional args
 ARGS=()

@@ -16,12 +16,14 @@ export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
 export VAPOURSYNTH_PLUGIN_PATH="/usr/local/lib/vapoursynth"
 export PATH="/usr/local/bin:$PATH"
 
-# WSL2: GPU driver library path (needed for CUDA and D3D12)
+# WSL2: use clean CUDA symlinks (originals in /usr/lib/wsl/lib crash glibc's ld.so)
 if uname -r | grep -qi microsoft; then
-    case ":${LD_LIBRARY_PATH:-}:" in
-        *:/usr/lib/wsl/lib:*) ;;
-        *) export LD_LIBRARY_PATH="/usr/lib/wsl/lib:${LD_LIBRARY_PATH:-}" ;;
-    esac
+    if [ -d /usr/local/lib/wsl-cuda ]; then
+        case ":${LD_LIBRARY_PATH:-}:" in
+            *:/usr/local/lib/wsl-cuda:*) ;;
+            *) export LD_LIBRARY_PATH="/usr/local/lib/wsl-cuda:${LD_LIBRARY_PATH:-}" ;;
+        esac
+    fi
 fi
 
 # Use mimalloc for faster multi-threaded memory allocation (SVT-AV1, av1an, etc.)

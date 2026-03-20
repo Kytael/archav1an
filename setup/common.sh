@@ -136,10 +136,12 @@ detect_gpu() {
         done
     fi
 
-    # Check for NVIDIA GPU (lspci fallback to nvidia-smi for WSL2)
+    # Check for NVIDIA GPU (lspci, nvidia-smi, or CUDA libs for WSL2)
     if lspci 2>/dev/null | grep -qi "VGA.*NVIDIA\|Display.*NVIDIA\|3D.*NVIDIA" || \
        nvidia-smi &>/dev/null || \
-       /usr/lib/wsl/lib/nvidia-smi &>/dev/null; then
+       /usr/lib/wsl/lib/nvidia-smi &>/dev/null || \
+       [ -f /usr/lib/wsl/lib/libcuda.so ] || \
+       [ -f /opt/cuda/bin/nvcc ]; then
         if [ "$GPU_VENDOR" = "amd" ]; then
             GPU_VENDOR="both"
         else
@@ -218,16 +220,41 @@ is_wsl2() {
     uname -r | grep -qi microsoft
 }
 
-# Ensure WSL2 GPU driver libraries are in ldconfig (needed for CUDA)
-setup_wsl2_libs() {
+# WSL2 CUDA fix: the NVIDIA stubs in /usr/lib/wsl/lib (libcuda.so.1) have malformed
+# ELF hash tables that crash glibc's ld.so, breaking nvcc and CUDA runtime init.
+# Disables WSL's auto-ldconfig and creates clean symlinks at /usr/local/lib/wsl-cuda.
+setup_wsl2_cuda() {
     if ! is_wsl2; then
         return 0
     fi
-
-    if ! ldconfig -p | grep -q "/usr/lib/wsl/lib"; then
-        echo "/usr/lib/wsl/lib" > /etc/ld.so.conf.d/wsl2-lib.conf
+    if [ -f /etc/ld.so.conf.d/ld.wsl.conf ]; then
+        log_info "Disabling WSL2 auto-ldconfig (broken NVIDIA stubs crash build tools)..."
+        if ! grep -q "ldconfig = false" /etc/wsl.conf 2>/dev/null; then
+            if grep -q "\[automount\]" /etc/wsl.conf 2>/dev/null; then
+                sed -i "/\[automount\]/a ldconfig = false" /etc/wsl.conf
+            else
+                printf '\n[automount]\nldconfig = false\n' >> /etc/wsl.conf
+            fi
+        fi
+        rm -f /etc/ld.so.conf.d/ld.wsl.conf
         ldconfig
-        log_info "Added /usr/lib/wsl/lib to ldconfig."
+        log_success "WSL2 ldconfig fixed."
+    fi
+
+    # Clean CUDA symlinks: .so.1 → .so bypasses the malformed hash table in .so.1
+    local wsl_cuda_dir="/usr/local/lib/wsl-cuda"
+    if [ -f /usr/lib/wsl/lib/libcuda.so ] && [ ! -d "$wsl_cuda_dir" ]; then
+        log_info "Creating clean CUDA symlinks for WSL2..."
+        mkdir -p "$wsl_cuda_dir"
+        ln -sf /usr/lib/wsl/lib/libcuda.so "$wsl_cuda_dir/libcuda.so"
+        ln -sf /usr/lib/wsl/lib/libcuda.so "$wsl_cuda_dir/libcuda.so.1"
+        ln -sf /usr/lib/wsl/lib/libcuda.so "$wsl_cuda_dir/libcuda.so.1.1"
+        for f in /usr/lib/wsl/lib/libnvcuvid* /usr/lib/wsl/lib/libnvidia-encode* \
+                 /usr/lib/wsl/lib/libnvidia-gpucomp* /usr/lib/wsl/lib/libdxcore* \
+                 /usr/lib/wsl/lib/libd3d12*; do
+            [ -f "$f" ] && ln -sf "$f" "$wsl_cuda_dir/$(basename "$f")"
+        done
+        log_success "Clean CUDA symlinks created at $wsl_cuda_dir"
     fi
 }
 

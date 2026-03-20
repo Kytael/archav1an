@@ -37,6 +37,17 @@ install_ffvship() {
     git clone --branch v5.0.0 --depth 1 https://codeberg.org/Line-fr/Vship.git || { cd "$ORIG_DIR"; log_error "Failed to clone Vship"; return 1; }
     cd Vship || { cd "$ORIG_DIR"; log_error "Failed to cd into Vship"; return 1; }
 
+    # WSL2: nvcc -arch=native can't query the GPU, so detect via Windows nvidia-smi
+    if is_wsl2 && [ -f /mnt/c/Windows/system32/nvidia-smi.exe ]; then
+        local cc
+        cc=$(/mnt/c/Windows/system32/nvidia-smi.exe --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | tr -d '[:space:]')
+        if [ -n "$cc" ]; then
+            local sm="sm_${cc//./}"
+            log_info "WSL2: detected GPU compute capability $cc ($sm)"
+            sed -i "s/-arch=native/-arch=$sm/" Makefile
+        fi
+    fi
+
     # GPU_BACKEND override: set to "cuda", "hip", or "vulkan" to force a specific build
     # e.g.: GPU_BACKEND=vulkan FORCE_REINSTALL=1 sudo ./setup.sh --install ffvship
     if [ "${GPU_BACKEND,,}" = "cuda" ]; then
