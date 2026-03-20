@@ -73,8 +73,8 @@ for f in [Ii]nput/*.[Mm][Kk][Vv] [Ii]nput/*.[Mm][Pp]4 [Ii]nput/*.[Mm]2[Tt][Ss]; 
         --workers "$WORKER_COUNT" \
         --fast-speed 8 \
         --final-speed 4 \
-        --fast-params "--lp 3 --tune 3 --hbd-mds 0 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 2 --variance-octile 5 --enable-dlf 2 --filtering-noise-detection 4" \
-        --final-params "--lp 3 --tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 2 --variance-octile 5 --enable-dlf 2 --filtering-noise-detection 4"
+        --fast-params "--lp 3 --tune 3 --hbd-mds 0 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2" \
+        --final-params "--lp 3 --tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2"
 
 done
 
