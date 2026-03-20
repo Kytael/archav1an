@@ -5,6 +5,7 @@ Muxes AV1 encoded video with audio/subs from source.
 Includes VFR (Variable Frame Rate) support.
 """
 
+import argparse
 import os
 import subprocess
 import glob
@@ -275,5 +276,68 @@ def mux_files():
             print(f"\n[FAIL] Could not process {base_name}. Skipping.")
 
 
+def mux_single(source, av1, output):
+    """Mux a single AV1 video-only file with audio/subs from source via mkvmerge passthrough."""
+    base_name = Path(source).stem
+    temp_mkv = str(Path(output).parent / f"{base_name}_temp_no_video.mkv")
+    timestamp_file = str(Path(output).parent / f"{base_name}_timestamps.txt")
+
+    try:
+        is_vfr = check_vfr_mediainfo(source)
+        timestamps_args = []
+        total_steps = 4 if is_vfr else 2
+        current_step = 1
+
+        if is_vfr:
+            print("\033[92mVariable framerate detected, applying timecodes...\033[0m")
+            vid_track_id = get_video_track_id(source) or 0
+            cmd_extract_ts = [
+                MKVEXTRACT, source, "timestamps_v2",
+                f"{vid_track_id}:{timestamp_file}",
+            ]
+            run_command(cmd_extract_ts, f"[{base_name}] Step {current_step}/{total_steps} (Timecodes)")
+            current_step += 1
+
+            if os.path.exists(timestamp_file):
+                av1_track_id = get_video_track_id(av1) or 0
+                timestamps_args = ["--timestamps", f"{av1_track_id}:{timestamp_file}"]
+
+        cmd_step1 = [MKVMERGE, "-o", temp_mkv, "--no-video", source]
+        run_command(cmd_step1, f"[{base_name}] Step {current_step}/{total_steps} (Extract)")
+        current_step += 1
+
+        cmd_step2 = [MKVMERGE, "-o", output]
+        cmd_step2.extend(timestamps_args)
+        cmd_step2.append(av1)
+        cmd_step2.append(temp_mkv)
+        run_command(cmd_step2, f"[{base_name}] Step {current_step}/{total_steps} (Merge)")
+        current_step += 1
+
+        if is_vfr:
+            force_vfr_metadata(output, f"[{base_name}] Step {current_step}/{total_steps} (VFR Fix)")
+
+        if os.path.exists(temp_mkv):
+            os.remove(temp_mkv)
+        if os.path.exists(timestamp_file):
+            os.remove(timestamp_file)
+
+    except subprocess.CalledProcessError:
+        print(f"\n[FAIL] Could not mux {base_name}.")
+        return False
+
+    return True
+
+
 if __name__ == "__main__":
-    mux_files()
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(description="Mux AV1 video with audio/subs from source")
+    parser.add_argument("--source", help="Source file with audio/subs")
+    parser.add_argument("--av1", help="AV1 video-only file")
+    parser.add_argument("--output", help="Output muxed file")
+    cli_args = parser.parse_args()
+
+    if cli_args.source and cli_args.av1 and cli_args.output:
+        mux_single(cli_args.source, cli_args.av1, cli_args.output)
+    else:
+        mux_files()

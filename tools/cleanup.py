@@ -4,7 +4,7 @@ import glob
 
 
 def cleanup_workspace():
-    # Directories to scan for trash
+    # Directories to scan for trash (flat scan for root-level junk)
     scan_dirs = [".", "Input", "Output"]
 
     # Extensions to delete (Files)
@@ -50,6 +50,7 @@ def cleanup_workspace():
                     ".idea",
                     "Input",
                     "Output",
+                    "Temp",
                     "tools",
                     "VapourSynth",
                     "__pycache__",
@@ -79,6 +80,63 @@ def cleanup_workspace():
                     except:
                         pass
 
+    # 2b. Recursive cleanup of Temp/ directory (pipeline temp files)
+    temp_root = "Temp"
+    if os.path.exists(temp_root):
+        # Walk Temp/ and remove empty directories bottom-up
+        # Also remove stale temp files (ffindex, lwi, json, log, etc.)
+        for root, dirs, files in os.walk(temp_root, topdown=False):
+            for f in files:
+                fpath = os.path.join(root, f)
+                for ext in extensions:
+                    if f.lower().endswith(ext):
+                        try:
+                            os.remove(fpath)
+                            print(f"Deleted: {fpath}")
+                        except:
+                            pass
+                        break
+            # Remove directory if empty after file cleanup
+            try:
+                if not os.listdir(root):
+                    os.rmdir(root)
+                    print(f"Deleted empty dir: {root}")
+            except:
+                pass
+
+    # 2c. Recursive cleanup of temp files inside Output/ subdirectories
+    output_dir = "Output"
+    if os.path.exists(output_dir):
+        for root, dirs, files in os.walk(output_dir):
+            for f in files:
+                fpath = os.path.join(root, f)
+                for ext in extensions:
+                    if f.lower().endswith(ext):
+                        try:
+                            os.remove(fpath)
+                            print(f"Deleted: {fpath}")
+                        except:
+                            pass
+                        break
+
+    # 2d. Recursive cleanup of temp files inside Input/ subdirectories
+    input_dir = "Input"
+    if os.path.exists(input_dir):
+        for root, dirs, files in os.walk(input_dir):
+            # Skip the Input/ root (already handled above)
+            if root == input_dir:
+                continue
+            for f in files:
+                fpath = os.path.join(root, f)
+                for ext in extensions:
+                    if f.lower().endswith(ext):
+                        try:
+                            os.remove(fpath)
+                            print(f"Deleted: {fpath}")
+                        except:
+                            pass
+                        break
+
     # 3. DELETE filter/*.ffindex files (filter dir uses FFMS2 caches too)
     filter_dir = "filter"
     if os.path.exists(filter_dir):
@@ -98,13 +156,16 @@ def cleanup_workspace():
         except:
             pass
 
-    # 5. DELETE Input/*.bsindex files (bestsource index files)
-    for f in glob.glob(os.path.join("Input", "*.bsindex")):
-        try:
-            os.remove(f)
-            print(f"Deleted: {f}")
-        except:
-            pass
+    # 5. DELETE Input/*.bsindex files (bestsource index files) — recursive
+    for root, _dirs, files in os.walk("Input") if os.path.exists("Input") else []:
+        for f in files:
+            if f.lower().endswith(".bsindex"):
+                fpath = os.path.join(root, f)
+                try:
+                    os.remove(fpath)
+                    print(f"Deleted: {fpath}")
+                except:
+                    pass
 
     # 6. DELETE tools/ssimu2_bench_temp/ folder (leftover from benchmarking)
     bench_temp = os.path.join("tools", "ssimu2_bench_temp")

@@ -685,6 +685,7 @@ def get_file_info(
             if "scenes" in scene_data:
                 for s in scene_data["scenes"]:
                     iframe_list.append(s["start_frame"])
+                iframe_list.sort()
             else:
                 console.print(
                     "[red]Invalid external scenes JSON format. Falling back to detection.[/red]"
@@ -1486,6 +1487,11 @@ def calculate_zones_json(ranges: list[float], hr: bool, nframe: int) -> None:
             end_frame = nframe
         else:
             end_frame = ranges[index + 1]
+
+        if end_frame <= start_frame:
+            if verbose:
+                console.print(f"[yellow]Skipping invalid chunk [{start_frame}:{end_frame}][/yellow]")
+            continue
 
         if verbose:
             console.print(
