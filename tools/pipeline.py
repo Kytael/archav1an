@@ -128,6 +128,16 @@ PRESETS = {
         "fast_params": "--lp 3 --tune 0 --hbd-mds 0 --keyint 305 --noise-level-thr 16000 --lineart-psy-bias 4 --texture-psy-bias 2 --filtering-noise-detection 4",
         "final_params": "--lp 3 --tune 0 --hbd-mds 1 --keyint 305 --noise-level-thr 16000 --lineart-psy-bias 4 --texture-psy-bias 2 --filtering-noise-detection 4",
     },
+    "dance-crf27": {
+        "quality": 27,
+        "photon_noise": 6,
+        "fast_speed": 8,
+        "final_speed": 4,
+        "autocrop": True,
+        "aggressive": False,
+        "fast_params": "--lp 3 --tune 3 --hbd-mds 0 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 2 --variance-octile 5 --enable-dlf 2 --filtering-noise-detection 4",
+        "final_params": "--lp 3 --tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 2 --variance-octile 5 --enable-dlf 2 --filtering-noise-detection 4",
+    },
     "sports-crf27": {
         "quality": 27,
         "photon_noise": 6,

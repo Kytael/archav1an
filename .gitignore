@@ -7,6 +7,7 @@ __pycache__/
 Input/
 input/
 Output/
+Temp/
 build_tmp/
 cropdetect-temp/
 logs/
