@@ -41,8 +41,6 @@ import traceback
 import vapoursynth as vs
 from vapoursynth import core
 
-if platform.system() == "Windows":
-    os.system("")
 
 class NumpyEncoder(json.JSONEncoder):
     def default(self, object):

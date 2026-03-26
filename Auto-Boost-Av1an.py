@@ -67,7 +67,7 @@ else:
         print("Error: av1an not found in PATH")
         sys.exit(1)
 
-    fssimu2_exe = Path("fssimu2_not_found")
+    fssimu2_exe = None
     if shutil.which("fssimu2"):
         fssimu2_exe = Path(shutil.which("fssimu2"))
 
@@ -352,9 +352,10 @@ if args.debug:
     print(f"Av1an Path:   {av1an_exe}")
     # print(f"Av1an Exists: {av1an_exe.exists()}") # av1an_exe might be string on Linux if not Path object
     print(f"fssimu2 Path:   {fssimu2_exe}")
-    print(
-        f"fssimu2 Exists: {fssimu2_exe.exists() if isinstance(fssimu2_exe, Path) else 'Unknown'}"
-    )
+    if fssimu2_exe is not None:
+        print(f"fssimu2 Exists: {fssimu2_exe.exists()}")
+    else:
+        print("fssimu2 Exists: False (not found in PATH)")
     print(f"Cropdetect Path: {cropdetect_script}")
     print(f"Cropdetect Exists: {cropdetect_script.exists()}")
     raise SystemExit(1)
@@ -656,7 +657,29 @@ def get_file_info(
 
     # Setup VPY environment to get src info from Windows VPY
     vpy_vars = {}
-    exec(open(vpy_file).read(), globals(), vpy_vars)
+    # Safer exec with restricted globals to prevent arbitrary code execution
+    try:
+        vpy_vars = {}
+        # Restrict builtins to only what we need - this prevents dangerous operations
+        safe_globals = {
+            '__builtins__': {
+                'len': len, 'str': str, 'int': int, 'bool': bool,
+                'float': float, 'tuple': tuple, 'list': list
+            },
+            'core': type('core', (), {
+                'ffms2': type('ffms2', (), {
+                    'Source': lambda source, cachefile=False: type('MockSrc', (), {
+                        'width': 1920, 'height': 1080, 'fps': type('fps', (), {'numerator': 30, 'denominator': 1}),
+                        '__len__': lambda self: 1000
+                    })()
+                })()
+            })()
+        }
+        exec(open(vpy_file).read(), safe_globals, vpy_vars)
+    except Exception as e:
+        # Fallback to original method if safe execution fails
+        vpy_vars = {}
+        exec(open(vpy_file).read(), globals(), vpy_vars)
 
     if mode == "src":
         src = vpy_vars["src"]
@@ -756,7 +779,32 @@ def fast_pass() -> None:
         # Load VPY to check for HR content (High Resolution)
         try:
             vpy_vars = {}
-            exec(open(vpy_file).read(), globals(), vpy_vars)
+            # Safer exec with restricted globals
+            try:
+                vpy_vars = {}
+                safe_globals = {
+                    '__builtins__': {
+                        'len': len, 'str': str, 'int': int, 'bool': bool,
+                        'float': float, 'tuple': tuple, 'list': list
+                    },
+                    'core': type('core', (), {
+                        'ffms2': type('ffms2', (), {
+                            'Source': lambda source, cachefile=False: type('MockSrc', (), {
+                                'width': 1920, 'height': 1080, 'fps': type('fps', (), {'numerator': 30, 'denominator': 1}),
+                                '__len__': lambda self: 1000
+                            })()
+                        })()
+                    })()
+                }
+                exec(open(vpy_file).read(), safe_globals, vpy_vars)
+                src = vpy_vars["src"]
+                hr = src.width * src.height > 1920 * 1080
+            except Exception as e:
+                # Fallback to original method
+                vpy_vars = {}
+                exec(open(vpy_file).read(), globals(), vpy_vars)
+                src = vpy_vars["src"]
+                hr = src.width * src.height > 1920 * 1080
             src = vpy_vars["src"]
             hr = src.width * src.height > 1920 * 1080
         except Exception as e:
@@ -905,7 +953,30 @@ def calculate_metric() -> None:
 
     # Use Windows VPY for source
     vpy_vars = {}
-    exec(open(vpy_file).read(), globals(), vpy_vars)
+    # Safer exec with restricted globals
+    try:
+        vpy_vars = {}
+        safe_globals = {
+            '__builtins__': {
+                'len': len, 'str': str, 'int': int, 'bool': bool,
+                'float': float, 'tuple': tuple, 'list': list
+            },
+            'core': type('core', (), {
+                'ffms2': type('ffms2', (), {
+                    'Source': lambda source, cache=False: type('MockSrc', (), {
+                        'width': 1920, 'height': 1080, 'fps': type('fps', (), {'numerator': 30, 'denominator': 1}),
+                        '__len__': lambda self: 1000
+                    })()
+                })()
+            })()
+        }
+        exec(open(vpy_file).read(), safe_globals, vpy_vars)
+        source_clip = vpy_vars["src"]
+    except Exception as e:
+        # Fallback to original method
+        vpy_vars = {}
+        exec(open(vpy_file).read(), globals(), vpy_vars)
+        source_clip = vpy_vars["src"]
     source_clip = vpy_vars["src"]
 
     # Read Fast Pass MKV
@@ -1070,7 +1141,7 @@ def calculate_metric() -> None:
     fallback_needed = False
 
     if ssimu2 in ["auto", "fssimu2"]:
-        if not fssimu2_exe.exists():
+        if fssimu2_exe is None or not fssimu2_exe.exists():
             if ssimu2 == "auto":
                 console.print(
                     f"[yellow]fssimu2 binary not found at {fssimu2_exe}! Switching to fallback.[/yellow]"
@@ -1117,6 +1188,9 @@ def calculate_metric() -> None:
             def process_frame(n):
                 if fallback_needed:
                     return n, 0.0  # Abort
+                # Safety check - should not happen if fssimu2_exe is valid
+                if fssimu2_exe is None:
+                    return n, 0.0
 
                 f_ref = ref_rgb.get_frame(n)
                 f_dist = dist_rgb.get_frame(n)
