@@ -37,8 +37,8 @@ def cleanup_workspace():
                         try:
                             os.remove(item_path)
                             print(f"Deleted: {item_path}")
-                        except:
-                            pass
+                        except OSError as e:
+                            print(f"  [WARN] Could not remove {item_path}: {e}")
                         break
 
             # 2. DELETE DIRECTORIES (Temp folders)
@@ -77,8 +77,8 @@ def cleanup_workspace():
                     try:
                         shutil.rmtree(item_path)
                         print(f"Deleted temp dir: {item_path}")
-                    except:
-                        pass
+                    except OSError as e:
+                        print(f"  [WARN] Could not remove {item_path}: {e}")
 
     # 2b. Recursive cleanup of Temp/ directory (pipeline temp files)
     temp_root = "Temp"
@@ -93,15 +93,15 @@ def cleanup_workspace():
                         try:
                             os.remove(fpath)
                             print(f"Deleted: {fpath}")
-                        except:
-                            pass
+                        except OSError as e:
+                            print(f"  [WARN] Could not remove {fpath}: {e}")
                         break
             # Remove directory if empty after file cleanup
             try:
                 if not os.listdir(root):
                     os.rmdir(root)
                     print(f"Deleted empty dir: {root}")
-            except:
+            except OSError:
                 pass
 
     # 2c. Recursive cleanup of temp files inside Output/ subdirectories
@@ -115,8 +115,8 @@ def cleanup_workspace():
                         try:
                             os.remove(fpath)
                             print(f"Deleted: {fpath}")
-                        except:
-                            pass
+                        except OSError as e:
+                            print(f"  [WARN] Could not remove {fpath}: {e}")
                         break
 
     # 2d. Recursive cleanup of temp files inside Input/ subdirectories
@@ -133,8 +133,8 @@ def cleanup_workspace():
                         try:
                             os.remove(fpath)
                             print(f"Deleted: {fpath}")
-                        except:
-                            pass
+                        except OSError as e:
+                            print(f"  [WARN] Could not remove {fpath}: {e}")
                         break
 
     # 3. DELETE filter/*.ffindex files (filter dir uses FFMS2 caches too)
@@ -144,8 +144,8 @@ def cleanup_workspace():
             try:
                 os.remove(f)
                 print(f"Deleted: {f}")
-            except:
-                pass
+            except OSError as e:
+                print(f"  [WARN] Could not remove {f}: {e}")
 
     # 4. DELETE Input/logs/ folder (av1an leaves log dirs in source folder)
     logs_dir = os.path.join("Input", "logs")
@@ -153,8 +153,8 @@ def cleanup_workspace():
         try:
             shutil.rmtree(logs_dir)
             print(f"Deleted: {logs_dir}")
-        except:
-            pass
+        except OSError as e:
+            print(f"  [WARN] Could not remove {logs_dir}: {e}")
 
     # 5. DELETE Input/*.bsindex files (bestsource index files) — recursive
     for root, _dirs, files in os.walk("Input") if os.path.exists("Input") else []:
@@ -164,8 +164,8 @@ def cleanup_workspace():
                 try:
                     os.remove(fpath)
                     print(f"Deleted: {fpath}")
-                except:
-                    pass
+                except OSError as e:
+                    print(f"  [WARN] Could not remove {fpath}: {e}")
 
     # 6. DELETE tools/ssimu2_bench_temp/ folder (leftover from benchmarking)
     bench_temp = os.path.join("tools", "ssimu2_bench_temp")
@@ -173,8 +173,8 @@ def cleanup_workspace():
         try:
             shutil.rmtree(bench_temp)
             print(f"Deleted: {bench_temp}")
-        except:
-            pass
+        except OSError as e:
+            print(f"  [WARN] Could not remove {bench_temp}: {e}")
 
 
 if __name__ == "__main__":

@@ -55,6 +55,10 @@ for f in [Ii]nput/*.[Mm][Kk][Vv] [Ii]nput/*.[Mm][Pp]4 [Ii]nput/*.[Mm]2[Tt][Ss]; 
         echo "-------------------------------------------------------------------------------"
         python3 tools/Progressive-Scene-Detection.py -i "$f" -o "$SCENE_FILE"
     fi
+    if [ ! -f "$SCENE_FILE" ]; then
+        echo "[ERROR] Scene detection failed for \"$f\". Skipping."
+        continue
+    fi
 
     echo ""
     echo "-------------------------------------------------------------------------------"
@@ -75,6 +79,11 @@ for f in [Ii]nput/*.[Mm][Kk][Vv] [Ii]nput/*.[Mm][Pp]4 [Ii]nput/*.[Mm]2[Tt][Ss]; 
         --final-speed 4 \
         --fast-params "--lp 3 --tune 3 --hbd-mds 0 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2" \
         --final-params "--lp 3 --tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2"
+
+    if [ $? -ne 0 ]; then
+        echo "[ERROR] Encoding failed for \"$f\". Skipping."
+        continue
+    fi
 
 done
 

@@ -21,7 +21,7 @@ from vstools import vs, core, depth, DitherType, clip_async_render
 
 try:
     from vstools.functions.progress import get_render_progress, FPSColumn
-except:
+except ImportError:
     from vstools.functions.render.progress import get_render_progress, FPSColumn
 from rich.progress import (
     Progress,
@@ -371,13 +371,13 @@ if "--crf" in fast_params:
     index = fast_params.index("--crf")
     try:
         quality = float(fast_params[index + 6 : index + 11])
-    except:
+    except (ValueError, TypeError):
         try:
             quality = float(fast_params[index + 6 : index + 10])
-        except:
+        except (ValueError, TypeError):
             try:
                 quality = float(fast_params[index + 6 : index + 8])
-            except:
+            except (ValueError, TypeError):
                 print("CRF must have 0, 1 or 2 decimals.")
                 raise SystemExit(1)
 else:
@@ -408,7 +408,12 @@ if os.path.exists(tmp_dir):
                 print(f"Resuming from stage {stage_resume}.")
 
     if not resume and stage in [0, 1]:
-        shutil.rmtree(tmp_dir)
+        try:
+            shutil.rmtree(tmp_dir)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            print(f"[WARN] Could not remove temp dir {tmp_dir}: {e}")
 
 if not os.path.exists(tmp_dir):
     os.makedirs(tmp_dir)
@@ -585,12 +590,12 @@ if should_downscale:
             w_str, h_str = target_res_str.lower().split("x")
             target_w = int(w_str)
             target_h = int(h_str)
-        except:
+        except (ValueError, TypeError):
             pass
     else:
         try:
             target_w = int(target_res_str)
-        except:
+        except (ValueError, TypeError):
             pass
             
     # Calculate Height
@@ -1147,7 +1152,7 @@ def calculate_metric() -> None:
                 try:
                     current_ref_path.unlink(missing_ok=True)
                     current_dist_path.unlink(missing_ok=True)
-                except:
+                except OSError:
                     pass
 
                 return n, score
@@ -1365,7 +1370,7 @@ def merge_params(
         if k == "--photon-noise":
             try:
                 photon_noise_val = int(v)
-            except:
+            except (ValueError, TypeError):
                 pass
             # Do not add photon noise to video_params dict
         else:
@@ -1697,8 +1702,13 @@ match stage:
             final_pass()
             try:
                 shutil.move(tmp_final_output_file, final_output_file)
-            except:
-                pass  # Can crash if same file
+            except shutil.SameFileError:
+                pass
+            except Exception as e:
+                console.print(f"[red][CRITICAL] Failed to move final output: {e}")
+                console.print(f"[red]  Source: {tmp_final_output_file}")
+                console.print(f"[red]  Dest:   {final_output_file}")
+                raise SystemExit(1)
             with open(stage_file, "w") as file:
                 file.write("5")
             print("Stage 4 complete!")
@@ -1728,8 +1738,13 @@ match stage:
         final_pass()
         try:
             shutil.move(tmp_final_output_file, final_output_file)
-        except:
+        except shutil.SameFileError:
             pass
+        except Exception as e:
+            console.print(f"[red][CRITICAL] Failed to move final output: {e}")
+            console.print(f"[red]  Source: {tmp_final_output_file}")
+            console.print(f"[red]  Dest:   {final_output_file}")
+            raise SystemExit(1)
         with open(stage_file, "w") as file:
             file.write("5")
         print("Stage 4 complete!")

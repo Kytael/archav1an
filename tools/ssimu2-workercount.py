@@ -69,7 +69,7 @@ src = core.ffms2.Source(source=r"{SAMPLE_FILE}")
 src.set_output()
 """
     vpy_path = TEMP_DIR / "source.vpy"
-    with open(vpy_path, "w") as f:
+    with open(vpy_path, "w", encoding="utf-8") as f:
         f.write(vpy_content)
 
     av1an_exe = shutil.which("av1an")
@@ -399,7 +399,7 @@ if __name__ == "__main__":
         if not results:
             print("All benchmarks failed. Defaulting to vs-zip.", file=sys.stderr)
             # Default to vs-zip as it's the safest on Linux
-            with open(CONFIG_FILE, "w") as f:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 f.write("tool=vs-zip\nworkercount=4")
             sys.exit(0)
 
@@ -408,13 +408,13 @@ if __name__ == "__main__":
         print(f"\nWinner: {winner['tool']} | FPS: {winner['fps']:.2f}", file=sys.stderr)
 
         # WRITE CONFIG
-        with open(CONFIG_FILE, "w") as f:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             f.write(f"tool={winner['tool']}\n")
             f.write(f"workercount={winner['workers']}\n")
 
     except Exception as e:
         print(f"Fatal error: {e}", file=sys.stderr)
-        with open(CONFIG_FILE, "w") as f:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             f.write("tool=vs-zip\nworkercount=4")
     finally:
         cleanup_temp_files()

@@ -1717,41 +1717,46 @@ if not resume or not scene_detection_scenes_file.exists():
         os.close(_x264_pty_slave)  # Close slave in parent — child has it
         _x264_progress = ["starting..."]
         def _x264_stderr_reader(master_fd):
-            import fcntl
-            flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
-            fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-            buf = ""
-            while scene_detection_x264_process.poll() is None:
-                if select.select([master_fd], [], [], 0.5)[0]:
-                    try:
-                        chunk = os.read(master_fd, 4096).decode("utf-8", errors="replace")
-                        buf += chunk
-                        # Parse latest progress from \r-delimited lines
-                        parts = buf.split("\r")
-                        if len(parts) > 1:
-                            for part in parts[:-1]:
-                                # Strip ANSI escape codes for parsing
-                                clean = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', part).strip()
-                                if clean:
-                                    m = re.search(r'(\d+)/(\d+)\s*\((\d+)%\)', clean)
-                                    if m:
-                                        _x264_progress[0] = f"{m.group(1)}/{m.group(2)} ({m.group(3)}%)"
-                                    else:
-                                        m2 = re.search(r'(\d+)\s*frames', clean)
-                                        if m2:
-                                            _x264_progress[0] = f"{m2.group(1)} frames"
-                            buf = parts[-1]
-                    except (BlockingIOError, OSError):
-                        pass
-            # Drain remaining
             try:
-                while True:
-                    chunk = os.read(master_fd, 4096)
-                    if not chunk:
-                        break
-            except OSError:
-                pass
-            os.close(master_fd)
+                import fcntl
+                flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+                fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+                buf = ""
+                while scene_detection_x264_process.poll() is None:
+                    if select.select([master_fd], [], [], 0.5)[0]:
+                        try:
+                            chunk = os.read(master_fd, 4096).decode("utf-8", errors="replace")
+                            buf += chunk
+                            # Parse latest progress from \r-delimited lines
+                            parts = buf.split("\r")
+                            if len(parts) > 1:
+                                for part in parts[:-1]:
+                                    # Strip ANSI escape codes for parsing
+                                    clean = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', part).strip()
+                                    if clean:
+                                        m = re.search(r'(\d+)/(\d+)\s*\((\d+)%\)', clean)
+                                        if m:
+                                            _x264_progress[0] = f"{m.group(1)}/{m.group(2)} ({m.group(3)}%)"
+                                        else:
+                                            m2 = re.search(r'(\d+)\s*frames', clean)
+                                            if m2:
+                                                _x264_progress[0] = f"{m2.group(1)} frames"
+                                buf = parts[-1]
+                        except (BlockingIOError, OSError):
+                            pass
+                # Drain remaining
+                try:
+                    while True:
+                        chunk = os.read(master_fd, 4096)
+                        if not chunk:
+                            break
+                except OSError:
+                    pass
+            finally:
+                try:
+                    os.close(master_fd)
+                except OSError:
+                    pass
         _x264_thread = threading.Thread(target=_x264_stderr_reader, args=(_x264_pty_master,), daemon=True)
         _x264_thread.start()
         def _x264_status():

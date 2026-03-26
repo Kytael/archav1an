@@ -386,8 +386,8 @@ def process_file(source, preset, ssimu2_tool, ssimu2_workers, worker_count, no_o
     # 7. Clean up temp dir for this file
     try:
         shutil.rmtree(temp_dir)
-    except OSError:
-        pass
+    except OSError as e:
+        print(f"[WARN] Could not clean up temp dir {temp_dir}: {e}")
 
     return True
 

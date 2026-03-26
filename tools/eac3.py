@@ -52,7 +52,7 @@ def load_settings():
         return defaults
 
     try:
-        with open(SETTINGS_FILE, "r") as f:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line or "=" not in line:
@@ -80,7 +80,7 @@ def run_command(cmd, capture_output=False):
             cmd_str, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True
         )
         return True
-    except Exception:
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError):
         return False
 
 
@@ -170,7 +170,7 @@ def get_mkv_tracks(mkv_path):
         res = run_command(cmd, capture_output=True)
         data = json.loads(res)
         return [t for t in data.get("tracks", []) if t["type"] == "audio"]
-    except:
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError):
         return []
 
 
@@ -284,7 +284,7 @@ def get_audio_channels(filepath):
         return subprocess.check_output(
             [str(c) for c in cmd], stderr=subprocess.DEVNULL, text=True
         ).strip()
-    except:
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError):
         return "2"
 
 
@@ -332,7 +332,7 @@ def worker_eac3(slot_id):
                 bitrate_val = BITRATE_SETTINGS.get("2.1", "320")
             else:
                 bitrate_val = BITRATE_SETTINGS.get("2.0", "224")
-        except:
+        except (ValueError, TypeError):
             pass
 
         # FFMPEG expects 'k' suffix for audio bitrate usually
@@ -423,7 +423,7 @@ def get_track_delay_ms(mkv_path, track_id):
         run_command(cmd)
 
         if temp_ts.exists():
-            with open(temp_ts, "r") as f:
+            with open(temp_ts, "r", encoding="utf-8") as f:
                 lines = f.readlines()
                 for line in lines:
                     line = line.strip()
@@ -433,15 +433,15 @@ def get_track_delay_ms(mkv_path, track_id):
                         val = float(line)
                         delay = int(val)
                         break
-                    except:
+                    except (ValueError, TypeError):
                         pass
-    except:
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError):
         pass
     finally:
         if temp_ts.exists():
             try:
                 os.remove(temp_ts)
-            except:
+            except OSError:
                 pass
 
     return delay
@@ -496,7 +496,7 @@ def mux_final_files():
                 if track.get("type") == "subtitles":
                     tid = track.get("id")
                     subtitle_flags.extend(["--compression", f"{tid}:zlib"])
-        except:
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError):
             pass
 
         cmd = [MKVMERGE_EXE, "-o", str(output_file)]

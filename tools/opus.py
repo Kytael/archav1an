@@ -41,12 +41,12 @@ OUTPUT_DIR = Path("Output")
 if not INPUT_DIR.exists():
     try:
         INPUT_DIR.mkdir()
-    except:
+    except OSError:
         pass
 if not OUTPUT_DIR.exists():
     try:
         OUTPUT_DIR.mkdir()
-    except:
+    except OSError:
         pass
 
 # --- SETTINGS SETUP ---
@@ -63,7 +63,7 @@ def load_settings():
         return defaults
 
     try:
-        with open(SETTINGS_FILE, "r") as f:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line or "=" not in line:
@@ -115,7 +115,7 @@ TEMP_WORK_DIR = OUTPUT_DIR / ".opus_temp"
 if not TEMP_WORK_DIR.exists():
     try:
         TEMP_WORK_DIR.mkdir()
-    except:
+    except OSError:
         pass
 
 # --- HELPER FUNCTIONS ---
@@ -134,7 +134,7 @@ def run_command(cmd, capture_output=False):
             cmd_str, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True
         )
         return True
-    except Exception:
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError):
         return False
 
 
@@ -188,7 +188,7 @@ def get_mkv_tracks(mkv_path):
         res = run_command(cmd, capture_output=True)
         data = json.loads(res)
         return [t for t in data.get("tracks", []) if t["type"] == "audio"]
-    except:
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError):
         return []
 
 
@@ -315,7 +315,7 @@ def get_audio_channels(filepath):
         return subprocess.check_output(
             [str(c) for c in cmd], stderr=subprocess.DEVNULL, text=True
         ).strip()
-    except:
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError):
         return "2"
 
 
@@ -419,7 +419,7 @@ def worker_opus(slot_id):
                 bitrate = BITRATE_SETTINGS.get("2.1", "192")
             else:
                 bitrate = BITRATE_SETTINGS.get("2.0", "128")
-        except:
+        except (ValueError, TypeError):
             pass
 
         slot_status[slot_id] = f"{slot_id + 1}: [OPUS] {fname}.. Init"
@@ -593,7 +593,7 @@ def mux_final_files():
         if TEMP_WORK_DIR.exists():
             shutil.rmtree(TEMP_WORK_DIR)
             print("Temp files cleaned up.")
-    except:
+    except OSError:
         print("Warning: Could not clean up temp files.")
 
 

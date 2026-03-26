@@ -59,7 +59,13 @@ check_distro() {
 
 # Helper: get the Python site-packages directory dynamically
 get_python_site_packages() {
-    python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || echo "/usr/lib/python3/dist-packages"
+    python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || {
+        if [ "$DISTRO_FAMILY" = "arch" ]; then
+            python3 -c "import sys; print(f'/usr/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages')" 2>/dev/null || echo "/usr/lib/python3/site-packages"
+        else
+            echo "/usr/lib/python3/dist-packages"
+        fi
+    }
 }
 
 # Helper: get the VapourSynth plugin path

@@ -27,6 +27,12 @@ if uname -r | grep -qi microsoft; then
 fi
 
 # Use mimalloc for faster multi-threaded memory allocation (SVT-AV1, av1an, etc.)
+MIMALLOC_PATH=""
 if [ -f /usr/lib/libmimalloc.so ]; then
-    export LD_PRELOAD="/usr/lib/libmimalloc.so${LD_PRELOAD:+:$LD_PRELOAD}"
+    MIMALLOC_PATH="/usr/lib/libmimalloc.so"
+elif [ -f /usr/lib/x86_64-linux-gnu/libmimalloc.so ]; then
+    MIMALLOC_PATH="/usr/lib/x86_64-linux-gnu/libmimalloc.so"
+fi
+if [ -n "$MIMALLOC_PATH" ]; then
+    export LD_PRELOAD="${MIMALLOC_PATH}${LD_PRELOAD:+:$LD_PRELOAD}"
 fi

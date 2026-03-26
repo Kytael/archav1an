@@ -52,6 +52,10 @@ for f in Input/*.[Mm][Kk][Vv] Input/*.[Mm][Pp]4 Input/*.[Mm]2[Tt][Ss]; do
         echo "-------------------------------------------------------------------------------"
         python3 tools/Progressive-Scene-Detection.py -i "$f" -o "$SCENE_FILE"
     fi
+    if [ ! -f "$SCENE_FILE" ]; then
+        echo "[ERROR] Scene detection failed for \"$f\". Skipping."
+        continue
+    fi
 
     echo ""
     echo "-------------------------------------------------------------------------------"
@@ -72,6 +76,11 @@ for f in Input/*.[Mm][Kk][Vv] Input/*.[Mm][Pp]4 Input/*.[Mm]2[Tt][Ss]; do
         --final-speed 4 \
         --fast-params "--ac-bias 1.0 --complex-hvs 1 --keyint -1 --variance-boost-strength 1 --enable-dlf 2 --noise-level-thr 16000 --variance-md-bias 1 --cdef-bias 1 --luminance-qp-bias 20 --qm-min 8 --keyint -1 --tune 0 --balancing-q-bias 1 --chroma-qmc-bias 2 --filtering-noise-detection 4 --balancing-r0-based-layer-offset 0 --chroma-qm-min 10" \
         --final-params "--ac-bias 1.0 --complex-hvs 1 --keyint -1 --variance-boost-strength 1 --enable-dlf 2 --noise-level-thr 16000 --variance-md-bias 1 --cdef-bias 1 --luminance-qp-bias 20 --qm-min 8 --keyint -1 --tune 0 --balancing-q-bias 1 --chroma-qmc-bias 2 --filtering-noise-detection 4 --balancing-r0-based-layer-offset 0 --chroma-qm-min 10 --lp 3"
+
+    if [ $? -ne 0 ]; then
+        echo "[ERROR] Encoding failed for \"$f\". Skipping."
+        continue
+    fi
 
 done
 
