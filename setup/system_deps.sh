@@ -27,6 +27,8 @@ install_system_deps_arch() {
         vulkan-headers vulkan-icd-loader libva
         # Performance
         mimalloc
+        # OpenCL runtime (for KNLMeansCL denoiser)
+        opencl-icd-loader
     )
 
     # Detect GPU and add appropriate packages
@@ -68,6 +70,8 @@ install_system_deps_debian() {
         libvpx-dev libmp3lame-dev libvorbis-dev libsoxr-dev libgnutls28-dev
         libsrt-openssl-dev libvidstab-dev libbluray-dev libva-dev
         libfribidi-dev libfontconfig-dev
+        # OpenCL runtime (for KNLMeansCL denoiser)
+        ocl-icd-opencl-dev
     )
 
     apt install -y "${DEPS[@]}" || { log_error "Failed to install system dependencies via apt"; return 1; }

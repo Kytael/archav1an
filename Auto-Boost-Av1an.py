@@ -186,6 +186,11 @@ parser.add_argument(
 parser.add_argument(
     "--zones", help="Path to specific zones file override", default=None
 )
+parser.add_argument("--denoise", action="store_true", help="Enable SCUnet+KNLMeansCL denoising in VPY")
+parser.add_argument("--denoise-strength", type=int, choices=[15, 25, 50], default=15, help="SCUnet noise preset (15/25/50) | Default: 15")
+parser.add_argument("--denoise-temporal", action="store_true", help="Add MVTools SMDegrain temporal pre-filter before spatial denoise")
+parser.add_argument("--denoise-backend", default="auto", choices=["auto","trt","ncnn_vk","ort_rocm","rpc","cpu"], help="vs-mlrt backend for SCUnet | Default: auto")
+parser.add_argument("--denoise-server", default="", help="RPC server address host:port for remote inference | Default: ''")
 
 args = parser.parse_args()
 
@@ -612,6 +617,51 @@ if should_downscale:
         if target_w < src.width or target_h < src.height:
              src = core.placebo.Resample(src, target_w, target_h, filter=pl_filter)
 
+# 3. DENOISE (optional — SCUnet spatial + KNLMeansCL chroma)
+if {denoise}:
+    import subprocess as _sp
+    import vsmlrt as _vsmlrt
+
+    def _pick_backend():
+        _name = "{denoise_backend}"
+        _srv  = "{denoise_server}"
+        if _name == "rpc":
+            return _vsmlrt.Backend.RPC(address=_srv)
+        if _name == "trt":
+            return _vsmlrt.Backend.TRT(fp16=True)
+        if _name == "ncnn_vk":
+            return _vsmlrt.Backend.NCNN_VK()
+        if _name == "ort_rocm":
+            return _vsmlrt.Backend.ORT_ROCM(fp16=True)
+        if _name == "cpu":
+            return _vsmlrt.Backend.ORT_CPU()
+        # auto: TRT if nvidia-smi sees a GPU, else NCNN_VK
+        try:
+            _r = _sp.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                         capture_output=True, text=True, timeout=5)
+            if _r.returncode == 0 and _r.stdout.strip():
+                return _vsmlrt.Backend.TRT(fp16=True)
+        except Exception:
+            pass
+        return _vsmlrt.Backend.NCNN_VK()
+
+    _backend = _pick_backend()
+
+    # Optional: MVTools temporal pre-filter (luma, stabilises grain before spatial denoise)
+    if {denoise_temporal}:
+        if hasattr(core, 'mv'):
+            import havsfunc as _haf
+            src = _haf.SMDegrain(src, tr=2, thSAD=300, plane=0)
+
+    # SCUnet spatial denoise — convert YUV→RGBH, denoise, convert back
+    _src_fmt = src.format
+    _rgb     = core.resize.Bicubic(src, format=vs.RGBH, matrix_in_s="709")
+    _rgb     = _vsmlrt.SCUNet(_rgb, noise={denoise_strength}, backend=_backend)
+    src      = core.resize.Bicubic(_rgb, format=_src_fmt, matrix_s="709")
+
+    # KNLMeansCL chroma denoise (OpenCL — works on any GPU/CPU with OpenCL)
+    src = core.knlm.KNLMeansCL(src, d=1, a=2, h=0.5, channels="UV")
+
 # Finalize (Sets 10-bit output)
 final = finalize_clip(src)
 final.set_output(0)
@@ -629,6 +679,11 @@ final.set_output(0)
                 target_res=s_target_res,
                 kernel=s_kernel,
                 convert=convert_yuv420p10,
+                denoise=str(args.denoise),
+                denoise_strength=getattr(args, "denoise_strength", 15),
+                denoise_temporal=str(getattr(args, "denoise_temporal", False)),
+                denoise_backend=getattr(args, "denoise_backend", "auto"),
+                denoise_server=getattr(args, "denoise_server", ""),
             )
         )
 

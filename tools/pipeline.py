@@ -331,6 +331,14 @@ def process_file(source, preset, ssimu2_tool, ssimu2_workers, worker_count, no_o
         dispatch_cmd.append("--autocrop")
     if p.get("aggressive"):
         dispatch_cmd.append("--aggressive")
+    if p.get("denoise"):
+        dispatch_cmd.append("--denoise")
+        dispatch_cmd += ["--denoise-strength", str(p.get("denoise_strength", 15))]
+        if p.get("denoise_temporal"):
+            dispatch_cmd.append("--denoise-temporal")
+        dispatch_cmd += ["--denoise-backend", p.get("denoise_backend", "auto")]
+        if p.get("denoise_server"):
+            dispatch_cmd += ["--denoise-server", p["denoise_server"]]
 
     ret = subprocess.run(dispatch_cmd, cwd=str(ROOT_DIR))
     if ret.returncode != 0:
@@ -430,6 +438,11 @@ def main():
         "--tag-script", type=str,
         help="Shell script name for tag.py marker (e.g. run_linux_live_crf32.sh)",
     )
+    parser.add_argument("--denoise", action="store_true", help="Enable SCUnet+KNLMeansCL denoising")
+    parser.add_argument("--denoise-strength", type=int, choices=[15, 25, 50], default=15)
+    parser.add_argument("--denoise-temporal", action="store_true")
+    parser.add_argument("--denoise-backend", default="auto", choices=["auto","trt","ncnn_vk","ort_rocm","rpc","cpu"])
+    parser.add_argument("--denoise-server", default="")
     args = parser.parse_args()
 
     # Build preset dict from --preset or explicit params
@@ -472,6 +485,13 @@ def main():
         }
     else:
         parser.error("Either --preset or explicit encoding params (--quality, etc.) are required")
+
+    if args.denoise:
+        preset["denoise"] = True
+        preset["denoise_strength"] = args.denoise_strength
+        preset["denoise_temporal"] = args.denoise_temporal
+        preset["denoise_backend"] = args.denoise_backend
+        preset["denoise_server"] = args.denoise_server
 
     # Ensure directories exist
     INPUT_DIR.mkdir(parents=True, exist_ok=True)

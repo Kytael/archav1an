@@ -13,4 +13,5 @@ python3 tools/pipeline.py \
     --fast-speed 8 \
     --final-speed 4 \
     --fast-params "--ac-bias 1.0 --complex-hvs 1 --keyint -1 --variance-boost-strength 2 --enable-dlf 2 --luminance-qp-bias 20 --tune 3" \
-    --final-params "--ac-bias 1.0 --complex-hvs 1 --keyint -1 --variance-boost-strength 2 --enable-dlf 2 --luminance-qp-bias 20 --tune 3 --lp 3"
+    --final-params "--ac-bias 1.0 --complex-hvs 1 --keyint -1 --variance-boost-strength 2 --enable-dlf 2 --luminance-qp-bias 20 --tune 3 --lp 3" \
+    "$@"

@@ -18,7 +18,7 @@ install_python_libs() {
     # Install packages into venv
     "$VENV_DIR/bin/pip" install --upgrade pip || log_warn "pip upgrade failed, continuing..."
     "$VENV_DIR/bin/pip" install vsjetpack numpy rich vstools psutil anitopy pyperclip requests \
-        requests_toolbelt natsort colorama Cython \
+        requests_toolbelt natsort colorama Cython vsmlrt havsfunc \
         || { log_error "Failed to install Python libraries"; return 1; }
 
     # Remove the pip-installed vapoursynth which conflicts with the source build we are about to do

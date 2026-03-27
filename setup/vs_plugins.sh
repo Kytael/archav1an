@@ -54,7 +54,23 @@ install_vs_plugins() {
 
     ldconfig
 
-    # 3. SubText
+    # 3. KNLMeansCL (OpenCL denoiser for VapourSynth)
+    log_info "Compiling KNLMeansCL..."
+    if [ -d "KNLMeansCL" ]; then rm -rf KNLMeansCL; fi
+    git clone --depth 1 https://github.com/Khanattila/KNLMeansCL.git
+    cd KNLMeansCL
+    mkdir build && cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Release
+    make -j"$(nproc)"
+
+    if [ -f "libknlmeanscl.so" ]; then
+        cp "libknlmeanscl.so" "$VS_PLUGIN_PATH/"
+    else
+        log_error "KNLMeansCL compilation failed!"
+    fi
+    cd ../..
+
+    # 4. SubText
     log_info "Compiling SubText..."
     if [ -d "subtext" ]; then rm -rf subtext; fi
     git clone --branch R5 --depth 1 https://github.com/vapoursynth/subtext.git

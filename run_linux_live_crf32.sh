@@ -12,4 +12,5 @@ python3 tools/pipeline.py \
     --fast-speed 8 \
     --final-speed 4 \
     --fast-params "--lp 3 --tune 3 --hbd-mds 0 --keyint 305 --ac-bias 0.8 --filtering-noise-detection 4" \
-    --final-params "--lp 3 --tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --filtering-noise-detection 4"
+    --final-params "--lp 3 --tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --filtering-noise-detection 4" \
+    "$@"
