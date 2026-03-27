@@ -1711,7 +1711,8 @@ if not resume or not scene_detection_scenes_file.exists():
         ]
         import pty, threading
         _x264_pty_master, _x264_pty_slave = pty.openpty()
-        scene_detection_x264_process = subprocess.Popen(command, text=False, stdout=subprocess.DEVNULL, stderr=_x264_pty_slave)
+        # Redirect both stdout and stderr — indicatif may write to either
+        scene_detection_x264_process = subprocess.Popen(command, text=False, stdout=_x264_pty_slave, stderr=_x264_pty_slave)
         os.close(_x264_pty_slave)  # Close slave in parent — child has it
         _x264_progress = ["starting..."]
         def _x264_stderr_reader(master_fd):
@@ -1723,22 +1724,30 @@ if not resume or not scene_detection_scenes_file.exists():
                 while scene_detection_x264_process.poll() is None:
                     if select.select([master_fd], [], [], 0.5)[0]:
                         try:
-                            chunk = os.read(master_fd, 4096).decode("utf-8", errors="replace")
+                            chunk = os.read(master_fd, 4096)
+                            chunk = chunk.decode("utf-8", errors="replace")
                             buf += chunk
-                            # Parse latest progress from \r-delimited lines
-                            parts = buf.split("\r")
+                            # Split on \r or \n — indicatif uses \n for multi-bar, \r for single-bar
+                            parts = re.split(r'[\r\n]', buf)
                             if len(parts) > 1:
                                 for part in parts[:-1]:
-                                    # Strip ANSI escape codes for parsing
-                                    clean = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', part).strip()
+                                    # Strip all ANSI escape sequences for parsing
+                                    clean = re.sub(r'\x1b(?:\[[0-9;]*[A-Za-z]|[^[]?)', '', part).strip()
                                     if clean:
-                                        m = re.search(r'(\d+)/(\d+)\s*\((\d+)%\)', clean)
+                                        # av1an format: "P% F/T (fps fps, eta ...)"
+                                        m = re.search(r'(\d+)%\s+(\d+)/(\d+)', clean)
                                         if m:
-                                            _x264_progress[0] = f"{m.group(1)}/{m.group(2)} ({m.group(3)}%)"
+                                            _x264_progress[0] = f"{m.group(2)}/{m.group(3)} ({m.group(1)}%)"
                                         else:
-                                            m2 = re.search(r'(\d+)\s*frames', clean)
+                                            # Alternative format: "F/T (P%)"
+                                            m2 = re.search(r'(\d+)/(\d+)\s*\((\d+)%\)', clean)
                                             if m2:
-                                                _x264_progress[0] = f"{m2.group(1)} frames"
+                                                _x264_progress[0] = f"{m2.group(1)}/{m2.group(2)} ({m2.group(3)}%)"
+                                            else:
+                                                # Chunk count as last resort
+                                                m3 = re.search(r'\[(\d+)/(\d+)\s+Chunks?\]', clean)
+                                                if m3:
+                                                    _x264_progress[0] = f"{m3.group(1)}/{m3.group(2)} chunks"
                                 buf = parts[-1]
                         except (BlockingIOError, OSError):
                             pass
