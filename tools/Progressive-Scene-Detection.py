@@ -1928,6 +1928,10 @@ if not resume or not scene_detection_scenes_file.exists():
 
 
     if scene_detection_perform_x264:
+        # Show x264 progress while waiting for it to finish
+        while scene_detection_x264_process.poll() is None:
+            print(f"\r\033[KWaiting for x264 scene detection...{_x264_status()}", end="", flush=True)
+            time.sleep(0.5)
         _x264_thread.join()
         scene_detection_x264_process.wait()
         print(f"\r\033[K{frame_print(scene_detection_x264_total_frames_print)} / x264 based scene detection finished", end="\n", flush=True)
