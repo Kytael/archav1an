@@ -26,6 +26,7 @@ source "$SETUP_DIR/fssimu2.sh"
 source "$SETUP_DIR/wwxd.sh"
 source "$SETUP_DIR/vszip.sh"
 source "$SETUP_DIR/subtext.sh"
+source "$SETUP_DIR/denoiser.sh"
 
 # Dependency Graph Definition
 # Format: declare -A DEPS
@@ -42,6 +43,7 @@ DEPENDENCIES["fssimu2"]="system_deps"
 DEPENDENCIES["wwxd"]="vapoursynth"
 DEPENDENCIES["vszip"]="vapoursynth"
 DEPENDENCIES["subtext"]="vapoursynth ffmpeg"
+DEPENDENCIES["denoiser"]="vapoursynth python_libs system_deps"
 
 # Helper: Check if a tool is installed
 is_installed() {
@@ -102,6 +104,12 @@ is_installed() {
             subtext_path="$(get_vs_plugin_path)"
             [ -f "$subtext_path/libsubtext.so" ] || \
             [ -f "/usr/local/lib/vapoursynth/libsubtext.so" ]
+            ;;
+        "denoiser")
+            local knlm_path
+            knlm_path="$(get_vs_plugin_path)"
+            [ -f "$knlm_path/libknlmeanscl.so" ] && \
+            "$VENV_DIR/bin/pip" show vsmlrt &> /dev/null
             ;;
         *) return 1 ;;
     esac
@@ -184,6 +192,7 @@ install_tool() {
             "wwxd") install_wwxd ;;
             "vszip") install_vszip ;;
             "subtext") install_subtext ;;
+            "denoiser") install_denoiser ;;
             *) log_error "Unknown module: $item"; exit 1 ;;
         esac
         status=$?
@@ -218,6 +227,7 @@ uninstall_tool() {
         "wwxd") uninstall_wwxd ;;
         "vszip") uninstall_vszip ;;
         "subtext") uninstall_subtext ;;
+        "denoiser") uninstall_denoiser ;;
         *) log_error "Unknown module: $target_tool"; exit 1 ;;
     esac
 }
@@ -267,6 +277,7 @@ show_menu() {
     printf "%-3s %-30s %s\n" "8" "WWXD" "$(get_status_icon wwxd)"
     printf "%-3s %-30s %s\n" "9" "VSZIP" "$(get_status_icon vszip)"
     printf "%-3s %-30s %s\n" "10" "SubText" "$(get_status_icon subtext)"
+    printf "%-3s %-30s %s\n" "13" "Denoiser (SCUnet/KNLMeansCL)" "$(get_status_icon denoiser)"
     echo "----------------------------------------------------------"
     echo "11. System Deps Only"
     echo "12. Python Libs Only"
@@ -331,6 +342,7 @@ show_menu() {
             10) tool="subtext" ;;
             11) tool="system_deps" ;;
             12) tool="python_libs" ;;
+            13) tool="denoiser" ;;
             *) log_warn "Invalid option: $choice (skipping)"; continue ;;
         esac
         
