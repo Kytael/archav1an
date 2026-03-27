@@ -151,7 +151,7 @@ def parse_batch_line(line):
     # Locate where the dispatch script starts
     start_idx = -1
     for i, part in enumerate(parts):
-        if "dispatch.py" in part or "Auto-Boost-Av1an.py" in part:
+        if "dispatch.py" in part or "Auto-Boost-Av1an.py" in part or "pipeline.py" in part:
             start_idx = i
             break
 
@@ -183,8 +183,15 @@ def parse_batch_line(line):
             "--temp",
             "-o",
             "--output",
+            "--tag-script",
+            "--preset",
         ]:
             i += 2
+            continue
+
+        # Pipeline-only flags (no value)
+        if curr in ["--no-opus"]:
+            i += 1
             continue
 
         # 2. Fast params: exclude

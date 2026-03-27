@@ -135,8 +135,8 @@ PRESETS = {
         "final_speed": 4,
         "autocrop": True,
         "aggressive": False,
-        "fast_params": "--lp 3 --tune 3 --hbd-mds 0 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 2 --variance-octile 5 --enable-dlf 2 --filtering-noise-detection 4",
-        "final_params": "--lp 3 --tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 2 --variance-octile 5 --enable-dlf 2 --filtering-noise-detection 4",
+        "fast_params": "--lp 3 --tune 3 --hbd-mds 0 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2",
+        "final_params": "--lp 3 --tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2",
     },
     "sports-crf27": {
         "quality": 27,
@@ -403,21 +403,75 @@ def main():
     parser = argparse.ArgumentParser(
         description="Automated AV1 encoding pipeline with recursive directory support"
     )
+    # Preset (optional — if omitted, explicit params are required)
     parser.add_argument(
-        "--preset", required=True, choices=sorted(PRESETS.keys()),
-        help="Encoding preset name",
+        "--preset", choices=sorted(PRESETS.keys()),
+        help="Encoding preset name (alternative to passing explicit params)",
     )
+    # Explicit encoding params — used when called from shell scripts
+    parser.add_argument("--quality", type=int, help="CRF quality value")
+    parser.add_argument("--photon-noise", type=int, help="Photon noise level")
+    parser.add_argument("--fast-speed", type=int, help="Fast pass encoder speed")
+    parser.add_argument("--final-speed", type=int, help="Final pass encoder speed")
+    parser.add_argument("--fast-params", type=str, help="Fast pass SVT-AV1 params")
+    parser.add_argument("--final-params", type=str, help="Final pass SVT-AV1 params")
+    parser.add_argument("--autocrop", action="store_true", help="Enable autocrop")
+    parser.add_argument("--aggressive", action="store_true", help="Enable aggressive mode")
+    # Pipeline options
     parser.add_argument(
-        "--workers", type=int, default=6,
-        help="Number of av1an workers (default: 6)",
+        "--workers", type=int, default=4,
+        help="Number of av1an workers (default: 4)",
     )
     parser.add_argument(
         "--no-opus", action="store_true",
         help="Passthrough audio instead of re-encoding to Opus",
     )
+    parser.add_argument(
+        "--tag-script", type=str,
+        help="Shell script name for tag.py marker (e.g. run_linux_live_crf32.sh)",
+    )
     args = parser.parse_args()
 
-    preset = PRESETS[args.preset]
+    # Build preset dict from --preset or explicit params
+    if args.preset:
+        preset = dict(PRESETS[args.preset])
+        # Allow explicit params to override preset values
+        if args.quality is not None:
+            preset["quality"] = args.quality
+        if args.photon_noise is not None:
+            preset["photon_noise"] = args.photon_noise
+        if args.fast_speed is not None:
+            preset["fast_speed"] = args.fast_speed
+        if args.final_speed is not None:
+            preset["final_speed"] = args.final_speed
+        if args.fast_params is not None:
+            preset["fast_params"] = args.fast_params
+        if args.final_params is not None:
+            preset["final_params"] = args.final_params
+        if args.autocrop:
+            preset["autocrop"] = True
+        if args.aggressive:
+            preset["aggressive"] = True
+    elif args.quality is not None:
+        # Explicit params mode — all required params must be provided
+        required = {"quality": args.quality, "photon_noise": args.photon_noise,
+                     "fast_speed": args.fast_speed, "final_speed": args.final_speed,
+                     "fast_params": args.fast_params, "final_params": args.final_params}
+        missing = [k for k, v in required.items() if v is None]
+        if missing:
+            parser.error(f"When not using --preset, these are required: {', '.join('--' + m.replace('_', '-') for m in missing)}")
+        preset = {
+            "quality": args.quality,
+            "photon_noise": args.photon_noise,
+            "fast_speed": args.fast_speed,
+            "final_speed": args.final_speed,
+            "fast_params": args.fast_params,
+            "final_params": args.final_params,
+            "autocrop": args.autocrop,
+            "aggressive": args.aggressive,
+        }
+    else:
+        parser.error("Either --preset or explicit encoding params (--quality, etc.) are required")
 
     # Ensure directories exist
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -426,22 +480,29 @@ def main():
     # Load SSIMU2 config
     ssimu2_tool, ssimu2_workers = load_ssimu2_config()
 
-    print(f"Pipeline: {args.preset} | Workers: {args.workers}")
+    label = args.preset or f"CRF {preset['quality']}"
+    print(f"Pipeline: {label} | Workers: {args.workers}")
     print(f"SSIMU2 Mode: {ssimu2_tool} | SSIMU2 Workers: {ssimu2_workers}")
 
     # Create tagging marker (for tag.py compatibility)
-    preset_to_script = {
-        "live-crf15": "run_linux_live_crf15.sh",
-        "live-crf18": "run_linux_live_crf18.sh",
-        "live-crf25": "run_linux_live_crf25.sh",
-        "live-crf32": "run_linux_live_crf32.sh",
-        "anime-crf15": "run_linux_anime_crf15.sh",
-        "anime-crf18": "run_linux_anime_crf18.sh",
-        "anime-crf25": "run_linux_anime_crf25.sh",
-        "anime-crf32": "run_linux_anime_crf32.sh",
-        "sports-crf27": "run_linux_sports_crf27.sh",
-    }
-    marker_name = preset_to_script.get(args.preset, f"pipeline-{args.preset}")
+    if args.tag_script:
+        marker_name = args.tag_script
+    elif args.preset:
+        preset_to_script = {
+            "live-crf15": "run_linux_live_crf15.sh",
+            "live-crf18": "run_linux_live_crf18.sh",
+            "live-crf25": "run_linux_live_crf25.sh",
+            "live-crf32": "run_linux_live_crf32.sh",
+            "anime-crf15": "run_linux_anime_crf15.sh",
+            "anime-crf18": "run_linux_anime_crf18.sh",
+            "anime-crf25": "run_linux_anime_crf25.sh",
+            "anime-crf32": "run_linux_anime_crf32.sh",
+            "dance-crf27": "run_linux_dance_crf27.sh",
+            "sports-crf27": "run_linux_sports_crf27.sh",
+        }
+        marker_name = preset_to_script.get(args.preset, f"pipeline-{args.preset}")
+    else:
+        marker_name = f"pipeline-crf{preset['quality']}"
     (SCRIPT_DIR / f"sh-used-{marker_name}.txt").touch()
 
     # Discover videos
