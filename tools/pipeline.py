@@ -337,8 +337,8 @@ def process_file(source, preset, ssimu2_tool, ssimu2_workers, worker_count, no_o
         if p.get("denoise_temporal"):
             dispatch_cmd.append("--denoise-temporal")
         dispatch_cmd += ["--denoise-backend", p.get("denoise_backend", "auto")]
-        if p.get("denoise_server"):
-            dispatch_cmd += ["--denoise-server", p["denoise_server"]]
+        if p.get("denoise_model_dir"):
+            dispatch_cmd += ["--denoise-model-dir", p["denoise_model_dir"]]
 
     ret = subprocess.run(dispatch_cmd, cwd=str(ROOT_DIR))
     if ret.returncode != 0:
@@ -441,8 +441,8 @@ def main():
     parser.add_argument("--denoise", action="store_true", help="Enable SCUnet+KNLMeansCL denoising")
     parser.add_argument("--denoise-strength", type=int, choices=[15, 25, 50], default=15)
     parser.add_argument("--denoise-temporal", action="store_true")
-    parser.add_argument("--denoise-backend", default="auto", choices=["auto","trt","ncnn_vk","ort_rocm","rpc","cpu"])
-    parser.add_argument("--denoise-server", default="")
+    parser.add_argument("--denoise-backend", default="auto", choices=["auto","rocm","cuda","cpu"])
+    parser.add_argument("--denoise-model-dir", default=None, help="Directory containing SCUNet ONNX models")
     args = parser.parse_args()
 
     # Build preset dict from --preset or explicit params
@@ -491,7 +491,7 @@ def main():
         preset["denoise_strength"] = args.denoise_strength
         preset["denoise_temporal"] = args.denoise_temporal
         preset["denoise_backend"] = args.denoise_backend
-        preset["denoise_server"] = args.denoise_server
+        preset["denoise_model_dir"] = args.denoise_model_dir
 
     # Ensure directories exist
     INPUT_DIR.mkdir(parents=True, exist_ok=True)

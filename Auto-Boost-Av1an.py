@@ -189,8 +189,8 @@ parser.add_argument(
 parser.add_argument("--denoise", action="store_true", help="Enable SCUnet+KNLMeansCL denoising in VPY")
 parser.add_argument("--denoise-strength", type=int, choices=[15, 25, 50], default=15, help="SCUnet noise preset (15/25/50) | Default: 15")
 parser.add_argument("--denoise-temporal", action="store_true", help="Add MVTools SMDegrain temporal pre-filter before spatial denoise")
-parser.add_argument("--denoise-backend", default="auto", choices=["auto","trt","ncnn_vk","ort_rocm","rpc","cpu"], help="vs-mlrt backend for SCUnet | Default: auto")
-parser.add_argument("--denoise-server", default="", help="RPC server address host:port for remote inference | Default: ''")
+parser.add_argument("--denoise-backend", default="auto", choices=["auto","rocm","cuda","cpu"], help="ORT execution provider: auto/rocm/cuda/cpu | Default: auto")
+parser.add_argument("--denoise-model-dir", default=None, help="Directory containing SCUNet ONNX models | Default: <script_dir>/models/scunet")
 
 args = parser.parse_args()
 
@@ -543,6 +543,10 @@ def detect_crop_values(source_path: Path) -> tuple[int, int]:
         return 0, 0
 
 
+# Compute SCUNet model path (used in VPY template when --denoise is set)
+_scunet_model_dir = args.denoise_model_dir if args.denoise_model_dir else str(Path(__file__).parent / "models" / "scunet")
+_scunet_model_path = str(Path(_scunet_model_dir) / f"scunet_color_{args.denoise_strength}.onnx")
+
 # Generate VPY file
 if not os.path.exists(vpy_file):
     crop_top, crop_bottom = 0, 0
@@ -617,35 +621,33 @@ if should_downscale:
         if target_w < src.width or target_h < src.height:
              src = core.placebo.Resample(src, target_w, target_h, filter=pl_filter)
 
-# 3. DENOISE (optional — SCUnet spatial + KNLMeansCL chroma)
+# 3. DENOISE (optional — SCUnet via ONNX Runtime + KNLMeansCL chroma)
 if {denoise}:
-    import subprocess as _sp
-    import vsmlrt as _vsmlrt
+    import onnxruntime as _ort
+    import numpy as _np
 
-    def _pick_backend():
-        _name = "{denoise_backend}"
-        _srv  = "{denoise_server}"
-        if _name == "rpc":
-            return _vsmlrt.Backend.RPC(address=_srv)
-        if _name == "trt":
-            return _vsmlrt.Backend.TRT(fp16=True)
-        if _name == "ncnn_vk":
-            return _vsmlrt.Backend.NCNN_VK()
-        if _name == "ort_rocm":
-            return _vsmlrt.Backend.ORT_ROCM(fp16=True)
-        if _name == "cpu":
-            return _vsmlrt.Backend.ORT_CPU()
-        # auto: TRT if nvidia-smi sees a GPU, else NCNN_VK
+    # Select ORT execution providers
+    _be = "{denoise_backend}"
+    if _be == "rocm":
+        _providers = ["ROCMExecutionProvider", "CPUExecutionProvider"]
+    elif _be == "cuda":
+        _providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    elif _be == "cpu":
+        _providers = ["CPUExecutionProvider"]
+    else:  # auto: CUDA if nvidia-smi sees a GPU, ROCm otherwise
+        import subprocess as _sp
+        _providers = ["ROCMExecutionProvider", "CPUExecutionProvider"]
         try:
             _r = _sp.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
                          capture_output=True, text=True, timeout=5)
             if _r.returncode == 0 and _r.stdout.strip():
-                return _vsmlrt.Backend.TRT(fp16=True)
+                _providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
         except Exception:
             pass
-        return _vsmlrt.Backend.NCNN_VK()
 
-    _backend = _pick_backend()
+    _session = _ort.InferenceSession("{denoise_model_path}", providers=_providers)
+    _iname = _session.get_inputs()[0].name
+    _oname = _session.get_outputs()[0].name
 
     # Optional: MVTools temporal pre-filter (luma, stabilises grain before spatial denoise)
     if {denoise_temporal}:
@@ -653,11 +655,21 @@ if {denoise}:
             import havsfunc as _haf
             src = _haf.SMDegrain(src, tr=2, thSAD=300, plane=0)
 
-    # SCUnet spatial denoise — convert YUV→RGBH, denoise, convert back
+    # SCUnet: process in RGBS (float32, 0-1) then convert back to source format
     _src_fmt = src.format
-    _rgb     = core.resize.Bicubic(src, format=vs.RGBH, matrix_in_s="709")
-    _rgb     = _vsmlrt.SCUNet(_rgb, noise={denoise_strength}, backend=_backend)
-    src      = core.resize.Bicubic(_rgb, format=_src_fmt, matrix_s="709")
+    _rgb = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="709")
+
+    def _scunet(n, f):
+        fout = f[0].copy()
+        arr = _np.stack([_np.asarray(f[0][p]) for p in range(3)])  # (3, H, W) float32
+        out = _session.run([_oname], {{_iname: arr[_np.newaxis]}})[0][0]  # (3, H, W)
+        out = _np.clip(out, 0.0, 1.0).astype(_np.float32)
+        for p in range(3):
+            _np.copyto(_np.asarray(fout[p]), out[p])
+        return fout
+
+    _rgb = core.std.ModifyFrame(_rgb, [_rgb], _scunet)
+    src = core.resize.Bicubic(_rgb, format=_src_fmt, matrix_s="709")
 
     # KNLMeansCL chroma denoise (OpenCL — works on any GPU/CPU with OpenCL)
     src = core.knlm.KNLMeansCL(src, d=1, a=2, h=0.5, channels="UV")
@@ -683,7 +695,7 @@ final.set_output(0)
                 denoise_strength=getattr(args, "denoise_strength", 15),
                 denoise_temporal=str(getattr(args, "denoise_temporal", False)),
                 denoise_backend=getattr(args, "denoise_backend", "auto"),
-                denoise_server=getattr(args, "denoise_server", ""),
+                denoise_model_path=_scunet_model_path,
             )
         )
 
