@@ -285,11 +285,14 @@ def apply_tag_to_file(filepath, encoding_settings):
             print("Error: mkvpropedit not found in PATH")
             return
 
+        # Preserve mtime — mkvpropedit modifies the file in place
+        stat = os.stat(filepath)
         subprocess.run(
             [mkvpropedit_exe, filepath, "--tags", "track:v1:" + tmp_path],
             check=True,
             capture_output=True,
         )
+        os.utime(filepath, (stat.st_atime, stat.st_mtime))
         print("Success.")
     except subprocess.CalledProcessError as e:
         print(f"Error tagging {filepath}: {e}")
