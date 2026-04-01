@@ -295,8 +295,6 @@ def apply_tag_to_file(filepath, encoding_settings):
             capture_output=True,
         )
         os.utime(filepath, (stat.st_atime, stat.st_mtime))
-        if bpp is not None:
-            print(f"  BPP: {bpp}")
         print("Success.")
     except subprocess.CalledProcessError as e:
         print(f"Error tagging {filepath}: {e}")
