@@ -194,6 +194,12 @@ def main():
     if output_file:
         final_cmd.extend(["-o", output_file])
 
+    # Explicit temp dir keeps av1an's hash-named working dirs out of the repo root
+    stem = os.path.splitext(os.path.basename(input_file))[0] if input_file else "encode"
+    temp_dir = os.path.join(root_dir, "Temp", stem)
+    os.makedirs(temp_dir, exist_ok=True)
+    final_cmd.extend(["--temp", temp_dir])
+
     final_cmd.extend(["--encoder", "svt-av1"])
     if not no_opus:
         final_cmd.extend(["-a", f"-c:a libopus -b:a {opus_bitrate}"])
