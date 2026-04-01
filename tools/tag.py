@@ -1,6 +1,5 @@
 import os
 import glob
-import json
 import re
 import subprocess
 import shutil
@@ -258,43 +257,8 @@ def get_crf_string(quality):
         return "--crf 30(variable)"
 
 
-def get_video_bpp(filepath):
-    """Compute bits/pixel/frame from ffprobe stream and format info."""
-    ffprobe_exe = shutil.which("ffprobe")
-    if not ffprobe_exe:
-        return None
-    try:
-        res = subprocess.run([
-            ffprobe_exe, "-v", "quiet",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=width,height,r_frame_rate",
-            "-show_entries", "format=size,duration",
-            "-of", "json", filepath
-        ], capture_output=True, text=True)
-        data = json.loads(res.stdout)
-        s = data["streams"][0]
-        fmt = data["format"]
-        w, h = int(s["width"]), int(s["height"])
-        num, den = map(int, s["r_frame_rate"].split("/"))
-        fps = num / den
-        bitrate = int(fmt["size"]) * 8 / float(fmt["duration"])
-        return round(bitrate / (w * h * fps), 4)
-    except Exception:
-        return None
-
-
 def apply_tag_to_file(filepath, encoding_settings):
-    """Writes encoding settings, BPP, and track statistics to the MKV file."""
-    bpp = get_video_bpp(filepath)
-
-    bpp_tag = ""
-    if bpp is not None:
-        bpp_tag = f"""
-    <Simple>
-      <Name>BITS_PER_PIXEL_FRAME</Name>
-      <String>{bpp}</String>
-    </Simple>"""
-
+    """Writes encoding settings and track statistics to the MKV file."""
     xml_content = f"""<?xml version="1.0"?>
 <Tags>
   <Tag>
@@ -302,9 +266,9 @@ def apply_tag_to_file(filepath, encoding_settings):
       <TrackUID>1</TrackUID>
     </Targets>
     <Simple>
-      <Name>ENCODING_SETTINGS</Name>
+      <Name>Encoding settings</Name>
       <String>{encoding_settings}</String>
-    </Simple>{bpp_tag}
+    </Simple>
   </Tag>
 </Tags>
 """
