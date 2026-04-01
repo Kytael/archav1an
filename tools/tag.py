@@ -1,5 +1,6 @@
 import os
 import glob
+import json
 import re
 import subprocess
 import shutil
@@ -257,9 +258,44 @@ def get_crf_string(quality):
         return "--crf 30(variable)"
 
 
+def get_video_bpp(filepath):
+    """Compute bits/pixel/frame from ffprobe stream and format info."""
+    ffprobe_exe = shutil.which("ffprobe")
+    if not ffprobe_exe:
+        return None
+    try:
+        res = subprocess.run([
+            ffprobe_exe, "-v", "quiet",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height,r_frame_rate",
+            "-show_entries", "format=size,duration",
+            "-of", "json", filepath
+        ], capture_output=True, text=True)
+        data = json.loads(res.stdout)
+        s = data["streams"][0]
+        fmt = data["format"]
+        w, h = int(s["width"]), int(s["height"])
+        num, den = map(int, s["r_frame_rate"].split("/"))
+        fps = num / den
+        bitrate = int(fmt["size"]) * 8 / float(fmt["duration"])
+        return round(bitrate / (w * h * fps), 4)
+    except Exception:
+        return None
+
+
 def apply_tag_to_file(filepath, encoding_settings):
-    """Writes a temp XML and applies it to the MKV file via mkvpropedit."""
-    xml_template = f"""<?xml version="1.0"?>
+    """Writes encoding settings, BPP, and track statistics to the MKV file."""
+    bpp = get_video_bpp(filepath)
+
+    bpp_tag = ""
+    if bpp is not None:
+        bpp_tag = f"""
+    <Simple>
+      <Name>BITS_PER_PIXEL_FRAME</Name>
+      <String>{bpp}</String>
+    </Simple>"""
+
+    xml_content = f"""<?xml version="1.0"?>
 <Tags>
   <Tag>
     <Targets>
@@ -268,14 +304,14 @@ def apply_tag_to_file(filepath, encoding_settings):
     <Simple>
       <Name>ENCODING_SETTINGS</Name>
       <String>{encoding_settings}</String>
-    </Simple>
+    </Simple>{bpp_tag}
   </Tag>
 </Tags>
 """
     with tempfile.NamedTemporaryFile(
         delete=False, suffix=".xml", mode="w", encoding="utf-8"
     ) as tmp:
-        tmp.write(xml_template)
+        tmp.write(xml_content)
         tmp_path = tmp.name
 
     try:
@@ -288,11 +324,15 @@ def apply_tag_to_file(filepath, encoding_settings):
         # Preserve mtime — mkvpropedit modifies the file in place
         stat = os.stat(filepath)
         subprocess.run(
-            [mkvpropedit_exe, filepath, "--tags", "track:v1:" + tmp_path],
+            [mkvpropedit_exe, filepath,
+             "--tags", "track:v1:" + tmp_path,
+             "--add-track-statistics-tags"],
             check=True,
             capture_output=True,
         )
         os.utime(filepath, (stat.st_atime, stat.st_mtime))
+        if bpp is not None:
+            print(f"  BPP: {bpp}")
         print("Success.")
     except subprocess.CalledProcessError as e:
         print(f"Error tagging {filepath}: {e}")
@@ -344,7 +384,7 @@ def main():
                 for line in full_content.splitlines():
                     strip = line.strip().lower()
                     if (not strip.startswith("#")) and (
-                        "dispatch.py" in strip or "auto-boost-av1an.py" in strip
+                        "dispatch.py" in strip or "auto-boost-av1an.py" in strip or "pipeline.py" in strip
                     ):
                         cmd_line = line.strip()
                         break
