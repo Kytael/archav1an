@@ -58,7 +58,10 @@ for f in Input/*.[Mm][Kk][Vv] Input/*.[Mm][Pp]4 Input/*.[Mm]2[Tt][Ss]; do
 
 done
 
-# --- CLEANUP ---
+# --- TAGGING & CLEANUP ---
+echo "Tagging output files..."
+python3 tools/tag.py
+
 echo "Cleaning up temporary files and folders..."
 python3 tools/cleanup.py
 

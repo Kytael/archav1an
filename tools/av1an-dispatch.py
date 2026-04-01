@@ -4,12 +4,40 @@ av1an-dispatch.py — Lightweight dispatch for single-pass av1an batch encoding.
 
 Similar to dispatch.py but calls av1an directly instead of Auto-Boost-Av1an.py.
 Handles color space detection (BT.709/BT.601) and injects appropriate flags.
+Re-encodes audio to Opus and preserves source modification time.
 """
 
 import sys
 import subprocess
 import os
 import shutil
+
+
+def get_audio_channels(input_file):
+    """Detect audio channel count via ffprobe. Returns int (default 2)."""
+    ffprobe_exe = shutil.which("ffprobe")
+    if not ffprobe_exe:
+        return 2
+    try:
+        result = subprocess.run(
+            [ffprobe_exe, "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=channels", "-of", "csv=p=0", input_file],
+            capture_output=True, text=True,
+        )
+        return int(result.stdout.strip())
+    except (ValueError, subprocess.SubprocessError):
+        return 2
+
+
+def opus_bitrate_for_channels(channels):
+    """Select Opus bitrate based on channel count."""
+    if channels > 6:
+        return "320k"
+    elif channels >= 6:
+        return "256k"
+    elif channels >= 3:
+        return "192k"
+    return "128k"
 
 
 def main():
@@ -118,7 +146,7 @@ def main():
     speed = None
     photon_noise = None
     encoder_params = ""
-    autocrop = False
+    no_opus = False
 
     for idx, arg in enumerate(args):
         if skip_next:
@@ -145,12 +173,20 @@ def main():
         elif arg in ("--final-params",):
             encoder_params = args[idx + 1] if idx + 1 < len(args) else ""
             skip_next = True
-        elif arg == "--autocrop":
-            autocrop = True
+        elif arg == "--no-opus":
+            no_opus = True
 
     # Append color flags to encoder params
     if current_flags:
         encoder_params += current_flags
+
+    # --- Audio params ---
+    if no_opus:
+        print("[av1an-dispatch] Audio: passthrough (--no-opus)")
+    else:
+        channels = get_audio_channels(input_file) if input_file else 2
+        opus_bitrate = opus_bitrate_for_channels(channels)
+        print(f"[av1an-dispatch] Audio: Opus {opus_bitrate} ({channels}ch)")
 
     # Build the av1an command
     if input_file:
@@ -159,6 +195,8 @@ def main():
         final_cmd.extend(["-o", output_file])
 
     final_cmd.extend(["--encoder", "svt-av1"])
+    if not no_opus:
+        final_cmd.extend(["-a", f"-c:a libopus -b:a {opus_bitrate}"])
 
     if workers:
         final_cmd.extend(["-w", workers])
@@ -177,6 +215,7 @@ def main():
     print(f"[av1an-dispatch] Running: {' '.join(final_cmd)}")
 
     # --- Execute ---
+    src_stat = os.stat(input_file) if input_file and os.path.exists(input_file) else None
     try:
         sys.stdout.flush()
         subprocess.check_call(final_cmd)
@@ -185,6 +224,10 @@ def main():
     except FileNotFoundError:
         print(f"[av1an-dispatch] Error: Could not execute av1an at {av1an_exe}")
         sys.exit(1)
+
+    # Preserve source modification time
+    if src_stat and output_file and os.path.exists(output_file):
+        os.utime(output_file, (src_stat.st_atime, src_stat.st_mtime))
 
 
 if __name__ == "__main__":
