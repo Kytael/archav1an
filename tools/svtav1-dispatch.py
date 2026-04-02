@@ -107,39 +107,35 @@ def detect_color_flags(input_file):
 # ---------------------------------------------------------------------------
 
 def read_ssimu2_config():
-    """Read tool and workercount from tools/workercount-ssimu2.txt."""
+    """Read tool from tools/workercount-ssimu2.txt."""
     config_path = os.path.join(os.path.dirname(__file__), "workercount-ssimu2.txt")
     tool = "vs-hip"
-    workers = 1
     if os.path.exists(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("tool="):
                         tool = line.split("=", 1)[1].strip()
-                    elif line.startswith("workercount="):
-                        workers = int(line.split("=", 1)[1].strip())
         except Exception:
             pass
-    return tool, workers
+    return tool
 
 
-def measure_ssimu2(source_file, encoded_file, tool, workers):
+def measure_ssimu2(source_file, encoded_file, tool):
     """
     Runs SSIMU2 comparison in a subprocess VapourSynth script.
     Returns (mean, p15) as floats, or (None, None) on failure.
     """
-    # Build an inline Python/VapourSynth script that prints one score per line.
-    # Uses clip_async_render for async frame dispatch — keeps GPU saturated.
+    # numStream=4 controls internal GPU parallelism within one measurement.
+    # This is separate from workercount (concurrent processes in the pipeline).
     if tool == "vs-hip":
         vs_script = f"""
 import vapoursynth as vs
-import sys
 from vstools import clip_async_render
 core = vs.core
 src = core.ffms2.Source(source=r"{source_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
 enc = core.ffms2.Source(source=r"{encoded_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
-res = core.vship.SSIMULACRA2(src, enc, numStream={workers})
+res = core.vship.SSIMULACRA2(src, enc, numStream=4)
 scores = clip_async_render(res, outfile=None, callback=lambda n, f: f.props["_SSIMULACRA2"])
 for s in scores:
     print(s, flush=True)
@@ -149,7 +145,6 @@ for s in scores:
 import vapoursynth as vs
 from vstools import clip_async_render
 core = vs.core
-core.num_threads = {workers}
 src = core.ffms2.Source(source=r"{source_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
 enc = core.ffms2.Source(source=r"{encoded_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
 res = core.vszip.SSIMULACRA2(src, enc)
@@ -212,6 +207,7 @@ def main():
     photon_noise = None
     encoder_params = ""
     no_opus = False
+    measure_ssimu2_flag = False
 
     i = 0
     while i < len(args):
@@ -235,6 +231,8 @@ def main():
             encoder_params = nextval() or ""; i += 2
         elif arg == "--no-opus":
             no_opus = True; i += 1
+        elif arg == "--ssimu2":
+            measure_ssimu2_flag = True; i += 1
         else:
             i += 1
 
@@ -341,14 +339,15 @@ def main():
         print(f"[svtav1-dispatch] Mux failed: {e}")
         sys.exit(e.returncode)
 
-    # --- SSIMU2 ---
-    ssimu2_tool, ssimu2_workers = read_ssimu2_config()
-    print(f"[svtav1-dispatch] Measuring SSIMU2 ({ssimu2_tool}, {ssimu2_workers} stream(s))...")
-    mean, p15 = measure_ssimu2(input_file, output_file, ssimu2_tool, ssimu2_workers)
-    if mean is not None:
-        print(f"[svtav1-dispatch] SSIMU2  mean: {mean:.2f} | p15: {p15:.2f}")
-    else:
-        print("[svtav1-dispatch] SSIMU2 measurement skipped or failed.")
+    # --- SSIMU2 (opt-in via --ssimu2) ---
+    if measure_ssimu2_flag:
+        ssimu2_tool = read_ssimu2_config()
+        print(f"[svtav1-dispatch] Measuring SSIMU2 ({ssimu2_tool})...")
+        mean, p15 = measure_ssimu2(input_file, output_file, ssimu2_tool)
+        if mean is not None:
+            print(f"[svtav1-dispatch] SSIMU2  mean: {mean:.2f} | p15: {p15:.2f}")
+        else:
+            print("[svtav1-dispatch] SSIMU2 measurement failed.")
 
     # --- Preserve mtime ---
     if src_stat and os.path.exists(output_file):
