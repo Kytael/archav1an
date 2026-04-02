@@ -83,7 +83,7 @@ get_vs_plugin_path() {
 }
 
 # Virtual environment path for Python dependencies
-VENV_DIR="/opt/auto-boost-av1an/venv"
+VENV_DIR="${VENV_DIR:-/opt/auto-boost-av1an/venv}"
 export VENV_DIR
 
 # Set native build optimization flags for all source builds

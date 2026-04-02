@@ -109,8 +109,7 @@ is_installed() {
             local knlm_path
             knlm_path="$(get_vs_plugin_path)"
             [ -f "$knlm_path/libknlmeanscl.so" ] && \
-            "$VENV_DIR/bin/pip" show onnxruntime &> /dev/null && \
-            ls "$BASE_DIR/models/scunet"/scunet_color_*.onnx &>/dev/null
+            "$VENV_DIR/bin/pip" show vsscunet &> /dev/null
             ;;
         *) return 1 ;;
     esac

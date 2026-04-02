@@ -186,11 +186,14 @@ parser.add_argument(
 parser.add_argument(
     "--zones", help="Path to specific zones file override", default=None
 )
-parser.add_argument("--denoise", action="store_true", help="Enable SCUnet+KNLMeansCL denoising in VPY")
+parser.add_argument("--denoise-scunet", action="store_true", help="Enable SCUnet spatial denoising (full RGB frame, requires CUDA/ROCm)")
 parser.add_argument("--denoise-strength", type=int, choices=[15, 25, 50], default=15, help="SCUnet noise preset (15/25/50) | Default: 15")
-parser.add_argument("--denoise-temporal", action="store_true", help="Add MVTools SMDegrain temporal pre-filter before spatial denoise")
-parser.add_argument("--denoise-backend", default="auto", choices=["auto","rocm","cuda","cpu"], help="ORT execution provider: auto/rocm/cuda/cpu | Default: auto")
-parser.add_argument("--denoise-model-dir", default=None, help="Directory containing SCUNet ONNX models | Default: <script_dir>/models/scunet")
+parser.add_argument("--denoise-temporal", action="store_true", help="MVTools SMDegrain pre-filter before SCUnet")
+parser.add_argument("--denoise-device", type=int, default=0, help="GPU device index for SCUnet | Default: 0")
+parser.add_argument("--denoise-knlm", action="store_true", help="Enable KNLMeansCL spatial+temporal denoising (OpenCL, all channels)")
+parser.add_argument("--denoise-tile", type=int, default=256, help="SCUnet tile size in pixels (256/512 recommended for MIGraphX) | Default: 256")
+parser.add_argument("--denoise-model-dir", default=None, help="Parent dir containing scunet/ ONNX models (default: auto-detect from VS plugin path)")
+parser.add_argument("--denoise-streams", type=int, default=2, help="MIGraphX inference streams (2=best on iGPU, higher may help on dGPU) | Default: 2")
 
 args = parser.parse_args()
 
@@ -543,9 +546,13 @@ def detect_crop_values(source_path: Path) -> tuple[int, int]:
         return 0, 0
 
 
-# Compute SCUNet model path (used in VPY template when --denoise is set)
-_scunet_model_dir = args.denoise_model_dir if args.denoise_model_dir else str(Path(__file__).parent / "models" / "scunet")
-_scunet_model_path = str(Path(_scunet_model_dir) / f"scunet_color_{args.denoise_strength}.onnx")
+# Find libvsmigx.so for vs-mlrt MIGraphX backend (used in VPY when --denoise-scunet is set)
+_migx_plugin_path = ""
+for _p in ["/usr/local/lib/vapoursynth/libvsmigx.so", "/usr/lib/vapoursynth/libvsmigx.so"]:
+    if Path(_p).exists():
+        _migx_plugin_path = _p
+        break
+_denoise_model_dir = getattr(args, "denoise_model_dir", None) or ""
 
 # Generate VPY file
 if not os.path.exists(vpy_file):
@@ -621,58 +628,34 @@ if should_downscale:
         if target_w < src.width or target_h < src.height:
              src = core.placebo.Resample(src, target_w, target_h, filter=pl_filter)
 
-# 3. DENOISE (optional — SCUnet via ONNX Runtime + KNLMeansCL chroma)
-if {denoise}:
-    import onnxruntime as _ort
-    import numpy as _np
-
-    # Select ORT execution providers
-    _be = "{denoise_backend}"
-    if _be == "rocm":
-        _providers = ["ROCMExecutionProvider", "CPUExecutionProvider"]
-    elif _be == "cuda":
-        _providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-    elif _be == "cpu":
-        _providers = ["CPUExecutionProvider"]
-    else:  # auto: CUDA if nvidia-smi sees a GPU, ROCm otherwise
-        import subprocess as _sp
-        _providers = ["ROCMExecutionProvider", "CPUExecutionProvider"]
-        try:
-            _r = _sp.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-                         capture_output=True, text=True, timeout=5)
-            if _r.returncode == 0 and _r.stdout.strip():
-                _providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        except Exception:
-            pass
-
-    _session = _ort.InferenceSession("{denoise_model_path}", providers=_providers)
-    _iname = _session.get_inputs()[0].name
-    _oname = _session.get_outputs()[0].name
-
-    # Optional: MVTools temporal pre-filter (luma, stabilises grain before spatial denoise)
+# 3. DENOISE — SCUnet spatial via vs-mlrt MIGraphX (optional, requires ROCm)
+if {denoise_scunet}:
+    import os as _os
+    _migx_so = "{migx_plugin_path}"
+    if not _migx_so or not _os.path.exists(_migx_so):
+        raise RuntimeError("--denoise-scunet: libvsmigx.so not found. Run setup/denoiser.sh to install vs-mlrt.")
+    core.std.LoadPlugin(_migx_so)
+    from vsmlrt import SCUNet as _SCUNet, SCUNetModel as _SCUNetModel, Backend as _Backend
+    _model_dir = "{denoise_model_dir}"
+    if _model_dir:
+        import vsmlrt as _vsmlrt_mod
+        _vsmlrt_mod.models_path = _model_dir
     if {denoise_temporal}:
         if hasattr(core, 'mv'):
             import havsfunc as _haf
             src = _haf.SMDegrain(src, tr=2, thSAD=300, plane=0)
-
-    # SCUnet: process in RGBS (float32, 0-1) then convert back to source format
     _src_fmt = src.format
     _rgb = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="709")
-
-    def _scunet(n, f):
-        fout = f[0].copy()
-        arr = _np.stack([_np.asarray(f[0][p]) for p in range(3)])  # (3, H, W) float32
-        out = _session.run([_oname], {{_iname: arr[_np.newaxis]}})[0][0]  # (3, H, W)
-        out = _np.clip(out, 0.0, 1.0).astype(_np.float32)
-        for p in range(3):
-            _np.copyto(_np.asarray(fout[p]), out[p])
-        return fout
-
-    _rgb = core.std.ModifyFrame(_rgb, [_rgb], _scunet)
+    _rgb = _SCUNet(_rgb,
+                   model={{15: _SCUNetModel.scunet_color_15, 25: _SCUNetModel.scunet_color_25, 50: _SCUNetModel.scunet_color_50}}.get({denoise_strength}, _SCUNetModel.scunet_color_15),
+                   tilesize={denoise_tile},
+                   overlap=8,
+                   backend=_Backend.MIGX(device_id={denoise_device}, fp16=True, exhaustive_tune=False, num_streams={denoise_streams}))
     src = core.resize.Bicubic(_rgb, format=_src_fmt, matrix_s="709")
 
-    # KNLMeansCL chroma denoise (OpenCL — works on any GPU/CPU with OpenCL)
-    src = core.knlm.KNLMeansCL(src, d=1, a=2, h=0.5, channels="UV")
+# 4. DENOISE — KNLMeansCL spatial+temporal (optional, independent of SCUnet)
+if {denoise_knlm}:
+    src = core.knlm.KNLMeansCL(src, d=1, a=2, h=0.5, channels="YUV")
 
 # Finalize (Sets 10-bit output)
 final = finalize_clip(src)
@@ -691,11 +674,15 @@ final.set_output(0)
                 target_res=s_target_res,
                 kernel=s_kernel,
                 convert=convert_yuv420p10,
-                denoise=str(args.denoise),
+                denoise_scunet=str(args.denoise_scunet),
                 denoise_strength=getattr(args, "denoise_strength", 15),
                 denoise_temporal=str(getattr(args, "denoise_temporal", False)),
-                denoise_backend=getattr(args, "denoise_backend", "auto"),
-                denoise_model_path=_scunet_model_path,
+                denoise_device=getattr(args, "denoise_device", 0),
+                denoise_knlm=str(args.denoise_knlm),
+                denoise_tile=getattr(args, "denoise_tile", 256),
+                migx_plugin_path=_migx_plugin_path,
+                denoise_model_dir=_denoise_model_dir,
+                denoise_streams=getattr(args, "denoise_streams", 2),
             )
         )
 

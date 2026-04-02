@@ -2,7 +2,7 @@
 # Activate the Auto-Boost-Av1an Python virtual environment
 # Source this from any script that needs to call python3
 
-VENV_DIR="/opt/auto-boost-av1an/venv"
+VENV_DIR="${VENV_DIR:-/opt/auto-boost-av1an/venv}"
 
 if [ -f "$VENV_DIR/bin/activate" ]; then
     source "$VENV_DIR/bin/activate"

@@ -23,6 +23,9 @@ tools/workercount-ssimu2.txt
 *.bsindex
 *.ffindex
 
+# Claude Code (local overrides)
+.claude/settings.local.json
+
 # Editor
 .vscode/
 .idea/

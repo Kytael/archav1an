@@ -331,14 +331,16 @@ def process_file(source, preset, ssimu2_tool, ssimu2_workers, worker_count, no_o
         dispatch_cmd.append("--autocrop")
     if p.get("aggressive"):
         dispatch_cmd.append("--aggressive")
-    if p.get("denoise"):
-        dispatch_cmd.append("--denoise")
+    if p.get("denoise_scunet"):
+        dispatch_cmd.append("--denoise-scunet")
         dispatch_cmd += ["--denoise-strength", str(p.get("denoise_strength", 15))]
         if p.get("denoise_temporal"):
             dispatch_cmd.append("--denoise-temporal")
-        dispatch_cmd += ["--denoise-backend", p.get("denoise_backend", "auto")]
-        if p.get("denoise_model_dir"):
-            dispatch_cmd += ["--denoise-model-dir", p["denoise_model_dir"]]
+        dispatch_cmd += ["--denoise-device", str(p.get("denoise_device", 0))]
+        dispatch_cmd += ["--denoise-tile", str(p.get("denoise_tile", 256))]
+        dispatch_cmd += ["--denoise-streams", str(p.get("denoise_streams", 2))]
+    if p.get("denoise_knlm"):
+        dispatch_cmd.append("--denoise-knlm")
 
     ret = subprocess.run(dispatch_cmd, cwd=str(ROOT_DIR))
     if ret.returncode != 0:
@@ -438,11 +440,14 @@ def main():
         "--tag-script", type=str,
         help="Shell script name for tag.py marker (e.g. run_linux_live_crf32.sh)",
     )
-    parser.add_argument("--denoise", action="store_true", help="Enable SCUnet+KNLMeansCL denoising")
+    parser.add_argument("--denoise-scunet", action="store_true", help="Enable SCUnet spatial denoising")
     parser.add_argument("--denoise-strength", type=int, choices=[15, 25, 50], default=15)
     parser.add_argument("--denoise-temporal", action="store_true")
-    parser.add_argument("--denoise-backend", default="auto", choices=["auto","rocm","cuda","cpu"])
-    parser.add_argument("--denoise-model-dir", default=None, help="Directory containing SCUNet ONNX models")
+    parser.add_argument("--denoise-device", type=int, default=0)
+    parser.add_argument("--denoise-knlm", action="store_true", help="Enable KNLMeansCL spatial+temporal denoising")
+    parser.add_argument("--denoise-tile", type=int, default=256, help="SCUnet tile size in pixels | Default: 256")
+    parser.add_argument("--denoise-streams", type=int, default=2, help="MIGraphX inference streams | Default: 2")
+    parser.add_argument("--file", type=str, default=None, help="Process only the file matching this name (e.g. C0825.MP4)")
     args = parser.parse_args()
 
     # Build preset dict from --preset or explicit params
@@ -486,12 +491,15 @@ def main():
     else:
         parser.error("Either --preset or explicit encoding params (--quality, etc.) are required")
 
-    if args.denoise:
-        preset["denoise"] = True
+    if args.denoise_scunet:
+        preset["denoise_scunet"] = True
         preset["denoise_strength"] = args.denoise_strength
         preset["denoise_temporal"] = args.denoise_temporal
-        preset["denoise_backend"] = args.denoise_backend
-        preset["denoise_model_dir"] = args.denoise_model_dir
+        preset["denoise_device"] = args.denoise_device
+        preset["denoise_tile"] = args.denoise_tile
+        preset["denoise_streams"] = args.denoise_streams
+    if args.denoise_knlm:
+        preset["denoise_knlm"] = True
 
     # Ensure directories exist
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -527,6 +535,11 @@ def main():
 
     # Discover videos
     videos = discover_videos(INPUT_DIR)
+    if args.file:
+        videos = [v for v in videos if v.name == args.file]
+        if not videos:
+            print(f"No file named '{args.file}' found in Input/. Nothing to do.")
+            return
     if not videos:
         print("No video files found in Input/. Nothing to do.")
         return
