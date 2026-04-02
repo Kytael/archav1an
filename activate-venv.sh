@@ -26,6 +26,26 @@ if uname -r | grep -qi microsoft; then
     fi
 fi
 
+# AMD ROCm: set HSA_OVERRIDE_GFX_VERSION if not already set and an AMD GPU is present
+if [ -z "${HSA_OVERRIDE_GFX_VERSION:-}" ] && [ -d /opt/rocm ]; then
+    _gfx=""
+    if command -v rocminfo &>/dev/null; then
+        _gfx=$(rocminfo 2>/dev/null | grep -oP 'gfx[0-9a-f]+' | head -1)
+    fi
+    if [ -z "$_gfx" ]; then
+        _gfx=$(cat /sys/class/drm/card*/device/ip_discovery/die/*/GC/*/major 2>/dev/null | head -1 | xargs -I{} bash -c 'printf "gfx%s%s%s" {} $(cat /sys/class/drm/card*/device/ip_discovery/die/*/GC/*/minor 2>/dev/null | head -1) $(cat /sys/class/drm/card*/device/ip_discovery/die/*/GC/*/revision 2>/dev/null | head -1)' 2>/dev/null)
+    fi
+    if [ -n "$_gfx" ]; then
+        _num="${_gfx#gfx}"
+        _len="${#_num}"
+        if [ "$_len" -ge 3 ]; then
+            _rev="${_num: -1}"; _minor="${_num: -2:1}"; _major="${_num:0:$((_len-2))}"
+            export HSA_OVERRIDE_GFX_VERSION="${_major}.${_minor}.${_rev}"
+        fi
+    fi
+    unset _gfx _num _len _rev _minor _major
+fi
+
 # Use mimalloc for faster multi-threaded memory allocation (SVT-AV1, av1an, etc.)
 MIMALLOC_PATH=""
 if [ -f /usr/lib/libmimalloc.so ]; then

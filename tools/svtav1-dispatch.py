@@ -11,6 +11,48 @@ import sys
 import subprocess
 import shutil
 import tempfile
+import textwrap
+
+
+# ---------------------------------------------------------------------------
+# Denoise helpers
+# ---------------------------------------------------------------------------
+
+def find_migx_plugin():
+    for p in ["/usr/local/lib/vapoursynth/libvsmigx.so", "/usr/lib/vapoursynth/libvsmigx.so"]:
+        if os.path.exists(p):
+            return p
+    return ""
+
+def write_denoise_vpy(vpy_path, source, cachefile, migx_plugin, strength, tile, streams):
+    vpy = textwrap.dedent(f"""
+        from vstools import vs, core, initialize_clip, finalize_clip
+        core.max_cache_size = 1024
+
+        import os as _os
+        _migx_so = {migx_plugin!r}
+        if not _migx_so or not _os.path.exists(_migx_so):
+            raise RuntimeError("--denoise-scunet: libvsmigx.so not found. Run setup/denoiser.sh.")
+        core.std.LoadPlugin(_migx_so)
+
+        src = core.ffms2.Source(source=r{source!r}, cachefile=r{cachefile!r})
+        src = initialize_clip(src)
+
+        from vsmlrt import SCUNet as _SCUNet, SCUNetModel as _SCUNetModel, Backend as _Backend
+        _src_fmt = src.format
+        _rgb = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="709")
+        _rgb = _SCUNet(_rgb,
+                       model={{15: _SCUNetModel.scunet_color_15, 25: _SCUNetModel.scunet_color_25,
+                               50: _SCUNetModel.scunet_color_50}}.get({strength}, _SCUNetModel.scunet_color_15),
+                       tilesize={tile}, overlap=8,
+                       backend=_Backend.MIGX(device_id=0, fp16=True, exhaustive_tune=False, num_streams={streams}))
+        src = core.resize.Bicubic(_rgb, format=_src_fmt, matrix_s="709")
+
+        final = finalize_clip(src)
+        final.set_output(0)
+    """).lstrip()
+    with open(vpy_path, "w") as f:
+        f.write(vpy)
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +250,10 @@ def main():
     encoder_params = ""
     no_opus = False
     measure_ssimu2_flag = False
+    denoise_scunet = False
+    denoise_strength = 15
+    denoise_tile = 256
+    denoise_streams = 2
 
     i = 0
     while i < len(args):
@@ -233,6 +279,14 @@ def main():
             no_opus = True; i += 1
         elif arg == "--ssimu2":
             measure_ssimu2_flag = True; i += 1
+        elif arg == "--denoise-scunet":
+            denoise_scunet = True; i += 1
+        elif arg == "--denoise-strength":
+            denoise_strength = int(nextval() or 15); i += 2
+        elif arg == "--denoise-tile":
+            denoise_tile = int(nextval() or 256); i += 2
+        elif arg == "--denoise-streams":
+            denoise_streams = int(nextval() or 2); i += 2
         else:
             i += 1
 
@@ -273,18 +327,8 @@ def main():
     os.makedirs(temp_dir, exist_ok=True)
     ivf_path = os.path.join(temp_dir, f"{stem}.ivf")
 
-    # Build commands
-    ffmpeg_cmd = [
-        ffmpeg_exe, "-y", "-i", input_file,
-        "-an", "-f", "yuv4mpegpipe", "-strict", "-1",
-        "-pix_fmt", "yuv420p10le", "-",
-    ]
-
     import shlex
     svt_cmd = [svt_exe, "-i", "stdin"] + shlex.split(svt_params.strip()) + ["-b", ivf_path]
-
-    print(f"[svtav1-dispatch] ffmpeg | SvtAv1EncApp{svt_params}")
-    print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
 
     # Audio
     if no_opus:
@@ -298,21 +342,59 @@ def main():
     src_stat = os.stat(input_file) if os.path.exists(input_file) else None
 
     # --- Encode ---
-    try:
-        sys.stdout.flush()
-        ffmpeg_proc = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        svt_proc = subprocess.Popen(svt_cmd, stdin=ffmpeg_proc.stdout)
-        ffmpeg_proc.stdout.close()
-        svt_proc.wait()
-        ffmpeg_proc.wait()
-        if svt_proc.returncode != 0:
-            print(f"[svtav1-dispatch] Error: SvtAv1EncApp exited with {svt_proc.returncode}")
-            sys.exit(svt_proc.returncode)
-        if ffmpeg_proc.returncode not in (0, None):
-            print(f"[svtav1-dispatch] Warning: ffmpeg exited with {ffmpeg_proc.returncode}")
-    except Exception as e:
-        print(f"[svtav1-dispatch] Encode failed: {e}")
-        sys.exit(1)
+    if denoise_scunet:
+        migx_plugin = find_migx_plugin()
+        if not migx_plugin:
+            print("[svtav1-dispatch] Error: --denoise-scunet: libvsmigx.so not found. Run setup/denoiser.sh.")
+            sys.exit(1)
+        vspipe_exe = shutil.which("vspipe")
+        if not vspipe_exe:
+            print("[svtav1-dispatch] Error: vspipe not found in PATH.")
+            sys.exit(1)
+        vpy_path = os.path.join(temp_dir, f"{stem}_denoise.vpy")
+        cachefile = os.path.join(temp_dir, f"{stem}.ffindex")
+        write_denoise_vpy(vpy_path, input_file, cachefile, migx_plugin,
+                          denoise_strength, denoise_tile, denoise_streams)
+        print(f"[svtav1-dispatch] vspipe (MIGraphX SCUNet-{denoise_strength}, tile={denoise_tile}, streams={denoise_streams}) | SvtAv1EncApp{svt_params}")
+        print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
+        try:
+            sys.stdout.flush()
+            vspipe_proc = subprocess.Popen([vspipe_exe, vpy_path, "--"], stdout=subprocess.PIPE)
+            svt_proc = subprocess.Popen(svt_cmd, stdin=vspipe_proc.stdout)
+            vspipe_proc.stdout.close()
+            svt_proc.wait()
+            vspipe_proc.wait()
+            if svt_proc.returncode != 0:
+                print(f"[svtav1-dispatch] Error: SvtAv1EncApp exited with {svt_proc.returncode}")
+                sys.exit(svt_proc.returncode)
+            if vspipe_proc.returncode != 0:
+                print(f"[svtav1-dispatch] Warning: vspipe exited with {vspipe_proc.returncode}")
+        except Exception as e:
+            print(f"[svtav1-dispatch] Encode failed: {e}")
+            sys.exit(1)
+    else:
+        ffmpeg_cmd = [
+            ffmpeg_exe, "-y", "-i", input_file,
+            "-an", "-f", "yuv4mpegpipe", "-strict", "-1",
+            "-pix_fmt", "yuv420p10le", "-",
+        ]
+        print(f"[svtav1-dispatch] ffmpeg | SvtAv1EncApp{svt_params}")
+        print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
+        try:
+            sys.stdout.flush()
+            ffmpeg_proc = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            svt_proc = subprocess.Popen(svt_cmd, stdin=ffmpeg_proc.stdout)
+            ffmpeg_proc.stdout.close()
+            svt_proc.wait()
+            ffmpeg_proc.wait()
+            if svt_proc.returncode != 0:
+                print(f"[svtav1-dispatch] Error: SvtAv1EncApp exited with {svt_proc.returncode}")
+                sys.exit(svt_proc.returncode)
+            if ffmpeg_proc.returncode not in (0, None):
+                print(f"[svtav1-dispatch] Warning: ffmpeg exited with {ffmpeg_proc.returncode}")
+        except Exception as e:
+            print(f"[svtav1-dispatch] Encode failed: {e}")
+            sys.exit(1)
 
     # --- Mux ---
     print("[svtav1-dispatch] Muxing...")
