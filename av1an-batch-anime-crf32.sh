@@ -27,6 +27,7 @@ fi
 
 echo "Starting Av1an Batch (Anime CRF 32) with $WORKER_COUNT workers..."
 
+rm -f "tools/tag-manifest.txt"
 mkdir -p Input Output
 shopt -s nullglob
 

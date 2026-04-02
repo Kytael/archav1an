@@ -360,6 +360,14 @@ def main():
     except OSError:
         pass
 
+    # Register output in tag manifest so tag.py only tags this run's files
+    manifest_path = os.path.join(root_dir, "tools", "tag-manifest.txt")
+    try:
+        with open(manifest_path, "a", encoding="utf-8") as mf:
+            mf.write(os.path.abspath(output_file) + "\n")
+    except OSError:
+        pass
+
     print(f"[svtav1-dispatch] Done: {output_file}")
 
 

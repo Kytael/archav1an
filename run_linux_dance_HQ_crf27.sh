@@ -27,6 +27,7 @@ fi
 
 echo "Starting SvtAv1EncApp Batch (Dance HQ CRF 27) — single-pass, 16 threads..."
 
+rm -f "tools/tag-manifest.txt"
 mkdir -p Input Output
 shopt -s nullglob
 

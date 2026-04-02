@@ -235,6 +235,15 @@ def main():
     if src_stat and output_file and os.path.exists(output_file):
         os.utime(output_file, (src_stat.st_atime, src_stat.st_mtime))
 
+    # Register output in tag manifest so tag.py only tags this run's files
+    if output_file and os.path.exists(output_file):
+        manifest_path = os.path.join(root_dir, "tools", "tag-manifest.txt")
+        try:
+            with open(manifest_path, "a", encoding="utf-8") as mf:
+                mf.write(os.path.abspath(output_file) + "\n")
+        except OSError:
+            pass
+
 
 if __name__ == "__main__":
     main()

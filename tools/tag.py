@@ -382,34 +382,34 @@ def main():
         "-------------------------------------------------------------------------------"
     )
 
-    # 5. Apply
-    found = False
-    for root, _, files in os.walk("."):
-        for f in files:
-            if f.lower().endswith("-av1.mkv") or f.lower().endswith("-output.mkv"):
-                # Note: Windows script checks -output.mkv, but linux script produces -av1.mkv then muxes to something else?
-                # run_linux.sh -> output is defined in mux.py.
-                # mux.py usually creates "*-muxed.mkv"? Or overwrite source?
-                # The user's tag.py in Win searches for "*-output.mkv".
-                # In Logic: output_dir / f"{src_file.stem}-av1.mkv" (Auto-Boost-Av1an.py)
-                # mux.py creates the final file.
-                # Let's check typical flow.
-                pass
+    # 5. Determine which files to tag
+    manifest_path = os.path.join("tools", "tag-manifest.txt")
+    files_to_tag = []
 
-    # Actually, let's keep it simple: Search for MKV files that look like outputs.
-    # In Linux_Dist/tools/mux.py, let's see what it outputs.
-    # But for now, I'll search for the same pattern as Windows + maybe "-av1.mkv"
+    if os.path.exists(manifest_path):
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as mf:
+                for line in mf:
+                    p = line.strip()
+                    if p and os.path.exists(p):
+                        files_to_tag.append(p)
+            os.remove(manifest_path)
+        except OSError as e:
+            print(f"Warning: Could not read/remove manifest: {e}")
 
-    for root, _, files in os.walk("."):
-        for f in files:
-            # We want to tag the FINAL output.
-            if f.lower().endswith("-output.mkv") or f.lower().endswith("-av1.mkv"):
-                found = True
-                full_path = os.path.join(root, f)
-                apply_tag_to_file(full_path, full_string)
+    if not files_to_tag:
+        # Fallback: scan for output MKVs (no manifest present)
+        for root, _, files in os.walk("."):
+            for f in files:
+                if f.lower().endswith("-output.mkv") or f.lower().endswith("-av1.mkv"):
+                    files_to_tag.append(os.path.join(root, f))
 
-    if not found:
+    if not files_to_tag:
         print("No output MKV files found to tag.")
+        return
+
+    for full_path in files_to_tag:
+        apply_tag_to_file(full_path, full_string)
 
 
 if __name__ == "__main__":

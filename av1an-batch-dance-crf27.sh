@@ -26,6 +26,7 @@ fi
 
 echo "Starting Av1an Batch (Dance CRF 27) with $WORKER_COUNT workers..."
 
+rm -f "tools/tag-manifest.txt"
 mkdir -p Input Output
 shopt -s nullglob
 
