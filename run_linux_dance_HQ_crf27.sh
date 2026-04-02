@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# av1an-batch-anime-crf32.sh
-# Direct Av1an encode — Anime CRF 32, single pass (no Auto-Boost).
+# run_linux_dance_HQ_crf27.sh
+# Single-pass SvtAv1EncApp encode — Dance / Performance CRF 27, full temporal context.
+# Bypasses av1an chunking so encoder sees the entire clip without forced chunk resets.
 # Place source files in Input/, encoded output goes to Output/.
 
 cd "$(dirname "$0")"
-
 
 # Activate Python venv
 source "$(dirname "$(realpath "$0")")/activate-venv.sh"
@@ -13,7 +13,7 @@ touch "tools/sh-used-$(basename "$0").txt"
 
 WORKER_COUNT=4
 
-# --- STEP 1A: WORKER COUNT CHECK ---
+# --- WORKER COUNT CHECK ---
 CONFIG_FILE="tools/workercount-config.txt"
 
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -25,7 +25,7 @@ if [ -f "$CONFIG_FILE" ]; then
     WORKER_COUNT=$(grep "^workers=" "$CONFIG_FILE" | cut -d= -f2 | tr -d '\r')
 fi
 
-echo "Starting Av1an Batch (Anime CRF 32) with $WORKER_COUNT workers..."
+echo "Starting SvtAv1EncApp Batch (Dance HQ CRF 27) — single-pass, 16 threads..."
 
 rm -f "tools/tag-manifest.txt"
 mkdir -p Input Output
@@ -47,15 +47,15 @@ for f in Input/*.[Mm][Kk][Vv] Input/*.[Mm][Pp]4 Input/*.[Mm]2[Tt][Ss]; do
     echo "Processing \"$f\"..."
     echo "-------------------------------------------------------------------------------"
 
-    # Anime Standard (CRF 32) — v1.66 5fish svt-av1-psy, single pass
-    python3 tools/av1an-dispatch.py \
+    # Dance / Performance HQ (CRF 27) — single-pass SvtAv1EncApp, 16 threads
+    python3 tools/svtav1-dispatch.py \
         -i "$f" \
         -o "$OUTPUT_FILE" \
-        --quality 32 \
-        --photon-noise 2 \
-        --workers "$WORKER_COUNT" \
-        --final-speed 4 \
-        --final-params "--lp 3 --tune 0 --hbd-mds 1 --keyint 305 --noise-level-thr 16000 --lineart-psy-bias 4 --texture-psy-bias 2 --filtering-noise-detection 4"
+        --quality 27 \
+        --photon-noise 6 \
+        --lp 16 \
+        --speed 4 \
+        --encoder-params "--tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2"
 
 done
 

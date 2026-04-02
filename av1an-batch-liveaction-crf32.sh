@@ -27,6 +27,7 @@ fi
 
 echo "Starting Av1an Batch (Live Action CRF 32) with $WORKER_COUNT workers..."
 
+rm -f "tools/tag-manifest.txt"
 mkdir -p Input Output
 shopt -s nullglob
 
@@ -59,7 +60,10 @@ for f in Input/*.[Mm][Kk][Vv] Input/*.[Mm][Pp]4 Input/*.[Mm]2[Tt][Ss]; do
 
 done
 
-# --- CLEANUP ---
+# --- TAGGING & CLEANUP ---
+echo "Tagging output files..."
+python3 tools/tag.py
+
 echo "Cleaning up temporary files and folders..."
 python3 tools/cleanup.py
 

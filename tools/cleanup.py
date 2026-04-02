@@ -46,8 +46,10 @@ def cleanup_workspace():
                 # Whitelist: Critical system/project folders to never touch
                 if item in [
                     ".git",
+                    ".github",
                     ".vscode",
                     ".idea",
+                    ".claude",
                     "Input",
                     "Output",
                     "Temp",
