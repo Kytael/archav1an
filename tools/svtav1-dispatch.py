@@ -129,31 +129,33 @@ def measure_ssimu2(source_file, encoded_file, tool, workers):
     Runs SSIMU2 comparison in a subprocess VapourSynth script.
     Returns (mean, p15) as floats, or (None, None) on failure.
     """
-    # Build an inline Python/VapourSynth script that prints one score per line
+    # Build an inline Python/VapourSynth script that prints one score per line.
+    # Uses clip_async_render for async frame dispatch — keeps GPU saturated.
     if tool == "vs-hip":
         vs_script = f"""
 import vapoursynth as vs
 import sys
+from vstools import clip_async_render
 core = vs.core
 src = core.ffms2.Source(source=r"{source_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
 enc = core.ffms2.Source(source=r"{encoded_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
 res = core.vship.SSIMULACRA2(src, enc, numStream={workers})
-for n in range(len(res)):
-    f = res.get_frame(n)
-    print(f.props["_SSIMULACRA2"], flush=True)
+scores = clip_async_render(res, outfile=None, callback=lambda n, f: f.props["_SSIMULACRA2"])
+for s in scores:
+    print(s, flush=True)
 """
     elif tool == "vs-zip":
         vs_script = f"""
 import vapoursynth as vs
-import sys
+from vstools import clip_async_render
 core = vs.core
 core.num_threads = {workers}
 src = core.ffms2.Source(source=r"{source_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
 enc = core.ffms2.Source(source=r"{encoded_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
 res = core.vszip.SSIMULACRA2(src, enc)
-for n in range(len(res)):
-    f = res.get_frame(n)
-    print(f.props["_SSIMULACRA2"], flush=True)
+scores = clip_async_render(res, outfile=None, callback=lambda n, f: f.props["_SSIMULACRA2"])
+for s in scores:
+    print(s, flush=True)
 """
     else:
         print(f"[svtav1-dispatch] SSIMU2: unsupported tool '{tool}', skipping.")
