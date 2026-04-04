@@ -33,14 +33,20 @@ EXTRA_ARGS=("$@")
 
 rm -f "tools/tag-manifest.txt"
 mkdir -p Input Output
-shopt -s nullglob
 
-for f in Input/*.[Mm][Kk][Vv] Input/*.[Mm][Pp]4 Input/*.[Mm][Oo][Vv] Input/*.[Mm]2[Tt][Ss]; do
-    [ -f "$f" ] || continue
+while IFS= read -r -d '' f; do
     filename=$(basename -- "$f")
     stem="${filename%.*}"
+    rel_dir=$(dirname -- "$f")
+    rel_dir="${rel_dir#Input}"
+    rel_dir="${rel_dir#/}"
 
-    OUTPUT_FILE="Output/${stem}-av1.mkv"
+    if [ -n "$rel_dir" ]; then
+        mkdir -p "Output/${rel_dir}"
+        OUTPUT_FILE="Output/${rel_dir}/${stem}-av1.mkv"
+    else
+        OUTPUT_FILE="Output/${stem}-av1.mkv"
+    fi
 
     if [ -f "$OUTPUT_FILE" ]; then
         echo "Skipping \"$f\" — output already exists."
@@ -62,7 +68,7 @@ for f in Input/*.[Mm][Kk][Vv] Input/*.[Mm][Pp]4 Input/*.[Mm][Oo][Vv] Input/*.[Mm
         --encoder-params "--tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2" \
         "${EXTRA_ARGS[@]}"
 
-done
+done < <(find Input -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.mov" -o -iname "*.m2ts" \) -print0 | sort -z)
 
 # --- TAGGING & CLEANUP ---
 echo "Tagging output files..."
