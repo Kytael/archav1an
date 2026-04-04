@@ -309,6 +309,8 @@ def main():
     src_stat = os.stat(input_file) if os.path.exists(input_file) else None
 
     # --- Encode ---
+    vspipe_proc = None
+    svt_proc = None
     try:
         sys.stdout.flush()
         vspipe_proc = subprocess.Popen(vspipe_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -321,6 +323,16 @@ def main():
             sys.exit(svt_proc.returncode)
         if vspipe_proc.returncode not in (0, None):
             print(f"[svtav1-dispatch] Warning: vspipe exited with {vspipe_proc.returncode}")
+    except KeyboardInterrupt:
+        print("\n[svtav1-dispatch] Interrupted — stopping encoder...")
+        for proc in (svt_proc, vspipe_proc):
+            if proc is not None:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=5)
+                except Exception:
+                    proc.kill()
+        sys.exit(130)
     except Exception as e:
         print(f"[svtav1-dispatch] Encode failed: {e}")
         sys.exit(1)
