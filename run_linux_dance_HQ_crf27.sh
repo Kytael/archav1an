@@ -6,7 +6,6 @@
 # Place source files in Input/, encoded output goes to Output/.
 
 cd "$(dirname "$0")"
-trap 'exit 130' INT
 
 # Activate Python venv
 source "$(dirname "$(realpath "$0")")/activate-venv.sh"
@@ -26,18 +25,30 @@ if [ -f "$CONFIG_FILE" ]; then
     WORKER_COUNT=$(grep "^workers=" "$CONFIG_FILE" | cut -d= -f2 | tr -d '\r')
 fi
 
-echo "Starting SvtAv1EncApp Batch (Dance HQ CRF 27) — single-pass, 16 threads..."
+LP=$(nproc)
+[ "$LP" -gt 64 ] && LP=64
+echo "Starting SvtAv1EncApp Batch (Dance HQ CRF 27) — single-pass, ${LP} threads..."
+# Extra args passed to this script are forwarded to svtav1-dispatch.py
+EXTRA_ARGS=("$@")
+
+trap 'trap "" INT TERM; echo "Interrupted."; kill 0; exit 130' INT TERM
 
 rm -f "tools/tag-manifest.txt"
 mkdir -p Input Output
-shopt -s nullglob
 
-for f in Input/*.[Mm][Kk][Vv] Input/*.[Mm][Pp]4 Input/*.[Mm]2[Tt][Ss]; do
-    [ -f "$f" ] || continue
+while IFS= read -r -d '' f <&3; do
     filename=$(basename -- "$f")
     stem="${filename%.*}"
+    rel_dir=$(dirname -- "$f")
+    rel_dir="${rel_dir#Input}"
+    rel_dir="${rel_dir#/}"
 
-    OUTPUT_FILE="Output/${stem}-av1.mkv"
+    if [ -n "$rel_dir" ]; then
+        mkdir -p "Output/${rel_dir}"
+        OUTPUT_FILE="Output/${rel_dir}/${stem}-av1.mkv"
+    else
+        OUTPUT_FILE="Output/${stem}-av1.mkv"
+    fi
 
     if [ -f "$OUTPUT_FILE" ]; then
         echo "Skipping \"$f\" — output already exists."
@@ -48,17 +59,18 @@ for f in Input/*.[Mm][Kk][Vv] Input/*.[Mm][Pp]4 Input/*.[Mm]2[Tt][Ss]; do
     echo "Processing \"$f\"..."
     echo "-------------------------------------------------------------------------------"
 
-    # Dance / Performance HQ (CRF 27) — single-pass SvtAv1EncApp, 16 threads
+    # Dance / Performance HQ (CRF 27) — single-pass SvtAv1EncApp
     python3 tools/svtav1-dispatch.py \
         -i "$f" \
         -o "$OUTPUT_FILE" \
         --quality 27 \
         --photon-noise 6 \
-        --lp 16 \
+        --lp "$LP" \
         --speed 4 \
-        --encoder-params "--tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2"
+        --encoder-params "--tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2" \
+        "${EXTRA_ARGS[@]}"
 
-done
+done 3< <(find Input -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.mov" -o -iname "*.m2ts" \) -print0 | sort -z)
 
 # --- TAGGING & CLEANUP ---
 echo "Tagging output files..."
