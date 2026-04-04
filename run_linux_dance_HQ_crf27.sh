@@ -6,6 +6,7 @@
 # Place source files in Input/, encoded output goes to Output/.
 
 cd "$(dirname "$0")"
+trap 'exit 130' INT
 
 # Activate Python venv
 source "$(dirname "$(realpath "$0")")/activate-venv.sh"
