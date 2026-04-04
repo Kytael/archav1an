@@ -1694,8 +1694,26 @@ if not resume or not scene_detection_scenes_file.exists():
         ]
         if resume:
             command += ["--resume"]
+        # Create a wrapper vpy that pre-converts the source to YUV420P10.
+        # This avoids the AV1AN_PIXEL_FORMAT=YUV420P10LE bug: VapourSynth's
+        # PresetVideoFormat only has YUV420P10 (no LE suffix). Using a vpy as
+        # -i means av1an never invokes the broken pix_fmt conversion path.
+        _x264_input_vpy = scene_detection_x264_temp_dir.parent / "x264_input.vpy"
+        _cache_line = ""
+        if zone_default.source_clip_cache is not None:
+                _cache_line = f', cachefile=r"{str(zone_default.source_clip_cache).replace(chr(92), "/")}"'
+        _x264_input_vpy.write_text(
+            f'import vapoursynth as vs\n'
+            f'core = vs.core\n'
+            f'video = core.{zone_default.source_provider_av1an}.Source('
+            f'r"{str(scene_detection_input_file).replace(chr(92), "/")}"'
+            f'{_cache_line})\n'
+            f'video = video.resize.Bicubic(format=vs.YUV420P10)\n'
+            f'video.set_output()\n',
+            encoding="utf-8",
+        )
         command += [
-            "-i", scene_detection_input_file
+            "-i", str(_x264_input_vpy)
         ]
         if scene_detection_vspipe_args is not None:
             command += ["--vspipe-args"] + scene_detection_vspipe_args
@@ -1704,7 +1722,6 @@ if not resume or not scene_detection_scenes_file.exists():
             "--scenes", scene_detection_x264_scenes_file,
             "--chunk-method", zone_default.source_provider_av1an,
             "--encoder", "x264",
-            "--pix-format", "yuv420p10le",
             "--workers", "2",
             "--force", "--video-params", f"[K[0m[1;3m> Progressive Scene Detection [0m[3mx264-based-scene-detection[0m[1;3m <[0m",
             "--concat", "mkvmerge"
@@ -1714,6 +1731,7 @@ if not resume or not scene_detection_scenes_file.exists():
         # Redirect both stdout and stderr — indicatif may write to either
         scene_detection_x264_process = subprocess.Popen(command, text=False, stdout=_x264_pty_slave, stderr=_x264_pty_slave)
         os.close(_x264_pty_slave)  # Close slave in parent — child has it
+
         _x264_progress = ["starting..."]
         def _x264_stderr_reader(master_fd):
             try:

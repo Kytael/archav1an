@@ -281,7 +281,7 @@ def main():
     ]
 
     import shlex
-    svt_cmd = [svt_exe, "-i", "stdin"] + shlex.split(svt_params.strip()) + ["-b", ivf_path]
+    svt_cmd = [svt_exe, "-i", "stdin", "--progress", "2"] + shlex.split(svt_params.strip()) + ["-b", ivf_path]
 
     print(f"[svtav1-dispatch] ffmpeg | SvtAv1EncApp{svt_params}")
     print(f"[svtav1-dispatch] Output IVF: {ivf_path}")

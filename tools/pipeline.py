@@ -430,6 +430,10 @@ def main():
         "--tag-script", type=str,
         help="Shell script name for tag.py marker (e.g. run_linux_live_crf32.sh)",
     )
+    parser.add_argument(
+        "--file", type=str, default=None,
+        help="Only encode files whose name contains this substring (e.g. C0849)",
+    )
     args = parser.parse_args()
 
     # Build preset dict from --preset or explicit params
@@ -507,6 +511,8 @@ def main():
 
     # Discover videos
     videos = discover_videos(INPUT_DIR)
+    if args.file:
+        videos = [v for v in videos if args.file in v.name]
     if not videos:
         print("No video files found in Input/. Nothing to do.")
         return
