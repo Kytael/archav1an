@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Temporary/Output Folders
+Input/
+input/
+Output/
+Temp/
+build_tmp/
+cropdetect-temp/
+logs/
+.temp/
+*.log
+
+# Runtime markers
+tools/sh-used-*.txt
+tools/workercount-config.txt
+tools/workercount-ssimu2.txt
+
+# Index files
+*.bsindex
+*.ffindex
+
+# Claude Code (local overrides)
+.claude/settings.local.json
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
