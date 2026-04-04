@@ -177,36 +177,49 @@ def detect_color_flags(input_file):
         return ""
 
 
-def _read_ssimu2_tool():
-    config_path = os.path.join(os.path.dirname(__file__), "workercount-ssimu2.txt")
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.startswith("tool="):
-                    return line.split("=", 1)[1].strip()
-    except OSError:
-        pass
-    return "vs-hip"
-
-
 # ---------------------------------------------------------------------------
 # SSIMU2 measurement
 # ---------------------------------------------------------------------------
 
-def measure_ssimu2(source_file, encoded_file, tool):
+def read_ssimu2_config():
+    """Read tool from tools/workercount-ssimu2.txt."""
+    config_path = os.path.join(os.path.dirname(__file__), "workercount-ssimu2.txt")
+    tool = "vs-hip"
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("tool="):
+                        tool = line.split("=", 1)[1].strip()
+        except Exception:
+            pass
+    return tool
+
+
+def measure_ssimu2(source_file, encoded_file, tool, temp_dir=None):
     """
     Runs SSIMU2 comparison in a subprocess VapourSynth script.
     Returns (mean, p15) as floats, or (None, None) on failure.
     """
     # numStream=4 controls internal GPU parallelism within one measurement.
     # This is separate from workercount (concurrent processes in the pipeline).
+    import os as _os
+    _src_stem = _os.path.splitext(_os.path.basename(str(source_file)))[0]
+    _enc_stem = _os.path.splitext(_os.path.basename(str(encoded_file)))[0]
+    if temp_dir:
+        _src_idx = _os.path.join(str(temp_dir), f"{_src_stem}.ffindex").replace("\\", "/")
+        _enc_idx = _os.path.join(str(temp_dir), f"{_enc_stem}.ffindex").replace("\\", "/")
+    else:
+        _src_idx = (_os.path.splitext(_os.path.abspath(str(source_file)))[0] + ".ffindex").replace("\\", "/")
+        _enc_idx = (_os.path.splitext(_os.path.abspath(str(encoded_file)))[0] + ".ffindex").replace("\\", "/")
+
     if tool == "vs-hip":
         vs_script = f"""
 import vapoursynth as vs
 from vstools import clip_async_render
 core = vs.core
-src = core.ffms2.Source(source=r"{source_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
-enc = core.ffms2.Source(source=r"{encoded_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
+src = core.ffms2.Source(source=r"{source_file}", cachefile=r"{_src_idx}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
+enc = core.ffms2.Source(source=r"{encoded_file}", cachefile=r"{_enc_idx}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
 res = core.vship.SSIMULACRA2(src, enc, numStream=4)
 scores = clip_async_render(res, outfile=None, callback=lambda n, f: f.props["_SSIMULACRA2"])
 for s in scores:
@@ -217,8 +230,8 @@ for s in scores:
 import vapoursynth as vs
 from vstools import clip_async_render
 core = vs.core
-src = core.ffms2.Source(source=r"{source_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
-enc = core.ffms2.Source(source=r"{encoded_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
+src = core.ffms2.Source(source=r"{source_file}", cachefile=r"{_src_idx}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
+enc = core.ffms2.Source(source=r"{encoded_file}", cachefile=r"{_enc_idx}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
 res = core.vszip.SSIMULACRA2(src, enc)
 scores = clip_async_render(res, outfile=None, callback=lambda n, f: f.props["_SSIMULACRA2"])
 for s in scores:
@@ -352,6 +365,8 @@ def main():
     os.makedirs(temp_dir, exist_ok=True)
     ivf_path = os.path.join(temp_dir, f"{stem}.ivf")
 
+
+
     vspipe_exe = shutil.which("vspipe")
     if not vspipe_exe:
         print("[svtav1-dispatch] Error: vspipe not found in PATH.")
@@ -423,9 +438,9 @@ def main():
 
     # --- SSIMU2 (opt-in via --ssimu2) ---
     if measure_ssimu2_flag:
-        ssimu2_tool = _read_ssimu2_tool()
+        ssimu2_tool = read_ssimu2_config()
         print(f"[svtav1-dispatch] Measuring SSIMU2 ({ssimu2_tool})...")
-        mean, p15 = measure_ssimu2(input_file, output_file, ssimu2_tool)
+        mean, p15 = measure_ssimu2(input_file, output_file, ssimu2_tool, temp_dir=temp_dir)
         if mean is not None:
             print(f"[svtav1-dispatch] SSIMU2  mean: {mean:.2f} | p15: {p15:.2f}")
         else:
