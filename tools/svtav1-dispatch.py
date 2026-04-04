@@ -388,12 +388,13 @@ def main():
                   source_label="vspipe", suppress_sink_stderr=True)
     else:
         src_vpy_path = os.path.join(temp_dir, f"{stem}_src.vpy")
+        src_cachefile = os.path.join(temp_dir, f"{stem}.ffindex")
         input_file_fwd = os.path.abspath(input_file).replace("\\", "/")
         with open(src_vpy_path, "w", encoding="utf-8") as vf:
             vf.write(
                 f"import vapoursynth as vs\n"
                 f"core = vs.core\n"
-                f"src = core.ffms2.Source(r'{input_file_fwd}')\n"
+                f"src = core.ffms2.Source(r'{input_file_fwd}', cachefile=r'{src_cachefile}')\n"
                 f"src = src.resize.Bicubic(format=vs.YUV420P10, chromaloc_in_s='left', chromaloc_s='left')\n"
                 f"src.set_output()\n"
             )
@@ -401,7 +402,7 @@ def main():
         print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
         sys.stdout.flush()
         run_piped([vspipe_exe, "--progress", src_vpy_path, "--"], svt_cmd,
-                  source_label="vspipe", suppress_source_stderr=True)
+                  source_label="vspipe")
 
     # --- Mux ---
     print("[svtav1-dispatch] Muxing...")
