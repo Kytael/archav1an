@@ -25,7 +25,9 @@ if [ -f "$CONFIG_FILE" ]; then
     WORKER_COUNT=$(grep "^workers=" "$CONFIG_FILE" | cut -d= -f2 | tr -d '\r')
 fi
 
-echo "Starting SvtAv1EncApp Batch (Dance HQ CRF 27) — single-pass, 16 threads..."
+LP=$(nproc)
+[ "$LP" -gt 64 ] && LP=64
+echo "Starting SvtAv1EncApp Batch (Dance HQ CRF 27) — single-pass, ${LP} threads..."
 # Extra args passed to this script are forwarded to svtav1-dispatch.py (e.g. --denoise-scunet)
 EXTRA_ARGS=("$@")
 
@@ -49,13 +51,13 @@ for f in Input/*.[Mm][Kk][Vv] Input/*.[Mm][Pp]4 Input/*.[Mm][Oo][Vv] Input/*.[Mm
     echo "Processing \"$f\"..."
     echo "-------------------------------------------------------------------------------"
 
-    # Dance / Performance HQ (CRF 27) — single-pass SvtAv1EncApp, 16 threads
+    # Dance / Performance HQ (CRF 27) — single-pass SvtAv1EncApp
     python3 tools/svtav1-dispatch.py \
         -i "$f" \
         -o "$OUTPUT_FILE" \
         --quality 27 \
         --photon-noise 6 \
-        --lp 16 \
+        --lp "$LP" \
         --speed 4 \
         --encoder-params "--tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2" \
         "${EXTRA_ARGS[@]}"
