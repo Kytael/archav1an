@@ -1740,7 +1740,7 @@ if not resume or not scene_detection_scenes_file.exists():
             "--chunk-method", zone_default.source_provider_av1an,
             "--encoder", "x264",
             "--workers", "2",
-            "--force", "--video-params", f"[K[0m[1;3m> Progressive Scene Detection [0m[3mx264-based-scene-detection[0m[1;3m <[0m",
+            "--force", "--video-params", f"--threads {os.cpu_count() // 2} [K[0m[1;3m> Progressive Scene Detection [0m[3mx264-based-scene-detection[0m[1;3m <[0m",
             "--concat", "mkvmerge"
         ]
         import pty, threading

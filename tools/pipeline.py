@@ -153,9 +153,12 @@ PRESETS = {
 # ---------------------------------------------------------------------------
 # Globals
 # ---------------------------------------------------------------------------
+_interrupted = False
+
 def _handle_sigint(signum, frame):
+    global _interrupted
+    _interrupted = True
     print("\nInterrupted.")
-    sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +295,8 @@ def process_file(source, preset, ssimu2_tool, ssimu2_workers, worker_count, no_o
              "--temp", str(temp_dir)],
             cwd=str(ROOT_DIR),
         )
+        if _interrupted:
+            sys.exit(130)
         if ret.returncode != 0:
             print(f"[ERROR] Scene detection failed for {source.name}")
             return False
@@ -343,6 +348,8 @@ def process_file(source, preset, ssimu2_tool, ssimu2_workers, worker_count, no_o
         dispatch_cmd.append("--denoise-knlm")
 
     ret = subprocess.run(dispatch_cmd, cwd=str(ROOT_DIR))
+    if _interrupted:
+        sys.exit(130)
     if ret.returncode != 0:
         print(f"[ERROR] Encoding failed for {source.name}")
         return False
