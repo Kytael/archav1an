@@ -78,6 +78,23 @@ progression_boost_temp_dir = temp_dir / "progression-boost"
 character_boost_temp_dir = temp_dir / "characters-boost"
 for dir_ in [scene_detection_temp_dir, progression_boost_temp_dir, character_boost_temp_dir]:
     dir_.mkdir(parents=True, exist_ok=True)
+
+# Create a wrapper vpy for probing encodes that pre-converts to YUV420P10.
+# This avoids the AV1AN_PIXEL_FORMAT=YUV420P10LE KeyError: when av1an receives
+# a .vpy as -i, it pipes it directly via vspipe and never generates a loadscript,
+# bypassing the vs.PresetVideoFormat[pix_fmt] lookup entirely.
+_probing_src_abs = str(input_file.resolve()).replace("\\", "/")
+_probing_src_vpy = progression_boost_temp_dir / "probing_src.vpy"
+_probing_src_vpy.write_text(
+    f"import vapoursynth as vs\n"
+    f"core = vs.core\n"
+    f"src = core.ffms2.Source(r'{_probing_src_abs}')\n"
+    f"src = src.resize.Bicubic(format=vs.YUV420P10, chromaloc_in_s='left', chromaloc_s='left')\n"
+    f"src.set_output()\n",
+    encoding="utf-8",
+)
+probing_input_file = _probing_src_vpy
+
 resume = False
 verbose = args.verbose
 if verbose >= 1 and verbose < 3:
@@ -761,7 +778,7 @@ class DefaultZone:
 #   16 threads: --lp 3 --workers 4
 #   12 threads: --lp 3 --workers 3
     def probing_av1an_parameters(self, message: str) -> list[str]:
-        return (f"--workers 8 --pix-format yuv420p10le"
+        return (f"--workers 8"
 # Below are the parameters that should always be used. Regular users
 # would not need to modify these.
               + f" --chunk-method {self.source_provider_av1an} --chunk-order random --encoder svt-av1 --audio-params -an --concat mkvmerge --force --video-params").split() + \
@@ -1694,8 +1711,26 @@ if not resume or not scene_detection_scenes_file.exists():
         ]
         if resume:
             command += ["--resume"]
+        # Create a wrapper vpy that pre-converts the source to YUV420P10.
+        # This avoids the AV1AN_PIXEL_FORMAT=YUV420P10LE bug: VapourSynth's
+        # PresetVideoFormat only has YUV420P10 (no LE suffix). Using a vpy as
+        # -i means av1an never invokes the broken pix_fmt conversion path.
+        _x264_input_vpy = scene_detection_x264_temp_dir.parent / "x264_input.vpy"
+        _cache_line = ""
+        if zone_default.source_clip_cache is not None:
+                _cache_line = f', cachefile=r"{str(zone_default.source_clip_cache).replace(chr(92), "/")}"'
+        _x264_input_vpy.write_text(
+            f'import vapoursynth as vs\n'
+            f'core = vs.core\n'
+            f'video = core.{zone_default.source_provider_av1an}.Source('
+            f'r"{str(scene_detection_input_file).replace(chr(92), "/")}"'
+            f'{_cache_line})\n'
+            f'video = video.resize.Bicubic(format=vs.YUV420P10)\n'
+            f'video.set_output()\n',
+            encoding="utf-8",
+        )
         command += [
-            "-i", scene_detection_input_file
+            "-i", str(_x264_input_vpy)
         ]
         if scene_detection_vspipe_args is not None:
             command += ["--vspipe-args"] + scene_detection_vspipe_args
@@ -1704,7 +1739,6 @@ if not resume or not scene_detection_scenes_file.exists():
             "--scenes", scene_detection_x264_scenes_file,
             "--chunk-method", zone_default.source_provider_av1an,
             "--encoder", "x264",
-            "--pix-format", "yuv420p10le",
             "--workers", "2",
             "--force", "--video-params", f"[K[0m[1;3m> Progressive Scene Detection [0m[3mx264-based-scene-detection[0m[1;3m <[0m",
             "--concat", "mkvmerge"
@@ -1714,6 +1748,7 @@ if not resume or not scene_detection_scenes_file.exists():
         # Redirect both stdout and stderr — indicatif may write to either
         scene_detection_x264_process = subprocess.Popen(command, text=False, stdout=_x264_pty_slave, stderr=_x264_pty_slave)
         os.close(_x264_pty_slave)  # Close slave in parent — child has it
+
         _x264_progress = ["starting..."]
         def _x264_stderr_reader(master_fd):
             try:

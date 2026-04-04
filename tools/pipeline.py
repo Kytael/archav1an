@@ -447,7 +447,10 @@ def main():
     parser.add_argument("--denoise-knlm", action="store_true", help="Enable KNLMeansCL spatial+temporal denoising")
     parser.add_argument("--denoise-tile", type=int, default=256, help="SCUnet tile size in pixels | Default: 256")
     parser.add_argument("--denoise-streams", type=int, default=3, help="MIGraphX inference streams (3=best for 256-tile on iGPU) | Default: 3")
-    parser.add_argument("--file", type=str, default=None, help="Process only the file matching this name (e.g. C0825.MP4)")
+    parser.add_argument(
+        "--file", type=str, default=None,
+        help="Only encode files whose name contains this substring (e.g. C0849)",
+    )
     args = parser.parse_args()
 
     # Build preset dict from --preset or explicit params
@@ -536,9 +539,9 @@ def main():
     # Discover videos
     videos = discover_videos(INPUT_DIR)
     if args.file:
-        videos = [v for v in videos if v.name == args.file]
+        videos = [v for v in videos if args.file in v.name]
         if not videos:
-            print(f"No file named '{args.file}' found in Input/. Nothing to do.")
+            print(f"No file matching '{args.file}' found in Input/. Nothing to do.")
             return
     if not videos:
         print("No video files found in Input/. Nothing to do.")

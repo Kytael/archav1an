@@ -111,6 +111,24 @@ def main():
     convert_yuv420p10 = (
         "--convert-to-YUV420P10" in args or "--convert-to-yuv420p10" in args
     )
+
+    # Auto-detect non-420 sources (e.g. 4K XAVC-S YUV422P10) and enable conversion
+    if not convert_yuv420p10 and input_file and os.path.exists(input_file):
+        ffprobe_exe = shutil.which("ffprobe")
+        if ffprobe_exe:
+            try:
+                pf_result = subprocess.run(
+                    [ffprobe_exe, "-v", "error", "-select_streams", "v:0",
+                     "-show_entries", "stream=pix_fmt", "-of", "csv=p=0", input_file],
+                    capture_output=True, text=True,
+                )
+                detected_fmt = pf_result.stdout.strip()
+                if detected_fmt and "420" not in detected_fmt:
+                    convert_yuv420p10 = True
+                    print(f"[Dispatch] Auto-detected non-420 source ({detected_fmt}), enabling YUV420P10 conversion.")
+            except Exception:
+                pass
+
     if convert_yuv420p10:
         print(
             "[Dispatch] YUV420P10 conversion enabled for non-standard chroma subsampling."
@@ -159,6 +177,10 @@ def main():
                 final_cmd.append("")
         else:
             final_cmd.append(arg)
+
+    # Inject auto-detected conversion flag if not already in args
+    if convert_yuv420p10 and "--convert-to-YUV420P10" not in args and "--convert-to-yuv420p10" not in args:
+        final_cmd.append("--convert-to-YUV420P10")
 
     # --- Execute ---
     try:

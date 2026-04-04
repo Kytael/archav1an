@@ -352,7 +352,13 @@ def main():
     os.makedirs(temp_dir, exist_ok=True)
     ivf_path = os.path.join(temp_dir, f"{stem}.ivf")
 
-    svt_cmd = [svt_exe, "-i", "stdin"] + shlex.split(svt_params.strip()) + ["-b", ivf_path]
+    vspipe_exe = shutil.which("vspipe")
+    if not vspipe_exe:
+        print("[svtav1-dispatch] Error: vspipe not found in PATH.")
+        sys.exit(1)
+
+    svt_cmd = [svt_exe, "-i", "stdin", "--progress", "2"] + shlex.split(svt_params.strip()) + ["-b", ivf_path]
+
 
     # Audio
     if no_opus:
@@ -371,10 +377,6 @@ def main():
         if not migx_plugin:
             print("[svtav1-dispatch] Error: --denoise-scunet: libvsmigx.so not found. Run setup/denoiser.sh.")
             sys.exit(1)
-        vspipe_exe = shutil.which("vspipe")
-        if not vspipe_exe:
-            print("[svtav1-dispatch] Error: vspipe not found in PATH.")
-            sys.exit(1)
         vpy_path = os.path.join(temp_dir, f"{stem}_denoise.vpy")
         cachefile = os.path.join(temp_dir, f"{stem}.ffindex")
         write_denoise_vpy(vpy_path, input_file, cachefile,
@@ -385,15 +387,21 @@ def main():
         run_piped([vspipe_exe, "--progress", vpy_path, "--"], svt_cmd,
                   source_label="vspipe", suppress_sink_stderr=True)
     else:
-        ffmpeg_cmd = [
-            ffmpeg_exe, "-y", "-i", input_file,
-            "-an", "-f", "yuv4mpegpipe", "-strict", "-1",
-            "-pix_fmt", "yuv420p10le", "-",
-        ]
-        print(f"[svtav1-dispatch] ffmpeg | SvtAv1EncApp{svt_params}")
+        src_vpy_path = os.path.join(temp_dir, f"{stem}_src.vpy")
+        input_file_fwd = os.path.abspath(input_file).replace("\\", "/")
+        with open(src_vpy_path, "w", encoding="utf-8") as vf:
+            vf.write(
+                f"import vapoursynth as vs\n"
+                f"core = vs.core\n"
+                f"src = core.ffms2.Source(r'{input_file_fwd}')\n"
+                f"src = src.resize.Bicubic(format=vs.YUV420P10, chromaloc_in_s='left', chromaloc_s='left')\n"
+                f"src.set_output()\n"
+            )
+        print(f"[svtav1-dispatch] vspipe (bicubic 422→420) | SvtAv1EncApp{svt_params}")
         print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
         sys.stdout.flush()
-        run_piped(ffmpeg_cmd, svt_cmd, source_label="ffmpeg", suppress_source_stderr=True)
+        run_piped([vspipe_exe, "--progress", src_vpy_path, "--"], svt_cmd,
+                  source_label="vspipe", suppress_source_stderr=True)
 
     # --- Mux ---
     print("[svtav1-dispatch] Muxing...")
@@ -426,11 +434,14 @@ def main():
     if src_stat and os.path.exists(output_file):
         os.utime(output_file, (src_stat.st_atime, src_stat.st_mtime))
 
-    # --- Cleanup temp IVF ---
-    try:
-        os.remove(ivf_path)
-    except OSError:
-        pass
+    # --- Cleanup temp files ---
+    for tmp in (ivf_path,
+                os.path.join(temp_dir, f"{stem}_denoise.vpy"),
+                os.path.join(temp_dir, f"{stem}_src.vpy")):
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
 
     # Register output in tag manifest so tag.py only tags this run's files
     manifest_path = os.path.join(root_dir, "tools", "tag-manifest.txt")
