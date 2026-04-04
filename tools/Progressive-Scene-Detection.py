@@ -85,10 +85,11 @@ for dir_ in [scene_detection_temp_dir, progression_boost_temp_dir, character_boo
 # bypassing the vs.PresetVideoFormat[pix_fmt] lookup entirely.
 _probing_src_abs = str(input_file.resolve()).replace("\\", "/")
 _probing_src_vpy = progression_boost_temp_dir / "probing_src.vpy"
+_probing_ffindex = str(progression_boost_temp_dir / "probing_src.ffindex").replace("\\", "/")
 _probing_src_vpy.write_text(
     f"import vapoursynth as vs\n"
     f"core = vs.core\n"
-    f"src = core.ffms2.Source(r'{_probing_src_abs}')\n"
+    f"src = core.ffms2.Source(r'{_probing_src_abs}', cachefile=r'{_probing_ffindex}')\n"
     f"src = src.resize.Bicubic(format=vs.YUV420P10, chromaloc_in_s='left', chromaloc_s='left')\n"
     f"src.set_output()\n",
     encoding="utf-8",

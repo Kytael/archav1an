@@ -121,20 +121,30 @@ def read_ssimu2_config():
     return tool
 
 
-def measure_ssimu2(source_file, encoded_file, tool):
+def measure_ssimu2(source_file, encoded_file, tool, temp_dir=None):
     """
     Runs SSIMU2 comparison in a subprocess VapourSynth script.
     Returns (mean, p15) as floats, or (None, None) on failure.
     """
     # numStream=4 controls internal GPU parallelism within one measurement.
     # This is separate from workercount (concurrent processes in the pipeline).
+    import os as _os
+    _src_stem = _os.path.splitext(_os.path.basename(str(source_file)))[0]
+    _enc_stem = _os.path.splitext(_os.path.basename(str(encoded_file)))[0]
+    if temp_dir:
+        _src_idx = _os.path.join(str(temp_dir), f"{_src_stem}.ffindex").replace("\\", "/")
+        _enc_idx = _os.path.join(str(temp_dir), f"{_enc_stem}.ffindex").replace("\\", "/")
+    else:
+        _src_idx = (_os.path.splitext(_os.path.abspath(str(source_file)))[0] + ".ffindex").replace("\\", "/")
+        _enc_idx = (_os.path.splitext(_os.path.abspath(str(encoded_file)))[0] + ".ffindex").replace("\\", "/")
+
     if tool == "vs-hip":
         vs_script = f"""
 import vapoursynth as vs
 from vstools import clip_async_render
 core = vs.core
-src = core.ffms2.Source(source=r"{source_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
-enc = core.ffms2.Source(source=r"{encoded_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
+src = core.ffms2.Source(source=r"{source_file}", cachefile=r"{_src_idx}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
+enc = core.ffms2.Source(source=r"{encoded_file}", cachefile=r"{_enc_idx}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
 res = core.vship.SSIMULACRA2(src, enc, numStream=4)
 scores = clip_async_render(res, outfile=None, callback=lambda n, f: f.props["_SSIMULACRA2"])
 for s in scores:
@@ -145,8 +155,8 @@ for s in scores:
 import vapoursynth as vs
 from vstools import clip_async_render
 core = vs.core
-src = core.ffms2.Source(source=r"{source_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
-enc = core.ffms2.Source(source=r"{encoded_file}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
+src = core.ffms2.Source(source=r"{source_file}", cachefile=r"{_src_idx}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
+enc = core.ffms2.Source(source=r"{encoded_file}", cachefile=r"{_enc_idx}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
 res = core.vszip.SSIMULACRA2(src, enc)
 scores = clip_async_render(res, outfile=None, callback=lambda n, f: f.props["_SSIMULACRA2"])
 for s in scores:
@@ -276,11 +286,12 @@ def main():
     # Write vspipe source script (422→420 via high-quality bicubic, correct chromaloc)
     vpy_path = os.path.join(temp_dir, f"{stem}_src.vpy")
     input_file_fwd = os.path.abspath(input_file).replace("\\", "/")
+    ffindex_path = os.path.join(temp_dir, f"{stem}.ffindex").replace("\\", "/")
     with open(vpy_path, "w", encoding="utf-8") as vf:
         vf.write(
             f"import vapoursynth as vs\n"
             f"core = vs.core\n"
-            f"src = core.ffms2.Source(r'{input_file_fwd}')\n"
+            f"src = core.ffms2.Source(r'{input_file_fwd}', cachefile=r'{ffindex_path}')\n"
             f"src = src.resize.Bicubic(format=vs.YUV420P10, chromaloc_in_s='left', chromaloc_s='left')\n"
             f"src.set_output()\n"
         )
@@ -366,7 +377,7 @@ def main():
     if measure_ssimu2_flag:
         ssimu2_tool = read_ssimu2_config()
         print(f"[svtav1-dispatch] Measuring SSIMU2 ({ssimu2_tool})...")
-        mean, p15 = measure_ssimu2(input_file, output_file, ssimu2_tool)
+        mean, p15 = measure_ssimu2(input_file, output_file, ssimu2_tool, temp_dir=temp_dir)
         if mean is not None:
             print(f"[svtav1-dispatch] SSIMU2  mean: {mean:.2f} | p15: {p15:.2f}")
         else:
