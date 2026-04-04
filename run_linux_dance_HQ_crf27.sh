@@ -31,7 +31,7 @@ echo "Starting SvtAv1EncApp Batch (Dance HQ CRF 27) — single-pass, ${LP} threa
 # Extra args passed to this script are forwarded to svtav1-dispatch.py (e.g. --denoise-scunet)
 EXTRA_ARGS=("$@")
 
-trap 'echo "Interrupted."; kill 0; exit 130' INT TERM
+trap 'trap "" INT TERM; echo "Interrupted."; kill 0; exit 130' INT TERM
 
 rm -f "tools/tag-manifest.txt"
 mkdir -p Input Output
