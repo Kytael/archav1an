@@ -702,7 +702,7 @@ def get_file_info(
             print("Loading cached scene information...")
             lines = file.readlines()
             return (
-                [int(line.strip()) for line in lines[1:-3]],
+                [int(line.strip()) for line in lines[1:-5]],
                 lines[0].strip() == "True",
                 int(lines[-5].strip()),
                 int(lines[-4].strip()),
