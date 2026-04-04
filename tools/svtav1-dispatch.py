@@ -384,7 +384,7 @@ def main():
         print(f"[svtav1-dispatch] vspipe (MIGraphX SCUNet-{denoise_model}, tile={denoise_tile}, streams={denoise_streams}) | SvtAv1EncApp{svt_params}")
         print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
         sys.stdout.flush()
-        run_piped([vspipe_exe, "-c", "y4m", "--progress", vpy_path, "--"], svt_cmd,
+        run_piped([vspipe_exe, "-c", "y4m", "--progress", vpy_path, "-"], svt_cmd,
                   source_label="vspipe", suppress_sink_stderr=True)
     else:
         src_vpy_path = os.path.join(temp_dir, f"{stem}_src.vpy")
@@ -401,7 +401,7 @@ def main():
         print(f"[svtav1-dispatch] vspipe (bicubic 422→420) | SvtAv1EncApp{svt_params}")
         print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
         sys.stdout.flush()
-        run_piped([vspipe_exe, "-c", "y4m", "--progress", src_vpy_path, "--"], svt_cmd,
+        run_piped([vspipe_exe, "-c", "y4m", "--progress", src_vpy_path, "-"], svt_cmd,
                   source_label="vspipe")
 
     # --- Mux ---
