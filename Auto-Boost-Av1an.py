@@ -539,6 +539,13 @@ def detect_crop_values(source_path: Path) -> tuple[int, int]:
 
 
 # Generate VPY file
+# Force regeneration if conversion flag differs from existing vpy
+if os.path.exists(vpy_file):
+    _existing_vpy = open(vpy_file).read()
+    _has_convert = "if True:" in _existing_vpy
+    if _has_convert != bool(convert_yuv420p10):
+        os.remove(vpy_file)
+
 if not os.path.exists(vpy_file):
     crop_top, crop_bottom = 0, 0
     if args.autocrop:
@@ -554,7 +561,7 @@ src = core.ffms2.Source(source=r"{source}", cachefile=r"{cache}")
 
 # Conversion
 if {convert}:
-    src = src.resize.Bicubic(format=vs.YUV420P10)
+    src = src.resize.Bicubic(format=vs.YUV420P10, chromaloc_in_s='left', chromaloc_s='left')
 
 # Initialize (Fixes Placebo bitdepth error by ensuring 16-bit)
 src = initialize_clip(src)

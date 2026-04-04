@@ -78,6 +78,23 @@ progression_boost_temp_dir = temp_dir / "progression-boost"
 character_boost_temp_dir = temp_dir / "characters-boost"
 for dir_ in [scene_detection_temp_dir, progression_boost_temp_dir, character_boost_temp_dir]:
     dir_.mkdir(parents=True, exist_ok=True)
+
+# Create a wrapper vpy for probing encodes that pre-converts to YUV420P10.
+# This avoids the AV1AN_PIXEL_FORMAT=YUV420P10LE KeyError: when av1an receives
+# a .vpy as -i, it pipes it directly via vspipe and never generates a loadscript,
+# bypassing the vs.PresetVideoFormat[pix_fmt] lookup entirely.
+_probing_src_abs = str(input_file.resolve()).replace("\\", "/")
+_probing_src_vpy = progression_boost_temp_dir / "probing_src.vpy"
+_probing_src_vpy.write_text(
+    f"import vapoursynth as vs\n"
+    f"core = vs.core\n"
+    f"src = core.ffms2.Source(r'{_probing_src_abs}')\n"
+    f"src = src.resize.Bicubic(format=vs.YUV420P10, chromaloc_in_s='left', chromaloc_s='left')\n"
+    f"src.set_output()\n",
+    encoding="utf-8",
+)
+probing_input_file = _probing_src_vpy
+
 resume = False
 verbose = args.verbose
 if verbose >= 1 and verbose < 3:
@@ -761,7 +778,7 @@ class DefaultZone:
 #   16 threads: --lp 3 --workers 4
 #   12 threads: --lp 3 --workers 3
     def probing_av1an_parameters(self, message: str) -> list[str]:
-        return (f"--workers 8 --pix-format yuv420p10le"
+        return (f"--workers 8"
 # Below are the parameters that should always be used. Regular users
 # would not need to modify these.
               + f" --chunk-method {self.source_provider_av1an} --chunk-order random --encoder svt-av1 --audio-params -an --concat mkvmerge --force --video-params").split() + \

@@ -273,17 +273,28 @@ def main():
     os.makedirs(temp_dir, exist_ok=True)
     ivf_path = os.path.join(temp_dir, f"{stem}.ivf")
 
-    # Build commands
-    ffmpeg_cmd = [
-        ffmpeg_exe, "-y", "-i", input_file,
-        "-an", "-f", "yuv4mpegpipe", "-strict", "-1",
-        "-pix_fmt", "yuv420p10le", "-",
-    ]
+    # Write vspipe source script (422→420 via high-quality bicubic, correct chromaloc)
+    vpy_path = os.path.join(temp_dir, f"{stem}_src.vpy")
+    input_file_fwd = os.path.abspath(input_file).replace("\\", "/")
+    with open(vpy_path, "w", encoding="utf-8") as vf:
+        vf.write(
+            f"import vapoursynth as vs\n"
+            f"core = vs.core\n"
+            f"src = core.ffms2.Source(r'{input_file_fwd}')\n"
+            f"src = src.resize.Bicubic(format=vs.YUV420P10, chromaloc_in_s='left', chromaloc_s='left')\n"
+            f"src.set_output()\n"
+        )
+
+    vspipe_exe = shutil.which("vspipe")
+    if not vspipe_exe:
+        print("[svtav1-dispatch] Error: vspipe not found in PATH.")
+        sys.exit(1)
 
     import shlex
+    vspipe_cmd = [vspipe_exe, "-c", "y4m", vpy_path, "-"]
     svt_cmd = [svt_exe, "-i", "stdin", "--progress", "2"] + shlex.split(svt_params.strip()) + ["-b", ivf_path]
 
-    print(f"[svtav1-dispatch] ffmpeg | SvtAv1EncApp{svt_params}")
+    print(f"[svtav1-dispatch] vspipe (bicubic 422→420) | SvtAv1EncApp{svt_params}")
     print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
 
     # Audio
@@ -300,16 +311,16 @@ def main():
     # --- Encode ---
     try:
         sys.stdout.flush()
-        ffmpeg_proc = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        svt_proc = subprocess.Popen(svt_cmd, stdin=ffmpeg_proc.stdout)
-        ffmpeg_proc.stdout.close()
+        vspipe_proc = subprocess.Popen(vspipe_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        svt_proc = subprocess.Popen(svt_cmd, stdin=vspipe_proc.stdout)
+        vspipe_proc.stdout.close()
         svt_proc.wait()
-        ffmpeg_proc.wait()
+        vspipe_proc.wait()
         if svt_proc.returncode != 0:
             print(f"[svtav1-dispatch] Error: SvtAv1EncApp exited with {svt_proc.returncode}")
             sys.exit(svt_proc.returncode)
-        if ffmpeg_proc.returncode not in (0, None):
-            print(f"[svtav1-dispatch] Warning: ffmpeg exited with {ffmpeg_proc.returncode}")
+        if vspipe_proc.returncode not in (0, None):
+            print(f"[svtav1-dispatch] Warning: vspipe exited with {vspipe_proc.returncode}")
     except Exception as e:
         print(f"[svtav1-dispatch] Encode failed: {e}")
         sys.exit(1)
@@ -353,11 +364,12 @@ def main():
     if src_stat and os.path.exists(output_file):
         os.utime(output_file, (src_stat.st_atime, src_stat.st_mtime))
 
-    # --- Cleanup temp IVF ---
-    try:
-        os.remove(ivf_path)
-    except OSError:
-        pass
+    # --- Cleanup temp files ---
+    for tmp in (ivf_path, vpy_path):
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
 
     # Register output in tag manifest so tag.py only tags this run's files
     manifest_path = os.path.join(root_dir, "tools", "tag-manifest.txt")
