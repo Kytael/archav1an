@@ -36,7 +36,7 @@ trap 'trap "" INT TERM; echo "Interrupted."; kill 0; exit 130' INT TERM
 rm -f "tools/tag-manifest.txt"
 mkdir -p Input Output
 
-while IFS= read -r -d '' f; do
+while IFS= read -r -d '' f <&3; do
     filename=$(basename -- "$f")
     stem="${filename%.*}"
     rel_dir=$(dirname -- "$f")
@@ -70,7 +70,7 @@ while IFS= read -r -d '' f; do
         --encoder-params "--tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2" \
         "${EXTRA_ARGS[@]}"
 
-done < <(find Input -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.mov" -o -iname "*.m2ts" \) -print0 | sort -z)
+done 3< <(find Input -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.mov" -o -iname "*.m2ts" \) -print0 | sort -z)
 
 # --- TAGGING & CLEANUP ---
 echo "Tagging output files..."
