@@ -297,8 +297,8 @@ def apply_tag_to_file(filepath, encoding_settings):
         try:
             os.utime(filepath, (stat.st_atime, stat.st_mtime))
         except PermissionError:
-            subprocess.run(["sudo", "-A", "touch", "-a", "-d", f"@{stat.st_atime}", filepath], check=False)
-            subprocess.run(["sudo", "-A", "touch", "-m", "-d", f"@{stat.st_mtime}", filepath], check=False)
+            script = f"import os; os.utime({filepath!r}, ({stat.st_atime}, {stat.st_mtime}))"
+            subprocess.run(["sudo", "-A", "python3", "-c", script], check=False)
         print("Success.")
     except subprocess.CalledProcessError as e:
         print(f"Error tagging {filepath}: {e}")
