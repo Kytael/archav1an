@@ -297,7 +297,11 @@ def apply_tag_to_file(filepath, encoding_settings):
         try:
             os.utime(filepath, (stat.st_atime, stat.st_mtime))
         except PermissionError:
-            pass  # can't restore mtime if file is not owned by current user
+            subprocess.run(
+                ["sudo", "-A", "python3", "-c",
+                 f"import os; os.utime({filepath!r}, ({stat.st_atime}, {stat.st_mtime}))"],
+                check=False,
+            )
         print("Success.")
     except subprocess.CalledProcessError as e:
         print(f"Error tagging {filepath}: {e}")
