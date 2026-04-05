@@ -294,7 +294,10 @@ def apply_tag_to_file(filepath, encoding_settings):
             check=True,
             capture_output=True,
         )
-        os.utime(filepath, (stat.st_atime, stat.st_mtime))
+        try:
+            os.utime(filepath, (stat.st_atime, stat.st_mtime))
+        except PermissionError:
+            pass  # can't restore mtime if file is not owned by current user
         print("Success.")
     except subprocess.CalledProcessError as e:
         print(f"Error tagging {filepath}: {e}")
