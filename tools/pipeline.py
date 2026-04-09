@@ -22,6 +22,9 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import tag as _tag
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -254,7 +257,8 @@ def format_size(nbytes):
 # ---------------------------------------------------------------------------
 
 
-def process_file(source, preset, ssimu2_tool, ssimu2_workers, worker_count, no_opus):
+def process_file(source, preset, ssimu2_tool, ssimu2_workers, worker_count, no_opus,
+                 encoding_settings="", encoder_name=""):
     """Run the full encode pipeline for a single source file. Returns True on success."""
     stem = source.stem
     subpath = relative_subpath(source, INPUT_DIR)
@@ -400,7 +404,11 @@ def process_file(source, preset, ssimu2_tool, ssimu2_workers, worker_count, no_o
     src_stat = source.stat()
     os.utime(output_file, (src_stat.st_atime, src_stat.st_mtime))
 
-    # 7. Clean up temp dir for this file
+    # 7. Tag output file
+    if encoding_settings:
+        _tag.apply_tag_to_file(str(output_file), encoding_settings, encoder_name)
+
+    # 8. Clean up temp dir for this file
     try:
         shutil.rmtree(temp_dir)
     except OSError as e:
@@ -543,6 +551,23 @@ def main():
         marker_name = f"pipeline-crf{preset['quality']}"
     (SCRIPT_DIR / f"sh-used-{marker_name}.txt").touch()
 
+    # Build tag strings from preset
+    fish_version = _tag.get_5fish_version()
+    script_version = _tag.get_script_version()
+    general_flags = []
+    if preset.get("photon_noise"):
+        general_flags.append(f"--photon-noise {preset['photon_noise']}")
+    if preset.get("autocrop"):
+        general_flags.append("--autocrop")
+    if preset.get("aggressive"):
+        general_flags.append("--aggressive")
+    if preset.get("denoise_scunet"):
+        general_flags.append(f"--denoise-scunet --denoise-model {preset['denoise_model']}")
+    encoding_settings, encoder_name = _tag.build_tag_strings(
+        general_flags, preset.get("final_params"), preset["quality"],
+        preset["final_speed"], fish_version, script_version=script_version,
+    )
+
     # Discover videos
     videos = discover_videos(INPUT_DIR)
     if args.file:
@@ -573,6 +598,7 @@ def main():
         ok = process_file(
             source, preset, ssimu2_tool, ssimu2_workers,
             args.workers, args.no_opus,
+            encoding_settings=encoding_settings, encoder_name=encoder_name,
         )
         if ok:
             success_count += 1
@@ -581,12 +607,9 @@ def main():
             if out.exists():
                 total_output_size += out.stat().st_size
 
-    # Post-processing: tagging and cleanup
+    # Post-processing: cleanup
     if success_count > 0:
         print(f"\n{'='*79}")
-        print("Tagging output files...")
-        subprocess.run([sys.executable, str(TAG_SCRIPT)], cwd=str(ROOT_DIR))
-
         print("Cleaning up temporary files and folders...")
         subprocess.run([sys.executable, str(CLEANUP_SCRIPT)], cwd=str(ROOT_DIR))
 

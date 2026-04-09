@@ -72,10 +72,7 @@ while IFS= read -r -d '' f <&3; do
 
 done 3< <(find Input -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.mov" -o -iname "*.m2ts" \) -print0 | sort -z)
 
-# --- TAGGING & CLEANUP ---
-echo "Tagging output files..."
-python3 tools/tag.py
-
+# --- CLEANUP ---
 echo "Cleaning up temporary files and folders..."
 python3 tools/cleanup.py
 

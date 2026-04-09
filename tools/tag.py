@@ -6,6 +6,7 @@ import shutil
 import platform
 import tempfile
 import shlex
+from datetime import datetime, timezone
 
 
 def get_script_version():
@@ -257,18 +258,44 @@ def get_crf_string(quality):
         return "--crf 30(variable)"
 
 
-def apply_tag_to_file(filepath, encoding_settings):
+def build_tag_strings(general_flags, final_params, quality, final_speed,
+                      fish_version, script_version=None):
+    """Build (encoding_settings, encoder_name) strings from encoding parameters.
+
+    Pass script_version for av1an pipeline encodes; omit (None) for single-pass.
+    """
+    if script_version:
+        info_parts = [f"Auto-Boost-Av1an {script_version}"]
+        info_parts.extend(general_flags)
+        info_parts.append(fish_version)
+        encoder_name = f"Auto-Boost-Av1an {script_version}"
+    else:
+        info_parts = [f"SVT-AV1-PSY 5Fish fork {fish_version}"]
+        info_parts.extend(general_flags)
+        encoder_name = f"SVT-AV1-PSY 5Fish fork {fish_version}"
+
+    settings_parts = ["settings:"]
+    if final_speed is not None:
+        settings_parts.append(f"--preset {final_speed}")
+    settings_parts.append(get_crf_string(quality))
+    if final_params:
+        settings_parts.append(final_params)
+
+    full_string = " ".join(info_parts) + " " + " ".join(settings_parts)
+    return full_string, encoder_name
+
+
+def apply_tag_to_file(filepath, encoding_settings, encoder_name):
     """Writes encoding settings and track statistics to the MKV file."""
+    stat = os.stat(filepath)
+    encoding_date = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).strftime("%Y-%m-%d")
     xml_content = f"""<?xml version="1.0"?>
 <Tags>
   <Tag>
-    <Targets>
-      <TrackUID>1</TrackUID>
-    </Targets>
-    <Simple>
-      <Name>Encoding settings</Name>
-      <String>{encoding_settings}</String>
-    </Simple>
+    <Targets/>
+    <Simple><Name>DATE_ENCODED</Name><String>{encoding_date}</String></Simple>
+    <Simple><Name>ENCODER</Name><String>{encoder_name}</String></Simple>
+    <Simple><Name>ENCODER_SETTINGS</Name><String>{encoding_settings}</String></Simple>
   </Tag>
 </Tags>
 """
@@ -286,10 +313,10 @@ def apply_tag_to_file(filepath, encoding_settings):
             return
 
         # Preserve mtime — mkvpropedit modifies the file in place
-        stat = os.stat(filepath)
         subprocess.run(
             [mkvpropedit_exe, filepath,
-             "--tags", "track:v1:" + tmp_path,
+             "--edit", "track:v1", "--set", "flag-default=1",
+             "--tags", "global:" + tmp_path,
              "--add-track-statistics-tags"],
             check=True,
             capture_output=True,
@@ -364,18 +391,15 @@ def main():
     fish_version = get_5fish_version()
 
     # 4. Build Strings
-    info_parts = [f"Auto-Boost-Av1an {script_version}"]
-    info_parts.extend(general_flags)
-    info_parts.append(fish_version)
-
-    settings_parts = ["settings:"]
-    if final_speed:
-        settings_parts.append(f"--preset {final_speed}")
-    settings_parts.append(get_crf_string(quality))
-    if final_params:
-        settings_parts.append(final_params)
-
-    full_string = " ".join(info_parts) + " " + " ".join(settings_parts)
+    cmd_lower = cmd_line.lower()
+    is_single_pass = ("dispatch.py" in cmd_lower and
+                      "pipeline.py" not in cmd_lower and
+                      "auto-boost-av1an.py" not in cmd_lower)
+    sv = None if is_single_pass else script_version
+    full_string, encoder_name = build_tag_strings(
+        general_flags, final_params, quality, final_speed, fish_version,
+        script_version=sv,
+    )
 
     print(
         "-------------------------------------------------------------------------------"
@@ -413,7 +437,7 @@ def main():
         return
 
     for full_path in files_to_tag:
-        apply_tag_to_file(full_path, full_string)
+        apply_tag_to_file(full_path, full_string, encoder_name)
 
 
 if __name__ == "__main__":

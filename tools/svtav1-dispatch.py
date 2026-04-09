@@ -12,6 +12,9 @@ import shlex
 import subprocess
 import shutil
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tag as _tag
+
 
 # ---------------------------------------------------------------------------
 # Denoise helpers
@@ -449,6 +452,20 @@ def main():
     # --- Preserve mtime ---
     if src_stat and os.path.exists(output_file):
         os.utime(output_file, (src_stat.st_atime, src_stat.st_mtime))
+
+    # --- Tag output file ---
+    if os.path.exists(output_file):
+        fish_version = _tag.get_5fish_version()
+        general_flags = [f"--quality {quality}"]
+        if photon_noise:
+            general_flags.append(f"--photon-noise {photon_noise}")
+        general_flags.append(f"--speed {speed}")
+        if denoise_scunet:
+            general_flags.append(f"--denoise-scunet --denoise-model {denoise_model} --denoise-tile {denoise_tile}")
+        encoding_settings, encoder_name = _tag.build_tag_strings(
+            general_flags, encoder_params, quality, speed, fish_version
+        )
+        _tag.apply_tag_to_file(output_file, encoding_settings, encoder_name)
 
     # --- Cleanup temp files ---
     for tmp in (ivf_path,
