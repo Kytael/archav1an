@@ -20,19 +20,41 @@ import tag as _tag
 # Denoise helpers
 # ---------------------------------------------------------------------------
 
-def find_migx_plugin():
-    for p in ["/usr/local/lib/vapoursynth/libvsmigx.so", "/usr/lib/vapoursynth/libvsmigx.so"]:
+def find_mlrt_plugin():
+    """Return path to libvstrt.so (NVIDIA) or libvsmigx.so (AMD), or empty string."""
+    for p in [
+        "/usr/local/lib/vapoursynth/libvstrt.so",
+        "/usr/lib/vapoursynth/libvstrt.so",
+        "/usr/local/lib/vapoursynth/libvsmigx.so",
+        "/usr/lib/vapoursynth/libvsmigx.so",
+    ]:
         if os.path.exists(p):
             return p
     return ""
 
+def _mlrt_backend_lines(streams):
+    """Return multi-line Python code that sets _backend to the best available vs-mlrt backend."""
+    for p in ["/usr/local/lib/vapoursynth/libvstrt.so", "/usr/lib/vapoursynth/libvstrt.so"]:
+        if os.path.exists(p):
+            # vsmlrt.py calls trtexec with a minimal env dict (no inheritance).
+            # On WSL2, /usr/lib/libcuda.so is a stub; the real driver is in /usr/lib/wsl/lib/.
+            # Pass os.environ + WSL2 lib path so the subprocess can find the CUDA device.
+            return (
+                f'import os as _os\n'
+                f'_trt_env = _os.environ.copy()\n'
+                f'if _os.path.isdir("/usr/lib/wsl/lib"):\n'
+                f'    _trt_env["LD_LIBRARY_PATH"] = "/usr/lib/wsl/lib" + (":" + _trt_env.get("LD_LIBRARY_PATH", "") if _trt_env.get("LD_LIBRARY_PATH") else "")\n'
+                f'_backend = _Backend.TRT(device_id=0, fp16=True, num_streams={streams}, use_cuda_graph=True, custom_env=_trt_env)'
+            )
+    return f'_backend = _Backend.MIGX(device_id=0, fp16=True, exhaustive_tune=False, num_streams={streams}, custom_env={{"MIGRAPHX_GPU_COMPILE_PARALLEL": "8"}})'
+
 def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams):
     source = os.path.abspath(source)
-    backend = f'_Backend.MIGX(device_id=0, fp16=True, exhaustive_tune=False, num_streams={streams}, custom_env={{"MIGRAPHX_GPU_COMPILE_PARALLEL": "8"}})'
+    backend_lines = _mlrt_backend_lines(streams)
     if model_name.startswith("gray_"):
         denoise_lines = (
             f'_model_enum = _SCUNetModel["scunet_{model_name}"]\n'
-            f'_backend = {backend}\n'
+            f'{backend_lines}\n'
             f'_luma = core.std.ShufflePlanes(src, planes=0, colorfamily=vs.GRAY)\n'
             f'_luma_f = core.resize.Bicubic(_luma, format=vs.GRAYS)\n'
             f'_luma_d = _SCUNet(_luma_f, model=_model_enum, tilesize={tile}, overlap=8, backend=_backend)\n'
@@ -42,7 +64,7 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams):
     else:
         denoise_lines = (
             f'_model_enum = _SCUNetModel["scunet_{model_name}"]\n'
-            f'_backend = {backend}\n'
+            f'{backend_lines}\n'
             f'_src_fmt = src.format\n'
             f'_rgb = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="709")\n'
             f'_rgb = _SCUNet(_rgb, model=_model_enum, tilesize={tile}, overlap=8, backend=_backend)\n'
@@ -391,15 +413,16 @@ def main():
 
     # --- Encode ---
     if denoise_scunet:
-        migx_plugin = find_migx_plugin()
-        if not migx_plugin:
-            print("[svtav1-dispatch] Error: --denoise-scunet: libvsmigx.so not found. Run setup/denoiser.sh.")
+        mlrt_plugin = find_mlrt_plugin()
+        if not mlrt_plugin:
+            print("[svtav1-dispatch] Error: --denoise-scunet: no vs-mlrt plugin found (libvstrt.so or libvsmigx.so). Run setup.sh --install denoiser.")
             sys.exit(1)
+        _backend_name = "TRT" if "vstrt" in mlrt_plugin else "MIGraphX"
         vpy_path = os.path.join(temp_dir, f"{stem}_denoise.vpy")
         cachefile = os.path.join(temp_dir, f"{stem}.ffindex")
         write_denoise_vpy(vpy_path, input_file, cachefile,
                           denoise_model, denoise_tile, denoise_streams)
-        print(f"[svtav1-dispatch] vspipe (MIGraphX SCUNet-{denoise_model}, tile={denoise_tile}, streams={denoise_streams}) | SvtAv1EncApp{svt_params}")
+        print(f"[svtav1-dispatch] vspipe ({_backend_name} SCUNet-{denoise_model}, tile={denoise_tile}, streams={denoise_streams}) | SvtAv1EncApp{svt_params}")
         print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
         sys.stdout.flush()
         run_piped([vspipe_exe, "-c", "y4m", vpy_path, "-"], svt_cmd,

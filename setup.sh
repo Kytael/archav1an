@@ -109,7 +109,8 @@ is_installed() {
             local knlm_path
             knlm_path="$(get_vs_plugin_path)"
             [ -f "$knlm_path/libknlmeanscl.so" ] && \
-            "$VENV_DIR/bin/pip" show vsscunet &> /dev/null
+            "$VENV_DIR/bin/pip" show vsscunet &> /dev/null && \
+            { [ -f "$knlm_path/libvstrt.so" ] || [ -f "$knlm_path/libvsmigx.so" ]; }
             ;;
         *) return 1 ;;
     esac

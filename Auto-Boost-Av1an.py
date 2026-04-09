@@ -186,16 +186,16 @@ parser.add_argument(
 parser.add_argument(
     "--zones", help="Path to specific zones file override", default=None
 )
-parser.add_argument("--denoise-scunet", action="store_true", help="Enable SCUnet spatial denoising (full RGB frame, requires CUDA/ROCm)")
+parser.add_argument("--denoise-scunet", action="store_true", help="Enable SCUnet spatial denoising (full RGB frame, requires TensorRT on NVIDIA or MIGraphX on AMD)")
 parser.add_argument("--denoise-model", default="color_real_psnr",
     choices=["color_15","color_25","color_50","color_real_psnr","color_real_gan","gray_15","gray_25","gray_50"],
     help="SCUnet model: color_15/25/50 (Gaussian), color_real_psnr/gan (blind, best for camera), gray_15/25/50 (luma-only) | Default: color_real_psnr")
 parser.add_argument("--denoise-temporal", action="store_true", help="MVTools SMDegrain pre-filter before SCUnet")
 parser.add_argument("--denoise-device", type=int, default=0, help="GPU device index for SCUnet | Default: 0")
 parser.add_argument("--denoise-knlm", action="store_true", help="Enable KNLMeansCL spatial+temporal denoising (OpenCL, all channels)")
-parser.add_argument("--denoise-tile", type=int, default=256, help="SCUnet tile size in pixels (256/512 recommended for MIGraphX) | Default: 256")
+parser.add_argument("--denoise-tile", type=int, default=256, help="SCUnet tile size in pixels (256/512 recommended) | Default: 256")
 parser.add_argument("--denoise-model-dir", default=None, help="Parent dir containing scunet/ ONNX models (default: auto-detect from VS plugin path)")
-parser.add_argument("--denoise-streams", type=int, default=3, help="MIGraphX inference streams (3=best for 256-tile on iGPU, 2=best for 512-tile) | Default: 3")
+parser.add_argument("--denoise-streams", type=int, default=3, help="Inference streams for TRT/MIGraphX (3=best for 256-tile, 2=best for 512-tile) | Default: 3")
 
 args = parser.parse_args()
 
@@ -631,7 +631,7 @@ if should_downscale:
         if target_w < src.width or target_h < src.height:
              src = core.placebo.Resample(src, target_w, target_h, filter=pl_filter)
 
-# 3. DENOISE — SCUnet via vs-mlrt MIGraphX (optional, requires ROCm)
+# 3. DENOISE — SCUnet via vs-mlrt (TensorRT on NVIDIA, MIGraphX on AMD)
 if {denoise_scunet}:
     from vsmlrt import SCUNet as _SCUNet, SCUNetModel as _SCUNetModel, Backend as _Backend
     _model_dir = "{denoise_model_dir}"
@@ -643,7 +643,17 @@ if {denoise_scunet}:
             import havsfunc as _haf
             src = _haf.SMDegrain(src, tr=2, thSAD=300, plane=0)
     _model_enum = _SCUNetModel["scunet_{denoise_model}"]
-    _backend = _Backend.MIGX(device_id={denoise_device}, fp16=True, exhaustive_tune=False, num_streams={denoise_streams}, custom_env={{"MIGRAPHX_GPU_COMPILE_PARALLEL": "8"}})
+    import os as _os
+    _trt_env = _os.environ.copy()
+    if _os.path.isdir("/usr/lib/wsl/lib"):
+        _prev_ldp = _trt_env.get("LD_LIBRARY_PATH", "")
+        _trt_env["LD_LIBRARY_PATH"] = "/usr/lib/wsl/lib" + (":" + _prev_ldp if _prev_ldp else "")
+    if hasattr(core, 'trt'):
+        _backend = _Backend.TRT(device_id={denoise_device}, fp16=True, num_streams={denoise_streams}, use_cuda_graph=True, custom_env=_trt_env)
+    elif hasattr(core, 'trt_rtx'):
+        _backend = _Backend.TRT_RTX(device_id={denoise_device}, fp16=True, num_streams={denoise_streams}, use_cuda_graph=True, custom_env=_trt_env)
+    else:
+        _backend = _Backend.MIGX(device_id={denoise_device}, fp16=True, exhaustive_tune=False, num_streams={denoise_streams}, custom_env={{"MIGRAPHX_GPU_COMPILE_PARALLEL": "8"}})
     if "{denoise_model}".startswith("gray_"):
         _luma = core.std.ShufflePlanes(src, planes=0, colorfamily=vs.GRAY)
         _luma_f = core.resize.Bicubic(_luma, format=vs.GRAYS)

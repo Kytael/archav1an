@@ -10,7 +10,17 @@ install_denoiser() {
     VS_PLUGIN_PATH="$(get_vs_plugin_path)"
     mkdir -p "$VS_PLUGIN_PATH"
 
+    # Detect GPU if not already done
+    if [ -z "$GPU_VENDOR" ]; then
+        detect_gpu
+    fi
+
+    local VS_INCLUDE_DIR
+    VS_INCLUDE_DIR="$(pkg-config --variable=includedir vapoursynth 2>/dev/null || echo /usr/local/include)"
+
+    # =========================================================================
     # 1. OpenCL runtime (required by KNLMeansCL)
+    # =========================================================================
     log_info "Checking OpenCL runtime..."
     if [ "$DISTRO_FAMILY" = "arch" ]; then
         if pacman -Qi opencl-icd-loader &>/dev/null || pacman -Qi ocl-icd &>/dev/null; then
@@ -22,9 +32,89 @@ install_denoiser() {
         apt install -y ocl-icd-opencl-dev || { log_error "Failed to install ocl-icd-opencl-dev"; return 1; }
     fi
 
-    # 2. PyTorch (ROCm for AMD, CPU fallback) + vsscunet + havsfunc
-    log_info "Installing PyTorch + vsscunet + havsfunc into venv..."
-    if command -v rocm-smi &>/dev/null || [ -d /opt/rocm ]; then
+    # =========================================================================
+    # 2. GPU backend: NVIDIA (TensorRT) or AMD (MIGraphX) or CPU
+    # =========================================================================
+    if [ "$GPU_VENDOR" = "nvidia" ] || [ "$GPU_VENDOR" = "both" ]; then
+        log_info "NVIDIA GPU detected — installing TensorRT backend..."
+
+        # 2a. cuDNN (official repo)
+        if [ "$DISTRO_FAMILY" = "arch" ]; then
+            pacman -S --needed --noconfirm cudnn || { log_error "Failed to install cudnn"; return 1; }
+        else
+            log_warn "Debian/Ubuntu: install libcudnn9-cuda-12 manually from NVIDIA repos"
+        fi
+
+        # 2b. TensorRT (AUR — cannot build as root, use SUDO_USER)
+        if ! pacman -Qi tensorrt &>/dev/null; then
+            local _aur_user="${SUDO_USER:-}"
+            if [ -z "$_aur_user" ] || [ "$_aur_user" = "root" ]; then
+                log_error "Cannot install AUR package 'tensorrt' as root. Set SUDO_USER or run: sudo -u <user> paru -S tensorrt"
+                return 1
+            fi
+            log_info "Installing tensorrt from AUR as $_aur_user (this may take a while)..."
+            # Pass CUDA toolkit path so cmake can find nvcc (WSL2: nvcc lives at /opt/cuda/bin)
+            local _cuda_bin=""
+            for _d in /opt/cuda/bin /usr/local/cuda/bin; do
+                [ -x "$_d/nvcc" ] && { _cuda_bin="$_d"; break; }
+            done
+            sudo -u "$_aur_user" env \
+                PATH="${_cuda_bin:+$_cuda_bin:}${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}" \
+                CUDAToolkit_ROOT="${_cuda_bin%/bin}" \
+                paru -S --needed --noconfirm tensorrt || { log_error "Failed to install tensorrt from AUR"; return 1; }
+        else
+            log_info "tensorrt already installed."
+        fi
+
+        # 2c. PyTorch CUDA
+        log_info "Installing PyTorch CUDA (cu128) + vsscunet + havsfunc into venv..."
+        "$VENV_DIR/bin/pip" install torch torchvision --index-url https://download.pytorch.org/whl/cu128 || { log_error "Failed to install PyTorch CUDA"; return 1; }
+
+        # 2d. Build libvstrt.so from vs-mlrt source
+        log_info "Building libvstrt.so from vs-mlrt source..."
+        local ORIG_DIR="$(pwd)"
+        mkdir -p build_tmp && cd build_tmp || return 1
+
+        if [ -d "vs-mlrt" ]; then rm -rf vs-mlrt; fi
+        git clone --depth 1 https://github.com/AmusementClub/vs-mlrt.git || { log_error "Failed to clone vs-mlrt"; cd "$ORIG_DIR"; return 1; }
+
+        cd vs-mlrt/vstrt
+        mkdir -p build && cd build
+        cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -G Ninja \
+            -DVAPOURSYNTH_INCLUDE_DIRECTORY="$VS_INCLUDE_DIR" \
+            -DCMAKE_CXX_FLAGS="-ffast-math" \
+            || { log_error "vstrt cmake failed"; cd "$ORIG_DIR"; return 1; }
+        ninja || { log_error "vstrt build failed"; cd "$ORIG_DIR"; return 1; }
+
+        # Output is libvstrt.so (standard TRT) or libvstrt_rtx.so (TRT RTX)
+        local _vstrt_lib=""
+        if [ -f "libvstrt_rtx.so" ]; then
+            _vstrt_lib="libvstrt_rtx.so"
+        elif [ -f "libvstrt.so" ]; then
+            _vstrt_lib="libvstrt.so"
+        else
+            log_error "vstrt build succeeded but no libvstrt*.so found"
+            cd "$ORIG_DIR"; return 1
+        fi
+        cp "$_vstrt_lib" "$VS_PLUGIN_PATH/libvstrt.so"
+        log_success "libvstrt.so installed to $VS_PLUGIN_PATH/"
+        cd "$ORIG_DIR"
+
+        # 2e. Symlink trtexec for vsmlrt.py
+        mkdir -p "$VS_PLUGIN_PATH/vsmlrt-cuda"
+        if command -v trtexec &>/dev/null; then
+            ln -sf "$(command -v trtexec)" "$VS_PLUGIN_PATH/vsmlrt-cuda/trtexec"
+            log_info "Symlinked trtexec to $VS_PLUGIN_PATH/vsmlrt-cuda/"
+        else
+            log_warn "trtexec not found in PATH — vsmlrt TRT engine caching may not work"
+        fi
+
+    elif [ "$GPU_VENDOR" = "amd" ]; then
+        log_info "AMD GPU detected — installing MIGraphX backend..."
+
+        # 2a. PyTorch ROCm
         local rocm_ver
         rocm_ver=$(cat /opt/rocm/.info/version 2>/dev/null | grep -oP '^\d+\.\d+' || echo "")
         if [ -z "$rocm_ver" ]; then
@@ -33,17 +123,53 @@ install_denoiser() {
         fi
         log_info "ROCm $rocm_ver detected — installing PyTorch ROCm build..."
         "$VENV_DIR/bin/pip" install torch torchvision --index-url "https://download.pytorch.org/whl/rocm${rocm_ver}" || { log_error "Failed to install PyTorch ROCm ${rocm_ver}"; return 1; }
+
+        # 2b. MIGraphX package
+        log_info "Installing MIGraphX..."
+        if [ "$DISTRO_FAMILY" = "arch" ]; then
+            pacman -S --needed --noconfirm rocm-migraphx || { log_error "Failed to install rocm-migraphx"; return 1; }
+        else
+            log_warn "Debian/Ubuntu: install rocm-migraphx manually from your ROCm repo"
+        fi
+
+        # 2c. Build libvsmigx.so from vs-mlrt source
+        log_info "Building libvsmigx.so from vs-mlrt source..."
+        local ORIG_DIR="$(pwd)"
+        mkdir -p build_tmp && cd build_tmp || return 1
+
+        if [ -d "vs-mlrt" ]; then rm -rf vs-mlrt; fi
+        git clone --depth 1 https://github.com/AmusementClub/vs-mlrt.git || { log_error "Failed to clone vs-mlrt"; cd "$ORIG_DIR"; return 1; }
+
+        cd vs-mlrt/vsmigx
+        mkdir -p build && cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja -DVAPOURSYNTH_INCLUDE_DIRS="$VS_INCLUDE_DIR" \
+            || { log_error "vsmigx cmake failed"; cd "$ORIG_DIR"; return 1; }
+        ninja || { log_error "vsmigx build failed"; cd "$ORIG_DIR"; return 1; }
+        cp libvsmigx.so "$VS_PLUGIN_PATH/"
+        log_success "libvsmigx.so installed to $VS_PLUGIN_PATH/"
+        cd "$ORIG_DIR"
+
+        # 2d. Symlink migraphx-driver for vsmlrt.py
+        mkdir -p "$VS_PLUGIN_PATH/vsmlrt-hip"
+        ln -sf "$(command -v migraphx-driver)" "$VS_PLUGIN_PATH/vsmlrt-hip/migraphx-driver"
+
     else
-        log_info "No ROCm/CUDA detected — installing PyTorch CPU build (needed for ONNX export)..."
+        log_info "No AMD/NVIDIA GPU detected — installing PyTorch CPU build (needed for ONNX export)..."
         "$VENV_DIR/bin/pip" install torch torchvision --index-url https://download.pytorch.org/whl/cpu || { log_error "Failed to install PyTorch CPU"; return 1; }
     fi
-    "$VENV_DIR/bin/pip" install vsscunet havsfunc || { log_error "Failed to install vsscunet/havsfunc"; return 1; }
+
+    # =========================================================================
+    # 3. vsscunet + havsfunc (shared)
+    # =========================================================================
+    "$VENV_DIR/bin/pip" install vsscunet havsfunc onnx onnxscript || { log_error "Failed to install vsscunet/havsfunc/onnx"; return 1; }
 
     # Pre-download all SCUNet .pth model weights
     log_info "Pre-downloading SCUNet model weights..."
     "$VENV_DIR/bin/python3" -m vsscunet || { log_error "Failed to download SCUNet models"; return 1; }
 
-    # 3. Export SCUNet models to ONNX for MIGraphX
+    # =========================================================================
+    # 4. Export SCUNet models to ONNX (shared — needed for all backends)
+    # =========================================================================
     log_info "Exporting SCUNet color models to ONNX..."
     local ONNX_DIR="$VS_PLUGIN_PATH/models/scunet"
     mkdir -p "$ONNX_DIR"
@@ -79,7 +205,7 @@ for name in ['scunet_color_15', 'scunet_color_25', 'scunet_color_50',
     print(f'  {name}.onnx done', flush=True)
 " "$ONNX_DIR" || { log_error "ONNX color export failed"; return 1; }
 
-    # Download gray model .pth files (not in vsscunet — from original SCUNet repo)
+    # Download gray model .pth files
     log_info "Downloading gray SCUNet model weights (optional)..."
     local GRAY_PTH_DIR="$ONNX_DIR/gray_pth"
     mkdir -p "$GRAY_PTH_DIR"
@@ -98,7 +224,6 @@ for name in ['scunet_color_15', 'scunet_color_25', 'scunet_color_50',
         fi
     done
 
-    # Export gray models if .pth files were downloaded
     "$VENV_DIR/bin/python3" -c "
 import torch, sys
 from pathlib import Path
@@ -128,11 +253,13 @@ for sigma in [15, 25, 50]:
     print(f'  {name}.onnx done', flush=True)
 " "$ONNX_DIR" "$GRAY_PTH_DIR" || log_warn "Gray ONNX export failed (non-fatal)"
 
-    # Make model dir writable so vsmlrt.py can cache .mxr files next to the .onnx files
+    # Make model dir writable so vsmlrt.py can cache engine files next to the .onnx files
     chmod -R o+w "$ONNX_DIR"
     log_success "SCUNet ONNX models exported to $ONNX_DIR"
 
-    # 4. Build tools (cmake, ninja, meson — needed for libvsmigx.so and KNLMeansCL)
+    # =========================================================================
+    # 5. Build tools (cmake, ninja, meson — needed for KNLMeansCL)
+    # =========================================================================
     log_info "Installing build tools (cmake, ninja, meson)..."
     if [ "$DISTRO_FAMILY" = "arch" ]; then
         pacman -S --needed --noconfirm cmake ninja meson || { log_error "Failed to install build tools"; return 1; }
@@ -140,47 +267,20 @@ for sigma in [15, 25, 50]:
         apt install -y cmake ninja-build meson || { log_error "Failed to install build tools"; return 1; }
     fi
 
-    # 5. MIGraphX package (AMD graph compiler)
-    # TODO: add NVIDIA TRT path here — install TensorRT, build libvstrt.so from vs-mlrt/vstrt,
-    #       then switch VPY backend from Backend.MIGX to Backend.TRT for NVIDIA GPUs.
-    log_info "Installing MIGraphX..."
-    if [ "$DISTRO_FAMILY" = "arch" ]; then
-        pacman -S --needed --noconfirm rocm-migraphx || { log_error "Failed to install rocm-migraphx"; return 1; }
-    else
-        log_warn "Debian/Ubuntu: install rocm-migraphx manually from your ROCm repo"
-    fi
-
-    # 6. Build libvsmigx.so from vs-mlrt source
-    log_info "Building libvsmigx.so from vs-mlrt source..."
-    local VS_INCLUDE_DIR
-    VS_INCLUDE_DIR="$(pkg-config --variable=includedir vapoursynth 2>/dev/null || echo /usr/local/include)"
-    mkdir -p build_tmp && cd build_tmp || return 1
-
-    if [ -d "vs-mlrt" ]; then rm -rf vs-mlrt; fi
-    git clone --depth 1 https://github.com/AmusementClub/vs-mlrt.git || { log_error "Failed to clone vs-mlrt"; cd ..; return 1; }
-    cd vs-mlrt/vsmigx
-    mkdir build && cd build
-    cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja -DVAPOURSYNTH_INCLUDE_DIRS="$VS_INCLUDE_DIR" || { log_error "vsmigx cmake failed"; cd ../../..; return 1; }
-    ninja || { log_error "vsmigx build failed"; cd ../../..; return 1; }
-    cp libvsmigx.so "$VS_PLUGIN_PATH/"
-    cd ../../..
-    cd ..
-    log_success "libvsmigx.so installed to $VS_PLUGIN_PATH/"
-
-    # 7. Install vsmlrt.py and patch the alter_mxr_path cache bug
+    # =========================================================================
+    # 6. Install vsmlrt.py (shared — supports TRT, MIGX, ORT, etc.)
+    # =========================================================================
     log_info "Installing vsmlrt.py..."
     local VSMLRT_PY
     VSMLRT_PY="$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || echo /usr/lib/python3/site-packages)/vsmlrt.py"
     curl -fsSL "https://raw.githubusercontent.com/AmusementClub/vs-mlrt/master/scripts/vsmlrt.py" -o "$VSMLRT_PY" || { log_error "Failed to download vsmlrt.py"; return 1; }
-    # Patch bug: alter_mxr_path cache check used wrong variable name (mxr_path instead of alter_mxr_path)
+    # Patch bug: alter_mxr_path cache check used wrong variable name
     sed -i 's/os.access(alter_mxr_path, mode=os.R_OK) and os.path.getsize(mxr_path)/os.access(alter_mxr_path, mode=os.R_OK) and os.path.getsize(alter_mxr_path)/' "$VSMLRT_PY"
     log_success "vsmlrt.py installed to $VSMLRT_PY"
 
-    # Symlink migraphx-driver where vsmlrt.py expects it
-    mkdir -p "$VS_PLUGIN_PATH/vsmlrt-hip"
-    ln -sf "$(command -v migraphx-driver)" "$VS_PLUGIN_PATH/vsmlrt-hip/migraphx-driver"
-
-    # 8. Boost (required by KNLMeansCL)
+    # =========================================================================
+    # 7. Boost (required by KNLMeansCL)
+    # =========================================================================
     log_info "Checking Boost..."
     if [ "$DISTRO_FAMILY" = "arch" ]; then
         pacman -S --needed --noconfirm boost || { log_error "Failed to install boost"; return 1; }
@@ -188,28 +288,35 @@ for sigma in [15, 25, 50]:
         apt install -y libboost-filesystem-dev libboost-system-dev || { log_error "Failed to install boost"; return 1; }
     fi
 
-    # 9. KNLMeansCL VapourSynth plugin (Meson build, OpenCL spatial+temporal denoiser)
+    # =========================================================================
+    # 8. KNLMeansCL VapourSynth plugin (OpenCL spatial+temporal denoiser)
+    # =========================================================================
     log_info "Compiling KNLMeansCL..."
+    local ORIG_DIR2="$(pwd)"
     mkdir -p build_tmp && cd build_tmp || return 1
 
     if [ -d "KNLMeansCL" ]; then rm -rf KNLMeansCL; fi
-    git clone --depth 1 https://github.com/Khanattila/KNLMeansCL.git || { log_error "Failed to clone KNLMeansCL"; cd ..; return 1; }
+    git clone --depth 1 https://github.com/Khanattila/KNLMeansCL.git || { log_error "Failed to clone KNLMeansCL"; cd "$ORIG_DIR2"; return 1; }
     cd KNLMeansCL
-    meson setup build --buildtype=release || { log_error "KNLMeansCL meson setup failed"; cd ../..; return 1; }
-    ninja -C build || { log_error "KNLMeansCL build failed"; cd ../..; return 1; }
+    meson setup build --buildtype=release || { log_error "KNLMeansCL meson setup failed"; cd "$ORIG_DIR2"; return 1; }
+    ninja -C build || { log_error "KNLMeansCL build failed"; cd "$ORIG_DIR2"; return 1; }
 
     if [ -f "build/libknlmeanscl.so" ]; then
         cp "build/libknlmeanscl.so" "$VS_PLUGIN_PATH/"
         log_success "KNLMeansCL installed to $VS_PLUGIN_PATH/"
     else
         log_error "KNLMeansCL compilation failed — build/libknlmeanscl.so not found"
-        cd ../..; return 1
+        cd "$ORIG_DIR2"; return 1
     fi
 
-    cd ../..
+    cd "$ORIG_DIR2"
     ldconfig
 
-    log_success "Denoiser installed (PyTorch, vsscunet, MIGraphX, libvsmigx.so, vsmlrt.py, KNLMeansCL)."
+    if [ "$GPU_VENDOR" = "nvidia" ] || [ "$GPU_VENDOR" = "both" ]; then
+        log_success "Denoiser installed (PyTorch CUDA, vsscunet, TensorRT, libvstrt.so, vsmlrt.py, KNLMeansCL)."
+    else
+        log_success "Denoiser installed (PyTorch ROCm, vsscunet, MIGraphX, libvsmigx.so, vsmlrt.py, KNLMeansCL)."
+    fi
 }
 
 uninstall_denoiser() {
@@ -220,7 +327,9 @@ uninstall_denoiser() {
     "$VENV_DIR/bin/pip" uninstall -y torch vsscunet havsfunc || true
 
     log_info "Removing vs-mlrt files..."
+    rm -f "$VS_PLUGIN_PATH/libvstrt.so" || true
     rm -f "$VS_PLUGIN_PATH/libvsmigx.so" || true
+    rm -f "$VS_PLUGIN_PATH/vsmlrt-cuda/trtexec" || true
     rm -f "$VS_PLUGIN_PATH/vsmlrt-hip/migraphx-driver" || true
     local VSMLRT_PY
     VSMLRT_PY="$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || echo /usr/lib/python3/site-packages)/vsmlrt.py"
