@@ -457,7 +457,7 @@ def main():
     if os.path.exists(output_file):
         fish_version = _tag.get_5fish_version()
         general_flags = [f"--quality {quality}"]
-        if photon_noise:
+        if photon_noise and photon_noise != "0":
             general_flags.append(f"--photon-noise {photon_noise}")
         general_flags.append(f"--speed {speed}")
         if denoise_scunet:

@@ -555,7 +555,7 @@ def main():
     fish_version = _tag.get_5fish_version()
     script_version = _tag.get_script_version()
     general_flags = []
-    if preset.get("photon_noise"):
+    if preset.get("photon_noise") not in (None, 0):
         general_flags.append(f"--photon-noise {preset['photon_noise']}")
     if preset.get("autocrop"):
         general_flags.append("--autocrop")
