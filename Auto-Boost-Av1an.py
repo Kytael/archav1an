@@ -195,7 +195,7 @@ parser.add_argument("--denoise-device", type=int, default=0, help="GPU device in
 parser.add_argument("--denoise-knlm", action="store_true", help="Enable KNLMeansCL spatial+temporal denoising (OpenCL, all channels)")
 parser.add_argument("--denoise-tile", type=int, default=256, help="SCUnet tile size in pixels (256/512 recommended) | Default: 256")
 parser.add_argument("--denoise-model-dir", default=None, help="Parent dir containing scunet/ ONNX models (default: auto-detect from VS plugin path)")
-parser.add_argument("--denoise-streams", type=int, default=3, help="Inference streams for TRT/MIGraphX (3=best for 256-tile, 2=best for 512-tile) | Default: 3")
+parser.add_argument("--denoise-streams", type=int, default=2, help="Inference streams for TRT/MIGraphX | Default: 2")
 
 args = parser.parse_args()
 
@@ -694,7 +694,7 @@ final.set_output(0)
                 denoise_knlm=str(args.denoise_knlm),
                 denoise_tile=getattr(args, "denoise_tile", 256),
                 denoise_model_dir=_denoise_model_dir,
-                denoise_streams=getattr(args, "denoise_streams", 3),
+                denoise_streams=getattr(args, "denoise_streams", 2),
             )
         )
 

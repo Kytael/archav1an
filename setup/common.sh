@@ -247,6 +247,15 @@ setup_wsl2_cuda() {
         log_success "WSL2 ldconfig fixed."
     fi
 
+    # Ensure WSL2 libcuda takes priority over nvidia-utils stub in /usr/lib.
+    # nvidia-utils installs libcuda.so.595.x (native Linux stub) which doesn't work in WSL2.
+    # Putting /usr/lib/wsl/lib first in ldconfig makes the real WSL2 driver win.
+    if [ ! -f /etc/ld.so.conf.d/00-wsl2-cuda.conf ]; then
+        echo "/usr/lib/wsl/lib" > /etc/ld.so.conf.d/00-wsl2-cuda.conf
+        ldconfig
+        log_info "WSL2 CUDA ldconfig priority set (/usr/lib/wsl/lib before /usr/lib)."
+    fi
+
     # Clean CUDA symlinks: .so.1 → .so bypasses the malformed hash table in .so.1
     local wsl_cuda_dir="/usr/local/lib/wsl-cuda"
     if [ -f /usr/lib/wsl/lib/libcuda.so ] && [ ! -d "$wsl_cuda_dir" ]; then

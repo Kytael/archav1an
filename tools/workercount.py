@@ -19,11 +19,14 @@ def cleanup_temp_folders():
     # Wait 2 seconds to let Windows release file locks from the killed process
     time.sleep(2)
 
-    # 1. Clean up folders starting with a period
+    # 1. Clean up av1an temp folders (hex-named, e.g. .df97856)
+    # IMPORTANT: only delete short all-hex dotdirs to avoid nuking .git, .claude, etc.
+    import re
+    av1an_tmp_pattern = re.compile(r'^\.[0-9a-f]{6,16}$')
     try:
         for item in os.listdir(BASE_DIR):
             item_path = os.path.join(BASE_DIR, item)
-            if os.path.isdir(item_path) and item.startswith("."):
+            if os.path.isdir(item_path) and av1an_tmp_pattern.match(item):
                 deleted = False
                 for attempt in range(3):
                     try:

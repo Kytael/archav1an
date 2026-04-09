@@ -316,7 +316,7 @@ def main():
     denoise_scunet = False
     denoise_model = "color_real_psnr"
     denoise_tile = 256
-    denoise_streams = 3
+    denoise_streams = 2
 
     i = 0
     while i < len(args):
@@ -349,7 +349,7 @@ def main():
         elif arg == "--denoise-tile":
             denoise_tile = int(nextval() or 256); i += 2
         elif arg == "--denoise-streams":
-            denoise_streams = int(nextval() or 3); i += 2
+            denoise_streams = int(nextval() or 2); i += 2
         else:
             i += 1
 
