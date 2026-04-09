@@ -426,7 +426,7 @@ def main():
         print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
         sys.stdout.flush()
         run_piped([vspipe_exe, "-c", "y4m", vpy_path, "-"], svt_cmd,
-                  source_label="vspipe", suppress_sink_stderr=True)
+                  source_label="vspipe", suppress_source_stderr=True)
     else:
         src_vpy_path = os.path.join(temp_dir, f"{stem}_src.vpy")
         src_cachefile = os.path.join(temp_dir, f"{stem}.ffindex")

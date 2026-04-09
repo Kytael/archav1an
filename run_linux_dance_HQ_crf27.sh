@@ -11,20 +11,6 @@ cd "$(dirname "$0")"
 source "$(dirname "$(realpath "$0")")/activate-venv.sh"
 touch "tools/sh-used-$(basename "$0").txt"
 
-WORKER_COUNT=4
-
-# --- WORKER COUNT CHECK ---
-CONFIG_FILE="tools/workercount-config.txt"
-
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "First Run Detected: Calculating optimal encode worker count..."
-    python3 "tools/workercount.py"
-fi
-
-if [ -f "$CONFIG_FILE" ]; then
-    WORKER_COUNT=$(grep "^workers=" "$CONFIG_FILE" | cut -d= -f2 | tr -d '\r')
-fi
-
 LP=$(nproc)
 [ "$LP" -gt 64 ] && LP=64
 echo "Starting SvtAv1EncApp Batch (Dance HQ CRF 27) — single-pass, ${LP} threads..."
