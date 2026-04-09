@@ -561,7 +561,7 @@ def main():
         general_flags.append("--autocrop")
     if preset.get("aggressive"):
         general_flags.append("--aggressive")
-    if preset.get("denoise_scunet"):
+    if preset.get("denoise_scunet", False):
         general_flags.append(f"--denoise-scunet --denoise-model {preset['denoise_model']}")
     encoding_settings, encoder_name = _tag.build_tag_strings(
         general_flags, preset.get("final_params"), preset["quality"],
