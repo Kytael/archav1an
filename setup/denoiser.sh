@@ -17,6 +17,7 @@ install_denoiser() {
 
     local VS_INCLUDE_DIR
     VS_INCLUDE_DIR="$(pkg-config --variable=includedir vapoursynth 2>/dev/null || echo /usr/local/include)"
+    local _aur_user="${SUDO_USER:-}"
 
     # =========================================================================
     # 1. OpenCL runtime (required by KNLMeansCL)
@@ -47,7 +48,6 @@ install_denoiser() {
 
         # 2b. TensorRT (AUR — cannot build as root, use SUDO_USER)
         if ! pacman -Qi tensorrt &>/dev/null; then
-            local _aur_user="${SUDO_USER:-}"
             if [ -z "$_aur_user" ] || [ "$_aur_user" = "root" ]; then
                 log_error "Cannot install AUR package 'tensorrt' as root. Set SUDO_USER or run: sudo -u <user> paru -S tensorrt"
                 return 1
@@ -159,9 +159,71 @@ install_denoiser() {
     fi
 
     # =========================================================================
-    # 3. vsscunet + havsfunc (shared)
+    # 3. vsscunet + onnx + havsfunc_legacy + mvsfunc_pkg (shared)
     # =========================================================================
-    "$VENV_DIR/bin/pip" install vsscunet havsfunc onnx onnxscript || { log_error "Failed to install vsscunet/havsfunc/onnx"; return 1; }
+    # NOTE: do NOT install 'havsfunc' from PyPI — v34 is a different package that lacks SMDegrain.
+    # We install v33 (the original Holy's AviSynth port) manually as havsfunc_legacy below.
+    "$VENV_DIR/bin/pip" install vsscunet onnx onnxscript || { log_error "Failed to install vsscunet/onnx"; return 1; }
+
+    local _site
+    _site="$("$VENV_DIR/bin/python3" -c "import sysconfig; print(sysconfig.get_path('purelib'))")"
+
+    # mvsfunc_pkg — havsfunc dependency (PyPI mvsfunc is unmaintained/broken; install from GitHub as a package)
+    if [ ! -d "$_site/mvsfunc_pkg" ]; then
+        log_info "Installing mvsfunc_pkg from GitHub..."
+        mkdir -p "$_site/mvsfunc_pkg"
+        curl -fsSL "https://raw.githubusercontent.com/HomeOfVapourSynthEvolution/mvsfunc/master/mvsfunc.py" \
+            -o "$_site/mvsfunc_pkg/mvsfunc.py" || { log_error "Failed to download mvsfunc"; return 1; }
+        # Remove relative _metadata import that breaks standalone use
+        sed -i '/^from \._metadata import/d' "$_site/mvsfunc_pkg/mvsfunc.py"
+        printf 'from .mvsfunc import *\n' > "$_site/mvsfunc_pkg/__init__.py"
+        log_success "mvsfunc_pkg installed to $_site/mvsfunc_pkg/"
+    else
+        log_info "mvsfunc_pkg already installed."
+    fi
+
+    # havsfunc_legacy — v33 from original GitHub repo, patched to use mvsfunc_pkg
+    if [ ! -f "$_site/havsfunc_legacy.py" ]; then
+        log_info "Installing havsfunc_legacy (v33) from GitHub..."
+        curl -fsSL "https://raw.githubusercontent.com/HomeOfVapourSynthEvolution/havsfunc/master/havsfunc.py" \
+            -o "$_site/havsfunc_legacy.py" || { log_error "Failed to download havsfunc v33"; return 1; }
+        sed -i 's/^import mvsfunc as mvf$/import mvsfunc_pkg as mvf/' "$_site/havsfunc_legacy.py"
+        sed -i 's/from mvsfunc import /from mvsfunc_pkg import /g' "$_site/havsfunc_legacy.py"
+        log_success "havsfunc_legacy installed to $_site/"
+    else
+        log_info "havsfunc_legacy already installed."
+    fi
+
+    # =========================================================================
+    # 3.5  SMDegrain plugins: MVTools + RemoveGrain (needed for --denoise-smdegrain)
+    # =========================================================================
+    log_info "Installing MVTools and RemoveGrain VapourSynth plugins..."
+    if [ "$DISTRO_FAMILY" = "arch" ]; then
+        pacman -S --needed --noconfirm vapoursynth-plugin-mvtools || { log_error "Failed to install vapoursynth-plugin-mvtools"; return 1; }
+        # Pacman installs to /usr/lib/vapoursynth; symlink if VS_PLUGIN_PATH differs
+        if [ -f "/usr/lib/vapoursynth/libmvtools.so" ] && [ "$VS_PLUGIN_PATH" != "/usr/lib/vapoursynth" ]; then
+            ln -sf /usr/lib/vapoursynth/libmvtools.so "$VS_PLUGIN_PATH/libmvtools.so"
+            log_info "Symlinked libmvtools.so to $VS_PLUGIN_PATH/"
+        fi
+
+        if ! pacman -Qi vapoursynth-plugin-removegrain &>/dev/null && ! pacman -Qi vapoursynth-plugin-removegrain-git &>/dev/null; then
+            if [ -z "$_aur_user" ] || [ "$_aur_user" = "root" ]; then
+                log_warn "Cannot install vapoursynth-plugin-removegrain-git as root. Run manually: sudo -u <user> paru -S vapoursynth-plugin-removegrain-git"
+            else
+                log_info "Installing vapoursynth-plugin-removegrain-git from AUR as $_aur_user..."
+                sudo -u "$_aur_user" paru -S --needed --noconfirm vapoursynth-plugin-removegrain-git || \
+                    log_warn "Failed to install vapoursynth-plugin-removegrain-git (SMDegrain chroma may not work)"
+            fi
+        else
+            log_info "vapoursynth-plugin-removegrain already installed."
+        fi
+        if [ -f "/usr/lib/vapoursynth/libremovegrain.so" ] && [ "$VS_PLUGIN_PATH" != "/usr/lib/vapoursynth" ]; then
+            ln -sf /usr/lib/vapoursynth/libremovegrain.so "$VS_PLUGIN_PATH/libremovegrain.so"
+            log_info "Symlinked libremovegrain.so to $VS_PLUGIN_PATH/"
+        fi
+    else
+        log_warn "Debian/Ubuntu: install vapoursynth-mvtools and vapoursynth-removegrain manually for --denoise-smdegrain support"
+    fi
 
     # Pre-download all SCUNet .pth model weights
     log_info "Pre-downloading SCUNet model weights..."

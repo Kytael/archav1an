@@ -186,7 +186,7 @@ parser.add_argument(
 parser.add_argument(
     "--zones", help="Path to specific zones file override", default=None
 )
-parser.add_argument("--denoise-scunet", action="store_true", help="Enable SCUnet spatial denoising (full RGB frame, requires TensorRT on NVIDIA or MIGraphX on AMD)")
+parser.add_argument("--denoise-scunet", action="store_true", help="Enable SCUnet spatial denoising (full RGB frame; backend auto-detected: TensorRT on NVIDIA, MIGraphX on AMD)")
 parser.add_argument("--denoise-model", default="color_real_psnr",
     choices=["color_15","color_25","color_50","color_real_psnr","color_real_gan","gray_15","gray_25","gray_50"],
     help="SCUnet model: color_15/25/50 (Gaussian), color_real_psnr/gan (blind, best for camera), gray_15/25/50 (luma-only) | Default: color_real_psnr")
