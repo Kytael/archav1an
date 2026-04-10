@@ -11,6 +11,7 @@ import sys
 import shlex
 import subprocess
 import shutil
+import sysconfig
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tag as _tag
@@ -58,12 +59,12 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
         denoise_lines = (
             f'{model_line}\n'
             f'{backend_lines}\n'
-            f'import havsfunc as _haf\n'
+            f'import havsfunc_legacy as _haf\n'
             f'_src_fmt = src.format\n'
             f'_scunet_pre = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="709")\n'
             f'_scunet_pre = _SCUNet(_scunet_pre, model=_model_enum, tilesize={tile}, overlap=8, backend=_backend)\n'
             f'_scunet_pre = core.resize.Bicubic(_scunet_pre, format=vs.YUV444P16, matrix_s="709")\n'
-            f'_src444 = core.resize.Bicubic(src, format=vs.YUV444P16)\n'
+            f'_src444 = core.resize.Bicubic(src, format=vs.YUV444P16, range_s="limited")\n'
             f'src = _haf.SMDegrain(_src444, tr={tr}, thSAD={thsad}, thSADC={thsadc}, prefilter=_scunet_pre, contrasharp=True, RefineMotion=True)\n'
             f'src = core.resize.Bicubic(src, format=_src_fmt)'
         )
@@ -86,7 +87,9 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
             f'_rgb = _SCUNet(_rgb, model=_model_enum, tilesize={tile}, overlap=8, backend=_backend)\n'
             f'src = core.resize.Bicubic(_rgb, format=_src_fmt, matrix_s="709")'
         )
+    venv_site_pkgs = sysconfig.get_path('purelib')
     vpy = (
+        f'import sys as _sys; _sys.path.insert(0, {venv_site_pkgs!r})\n'
         f'from vstools import vs, core, initialize_clip, finalize_clip\n'
         f'core.max_cache_size = 1024\n'
         f'\n'
