@@ -191,6 +191,10 @@ parser.add_argument("--denoise-model", default="color_real_psnr",
     choices=["color_15","color_25","color_50","color_real_psnr","color_real_gan","gray_15","gray_25","gray_50"],
     help="SCUnet model: color_15/25/50 (Gaussian), color_real_psnr/gan (blind, best for camera), gray_15/25/50 (luma-only) | Default: color_real_psnr")
 parser.add_argument("--denoise-temporal", action="store_true", help="MVTools SMDegrain pre-filter before SCUnet")
+parser.add_argument("--denoise-smdegrain", action="store_true", help="SMDegrain with SCUNet as prefilter (temporal+spatial hybrid; mutually exclusive with --denoise-scunet direct output)")
+parser.add_argument("--denoise-tr", type=int, default=3, help="SMDegrain temporal radius (--denoise-smdegrain) | Default: 3")
+parser.add_argument("--denoise-thsad", type=int, default=350, help="SMDegrain luma SAD threshold (--denoise-smdegrain) | Default: 350")
+parser.add_argument("--denoise-thsadc", type=int, default=450, help="SMDegrain chroma SAD threshold (--denoise-smdegrain) | Default: 450")
 parser.add_argument("--denoise-device", type=int, default=0, help="GPU device index for SCUnet | Default: 0")
 parser.add_argument("--denoise-knlm", action="store_true", help="Enable KNLMeansCL spatial+temporal denoising (OpenCL, all channels)")
 parser.add_argument("--denoise-tile", type=int, default=256, help="SCUnet tile size in pixels (256/512 recommended) | Default: 256")
@@ -632,16 +636,12 @@ if should_downscale:
              src = core.placebo.Resample(src, target_w, target_h, filter=pl_filter)
 
 # 3. DENOISE — SCUnet via vs-mlrt (TensorRT on NVIDIA, MIGraphX on AMD)
-if {denoise_scunet}:
+if {denoise_scunet} or {denoise_smdegrain}:
     from vsmlrt import SCUNet as _SCUNet, SCUNetModel as _SCUNetModel, Backend as _Backend
     _model_dir = "{denoise_model_dir}"
     if _model_dir:
         import vsmlrt as _vsmlrt_mod
         _vsmlrt_mod.models_path = _model_dir
-    if {denoise_temporal}:
-        if hasattr(core, 'mv'):
-            import havsfunc as _haf
-            src = _haf.SMDegrain(src, tr=2, thSAD=300, plane=0)
     _model_enum = _SCUNetModel["scunet_{denoise_model}"]
     import os as _os
     _trt_env = _os.environ.copy()
@@ -654,17 +654,32 @@ if {denoise_scunet}:
         _backend = _Backend.TRT_RTX(device_id={denoise_device}, fp16=True, num_streams={denoise_streams}, use_cuda_graph=True, custom_env=_trt_env)
     else:
         _backend = _Backend.MIGX(device_id={denoise_device}, fp16=True, exhaustive_tune=False, num_streams={denoise_streams}, custom_env={{"MIGRAPHX_GPU_COMPILE_PARALLEL": "8"}})
-    if "{denoise_model}".startswith("gray_"):
-        _luma = core.std.ShufflePlanes(src, planes=0, colorfamily=vs.GRAY)
-        _luma_f = core.resize.Bicubic(_luma, format=vs.GRAYS)
-        _luma_d = _SCUNet(_luma_f, model=_model_enum, tilesize={denoise_tile}, overlap=8, backend=_backend)
-        _luma_out = core.resize.Bicubic(_luma_d, format=_luma.format)
-        src = core.std.ShufflePlanes([_luma_out, src, src], planes=[0, 1, 2], colorfamily=vs.YUV)
-    else:
+    if {denoise_smdegrain}:
+        # SCUNet as prefilter for SMDegrain (Staxrip-style hybrid: spatial+temporal)
+        import havsfunc as _haf
         _src_fmt = src.format
-        _rgb = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="709")
-        _rgb = _SCUNet(_rgb, model=_model_enum, tilesize={denoise_tile}, overlap=8, backend=_backend)
-        src = core.resize.Bicubic(_rgb, format=_src_fmt, matrix_s="709")
+        _scunet_pre = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="709")
+        _scunet_pre = _SCUNet(_scunet_pre, model=_model_enum, tilesize={denoise_tile}, overlap=8, backend=_backend)
+        _scunet_pre = core.resize.Bicubic(_scunet_pre, format=vs.YUV444P16, matrix_s="709")
+        _src444 = core.resize.Bicubic(src, format=vs.YUV444P16)
+        src = _haf.SMDegrain(_src444, tr={denoise_tr}, thSAD={denoise_thsad}, thSADC={denoise_thsadc}, prefilter=_scunet_pre, contrasharp=True, RefineMotion=True)
+        src = core.resize.Bicubic(src, format=_src_fmt)
+    else:
+        if {denoise_temporal}:
+            if hasattr(core, 'mv'):
+                import havsfunc as _haf
+                src = _haf.SMDegrain(src, tr=2, thSAD=300, plane=0)
+        if "{denoise_model}".startswith("gray_"):
+            _luma = core.std.ShufflePlanes(src, planes=0, colorfamily=vs.GRAY)
+            _luma_f = core.resize.Bicubic(_luma, format=vs.GRAYS)
+            _luma_d = _SCUNet(_luma_f, model=_model_enum, tilesize={denoise_tile}, overlap=8, backend=_backend)
+            _luma_out = core.resize.Bicubic(_luma_d, format=_luma.format)
+            src = core.std.ShufflePlanes([_luma_out, src, src], planes=[0, 1, 2], colorfamily=vs.YUV)
+        else:
+            _src_fmt = src.format
+            _rgb = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="709")
+            _rgb = _SCUNet(_rgb, model=_model_enum, tilesize={denoise_tile}, overlap=8, backend=_backend)
+            src = core.resize.Bicubic(_rgb, format=_src_fmt, matrix_s="709")
 
 # 4. DENOISE — KNLMeansCL spatial+temporal (optional, independent of SCUnet)
 if {denoise_knlm}:
@@ -690,6 +705,10 @@ final.set_output(0)
                 denoise_scunet=str(args.denoise_scunet),
                 denoise_model=getattr(args, "denoise_model", "color_real_psnr"),
                 denoise_temporal=str(getattr(args, "denoise_temporal", False)),
+                denoise_smdegrain=str(getattr(args, "denoise_smdegrain", False)),
+                denoise_tr=getattr(args, "denoise_tr", 3),
+                denoise_thsad=getattr(args, "denoise_thsad", 350),
+                denoise_thsadc=getattr(args, "denoise_thsadc", 450),
                 denoise_device=getattr(args, "denoise_device", 0),
                 denoise_knlm=str(args.denoise_knlm),
                 denoise_tile=getattr(args, "denoise_tile", 256),

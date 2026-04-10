@@ -48,12 +48,28 @@ def _mlrt_backend_lines(streams):
             )
     return f'_backend = _Backend.MIGX(device_id=0, fp16=True, exhaustive_tune=False, num_streams={streams}, custom_env={{"MIGRAPHX_GPU_COMPILE_PARALLEL": "8"}})'
 
-def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams):
+def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
+                      use_smdegrain=False, tr=3, thsad=350, thsadc=450):
     source = os.path.abspath(source)
     backend_lines = _mlrt_backend_lines(streams)
-    if model_name.startswith("gray_"):
+    model_line = f'_model_enum = _SCUNetModel["scunet_{model_name}"]'
+
+    if use_smdegrain:
         denoise_lines = (
-            f'_model_enum = _SCUNetModel["scunet_{model_name}"]\n'
+            f'{model_line}\n'
+            f'{backend_lines}\n'
+            f'import havsfunc as _haf\n'
+            f'_src_fmt = src.format\n'
+            f'_scunet_pre = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="709")\n'
+            f'_scunet_pre = _SCUNet(_scunet_pre, model=_model_enum, tilesize={tile}, overlap=8, backend=_backend)\n'
+            f'_scunet_pre = core.resize.Bicubic(_scunet_pre, format=vs.YUV444P16, matrix_s="709")\n'
+            f'_src444 = core.resize.Bicubic(src, format=vs.YUV444P16)\n'
+            f'src = _haf.SMDegrain(_src444, tr={tr}, thSAD={thsad}, thSADC={thsadc}, prefilter=_scunet_pre, contrasharp=True, RefineMotion=True)\n'
+            f'src = core.resize.Bicubic(src, format=_src_fmt)'
+        )
+    elif model_name.startswith("gray_"):
+        denoise_lines = (
+            f'{model_line}\n'
             f'{backend_lines}\n'
             f'_luma = core.std.ShufflePlanes(src, planes=0, colorfamily=vs.GRAY)\n'
             f'_luma_f = core.resize.Bicubic(_luma, format=vs.GRAYS)\n'
@@ -63,7 +79,7 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams):
         )
     else:
         denoise_lines = (
-            f'_model_enum = _SCUNetModel["scunet_{model_name}"]\n'
+            f'{model_line}\n'
             f'{backend_lines}\n'
             f'_src_fmt = src.format\n'
             f'_rgb = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="709")\n'
@@ -317,6 +333,10 @@ def main():
     denoise_model = "color_real_psnr"
     denoise_tile = 256
     denoise_streams = 2
+    denoise_smdegrain = False
+    denoise_tr = 3
+    denoise_thsad = 350
+    denoise_thsadc = 450
 
     i = 0
     while i < len(args):
@@ -350,6 +370,14 @@ def main():
             denoise_tile = int(nextval() or 256); i += 2
         elif arg == "--denoise-streams":
             denoise_streams = int(nextval() or 2); i += 2
+        elif arg == "--denoise-smdegrain":
+            denoise_smdegrain = True; i += 1
+        elif arg == "--denoise-tr":
+            denoise_tr = int(nextval() or 3); i += 2
+        elif arg == "--denoise-thsad":
+            denoise_thsad = int(nextval() or 350); i += 2
+        elif arg == "--denoise-thsadc":
+            denoise_thsadc = int(nextval() or 450); i += 2
         else:
             i += 1
 
@@ -412,17 +440,22 @@ def main():
     src_stat = os.stat(input_file) if os.path.exists(input_file) else None
 
     # --- Encode ---
-    if denoise_scunet:
+    if denoise_scunet or denoise_smdegrain:
         mlrt_plugin = find_mlrt_plugin()
         if not mlrt_plugin:
-            print("[svtav1-dispatch] Error: --denoise-scunet: no vs-mlrt plugin found (libvstrt.so or libvsmigx.so). Run setup.sh --install denoiser.")
+            print("[svtav1-dispatch] Error: no vs-mlrt plugin found (libvstrt.so or libvsmigx.so). Run setup.sh --install denoiser.")
             sys.exit(1)
         _backend_name = "TRT" if "vstrt" in mlrt_plugin else "MIGraphX"
         vpy_path = os.path.join(temp_dir, f"{stem}_denoise.vpy")
         cachefile = os.path.join(temp_dir, f"{stem}.ffindex")
         write_denoise_vpy(vpy_path, input_file, cachefile,
-                          denoise_model, denoise_tile, denoise_streams)
-        print(f"[svtav1-dispatch] vspipe ({_backend_name} SCUNet-{denoise_model}, tile={denoise_tile}, streams={denoise_streams}) | SvtAv1EncApp{svt_params}")
+                          denoise_model, denoise_tile, denoise_streams,
+                          use_smdegrain=denoise_smdegrain,
+                          tr=denoise_tr, thsad=denoise_thsad, thsadc=denoise_thsadc)
+        if denoise_smdegrain:
+            print(f"[svtav1-dispatch] vspipe ({_backend_name} SCUNet+SMDegrain tr={denoise_tr} thSAD={denoise_thsad} thSADC={denoise_thsadc}, tile={denoise_tile}, streams={denoise_streams}) | SvtAv1EncApp{svt_params}")
+        else:
+            print(f"[svtav1-dispatch] vspipe ({_backend_name} SCUNet-{denoise_model}, tile={denoise_tile}, streams={denoise_streams}) | SvtAv1EncApp{svt_params}")
         print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
         sys.stdout.flush()
         run_piped([vspipe_exe, "-c", "y4m", vpy_path, "-"], svt_cmd,
