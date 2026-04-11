@@ -191,7 +191,7 @@ parser.add_argument("--denoise-model", default="color_real_psnr",
     choices=["color_15","color_25","color_50","color_real_psnr","color_real_gan","gray_15","gray_25","gray_50"],
     help="SCUnet model: color_15/25/50 (Gaussian), color_real_psnr/gan (blind, best for camera), gray_15/25/50 (luma-only) | Default: color_real_psnr")
 parser.add_argument("--denoise-smdegrain", action="store_true", help="SMDegrain with SCUNet as prefilter (temporal+spatial hybrid; mutually exclusive with --denoise-scunet direct output)")
-parser.add_argument("--denoise-tr", type=int, default=3, help="SMDegrain temporal radius (--denoise-smdegrain) | Default: 3")
+parser.add_argument("--denoise-tr", type=int, default=4, help="SMDegrain temporal radius (--denoise-smdegrain) | Default: 4")
 parser.add_argument("--denoise-thsad", type=int, default=350, help="SMDegrain luma SAD threshold (--denoise-smdegrain) | Default: 350")
 parser.add_argument("--denoise-thsadc", type=int, default=450, help="SMDegrain chroma SAD threshold (--denoise-smdegrain) | Default: 450")
 parser.add_argument("--denoise-device", type=int, default=0, help="GPU device index for SCUnet | Default: 0")
@@ -661,7 +661,8 @@ if {denoise_scunet} or {denoise_smdegrain}:
         _scunet_pre = _SCUNet(_scunet_pre, model=_model_enum, tilesize={denoise_tile}, overlap=8, backend=_backend)
         _scunet_pre = core.resize.Bicubic(_scunet_pre, format=vs.YUV444P16, matrix_s="709", range_s="limited")
         _src444 = core.resize.Bicubic(src, format=vs.YUV444P16, range_s="limited")
-        src = _haf.SMDegrain(_src444, tr={denoise_tr}, thSAD={denoise_thsad}, thSADC={denoise_thsadc}, prefilter=_scunet_pre, contrasharp=True, RefineMotion=True)
+        src = _haf.SMDegrain(_src444, tr={denoise_tr}, thSAD={denoise_thsad}, plane=0, prefilter=_scunet_pre, contrasharp=True, RefineMotion=True)
+        src = core.std.ShufflePlanes([src, _scunet_pre, _scunet_pre], planes=[0, 1, 2], colorfamily=vs.YUV)
         src = core.resize.Bicubic(src, format=_src_fmt)
     else:
         if "{denoise_model}".startswith("gray_"):
@@ -700,7 +701,7 @@ final.set_output(0)
                 denoise_scunet=str(args.denoise_scunet),
                 denoise_model=getattr(args, "denoise_model", "color_real_psnr"),
                 denoise_smdegrain=str(getattr(args, "denoise_smdegrain", False)),
-                denoise_tr=getattr(args, "denoise_tr", 3),
+                denoise_tr=getattr(args, "denoise_tr", 4),
                 denoise_thsad=getattr(args, "denoise_thsad", 350),
                 denoise_thsadc=getattr(args, "denoise_thsadc", 450),
                 denoise_device=getattr(args, "denoise_device", 0),

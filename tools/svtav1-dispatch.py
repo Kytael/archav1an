@@ -63,9 +63,10 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
             f'_src_fmt = src.format\n'
             f'_scunet_pre = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="709")\n'
             f'_scunet_pre = _SCUNet(_scunet_pre, model=_model_enum, tilesize={tile}, overlap=8, backend=_backend)\n'
-            f'_scunet_pre = core.resize.Bicubic(_scunet_pre, format=vs.YUV444P16, matrix_s="709")\n'
+            f'_scunet_pre = core.resize.Bicubic(_scunet_pre, format=vs.YUV444P16, matrix_s="709", range_s="limited")\n'
             f'_src444 = core.resize.Bicubic(src, format=vs.YUV444P16, range_s="limited")\n'
-            f'src = _haf.SMDegrain(_src444, tr={tr}, thSAD={thsad}, thSADC={thsadc}, prefilter=_scunet_pre, contrasharp=True, RefineMotion=True)\n'
+            f'src = _haf.SMDegrain(_src444, tr={tr}, thSAD={thsad}, plane=0, prefilter=_scunet_pre, contrasharp=True, RefineMotion=True)\n'
+            f'src = core.std.ShufflePlanes([src, _scunet_pre, _scunet_pre], planes=[0, 1, 2], colorfamily=vs.YUV)\n'
             f'src = core.resize.Bicubic(src, format=_src_fmt)'
         )
     elif model_name.startswith("gray_"):
@@ -337,7 +338,7 @@ def main():
     denoise_tile = 256
     denoise_streams = 2
     denoise_smdegrain = False
-    denoise_tr = 3
+    denoise_tr = 4
     denoise_thsad = 350
     denoise_thsadc = 450
 
@@ -376,7 +377,7 @@ def main():
         elif arg == "--denoise-smdegrain":
             denoise_smdegrain = True; i += 1
         elif arg == "--denoise-tr":
-            denoise_tr = int(nextval() or 3); i += 2
+            denoise_tr = int(nextval() or 4); i += 2
         elif arg == "--denoise-thsad":
             denoise_thsad = int(nextval() or 350); i += 2
         elif arg == "--denoise-thsadc":
