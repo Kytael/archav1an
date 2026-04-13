@@ -127,27 +127,36 @@ install_denoiser() {
         # 2b. MIGraphX package
         log_info "Installing MIGraphX..."
         if [ "$DISTRO_FAMILY" = "arch" ]; then
-            pacman -S --needed --noconfirm rocm-migraphx || { log_error "Failed to install rocm-migraphx"; return 1; }
+            pacman -S --needed --noconfirm rocm-migraphx 2>/dev/null \
+                || pacman -S --needed --noconfirm migraphx \
+                || { log_error "Failed to install migraphx (tried rocm-migraphx and migraphx)"; return 1; }
         else
             log_warn "Debian/Ubuntu: install rocm-migraphx manually from your ROCm repo"
         fi
 
-        # 2c. Build libvsmigx.so from vs-mlrt source
-        log_info "Building libvsmigx.so from vs-mlrt source..."
-        local ORIG_DIR="$(pwd)"
-        mkdir -p build_tmp && cd build_tmp || return 1
+        # 2c. Build libvsmigx.so from vs-mlrt source, or symlink existing install
+        if [ -f "$VS_PLUGIN_PATH/libvsmigx.so" ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
+            log_info "libvsmigx.so already in $VS_PLUGIN_PATH, skipping. (FORCE_REINSTALL=1 to rebuild)"
+        elif [ -f "/usr/lib/vapoursynth/libvsmigx.so" ] && [ "$VS_PLUGIN_PATH" != "/usr/lib/vapoursynth" ]; then
+            ln -sf /usr/lib/vapoursynth/libvsmigx.so "$VS_PLUGIN_PATH/libvsmigx.so"
+            log_success "Symlinked existing libvsmigx.so to $VS_PLUGIN_PATH/"
+        else
+            log_info "Building libvsmigx.so from vs-mlrt source..."
+            local ORIG_DIR="$(pwd)"
+            mkdir -p build_tmp && cd build_tmp || return 1
 
-        if [ -d "vs-mlrt" ]; then rm -rf vs-mlrt; fi
-        git clone --depth 1 https://github.com/AmusementClub/vs-mlrt.git || { log_error "Failed to clone vs-mlrt"; cd "$ORIG_DIR"; return 1; }
+            if [ -d "vs-mlrt" ]; then rm -rf vs-mlrt; fi
+            git clone --depth 1 https://github.com/AmusementClub/vs-mlrt.git || { log_error "Failed to clone vs-mlrt"; cd "$ORIG_DIR"; return 1; }
 
-        cd vs-mlrt/vsmigx
-        mkdir -p build && cd build
-        cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja -DVAPOURSYNTH_INCLUDE_DIRS="$VS_INCLUDE_DIR" \
-            || { log_error "vsmigx cmake failed"; cd "$ORIG_DIR"; return 1; }
-        ninja || { log_error "vsmigx build failed"; cd "$ORIG_DIR"; return 1; }
-        cp libvsmigx.so "$VS_PLUGIN_PATH/"
-        log_success "libvsmigx.so installed to $VS_PLUGIN_PATH/"
-        cd "$ORIG_DIR"
+            cd vs-mlrt/vsmigx
+            mkdir -p build && cd build
+            cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja -DVAPOURSYNTH_INCLUDE_DIRS="$VS_INCLUDE_DIR" \
+                || { log_error "vsmigx cmake failed"; cd "$ORIG_DIR"; return 1; }
+            ninja || { log_error "vsmigx build failed"; cd "$ORIG_DIR"; return 1; }
+            cp libvsmigx.so "$VS_PLUGIN_PATH/"
+            log_success "libvsmigx.so installed to $VS_PLUGIN_PATH/"
+            cd "$ORIG_DIR"
+        fi
 
         # 2d. Symlink migraphx-driver for vsmlrt.py
         mkdir -p "$VS_PLUGIN_PATH/vsmlrt-hip"
@@ -163,16 +172,16 @@ install_denoiser() {
     # =========================================================================
     # NOTE: do NOT install 'havsfunc' from PyPI — v34 is a different package that lacks SMDegrain.
     # We install v33 (the original Holy's AviSynth port) manually as havsfunc_legacy below.
-    "$VENV_DIR/bin/pip" install vsscunet onnx onnxscript || { log_error "Failed to install vsscunet/onnx"; return 1; }
+    "$VENV_DIR/bin/pip" install vsscunet onnx onnxscript adjust || { log_error "Failed to install vsscunet/onnx/adjust"; return 1; }
 
     local _site
     _site="$("$VENV_DIR/bin/python3" -c "import sysconfig; print(sysconfig.get_path('purelib'))")"
 
     # mvsfunc_pkg — havsfunc dependency (PyPI mvsfunc is unmaintained/broken; install from GitHub as a package)
-    if [ ! -d "$_site/mvsfunc_pkg" ]; then
+    if [ ! -d "$_site/mvsfunc_pkg" ] || [ "${FORCE_REINSTALL:-0}" = "1" ]; then
         log_info "Installing mvsfunc_pkg from GitHub..."
         mkdir -p "$_site/mvsfunc_pkg"
-        curl -fsSL "https://raw.githubusercontent.com/HomeOfVapourSynthEvolution/mvsfunc/master/mvsfunc.py" \
+        curl -fsSL "https://raw.githubusercontent.com/HomeOfVapourSynthEvolution/mvsfunc/master/mvsfunc/mvsfunc.py" \
             -o "$_site/mvsfunc_pkg/mvsfunc.py" || { log_error "Failed to download mvsfunc"; return 1; }
         # Remove relative _metadata import that breaks standalone use
         sed -i '/^from \._metadata import/d' "$_site/mvsfunc_pkg/mvsfunc.py"
@@ -183,12 +192,16 @@ install_denoiser() {
     fi
 
     # havsfunc_legacy — v33 from original GitHub repo, patched to use mvsfunc_pkg
-    if [ ! -f "$_site/havsfunc_legacy.py" ]; then
-        log_info "Installing havsfunc_legacy (v33) from GitHub..."
-        curl -fsSL "https://raw.githubusercontent.com/HomeOfVapourSynthEvolution/havsfunc/master/havsfunc.py" \
-            -o "$_site/havsfunc_legacy.py" || { log_error "Failed to download havsfunc v33"; return 1; }
+    # NOTE: master is now v34 (restructured, no SMDegrain). Pin to r33 tag.
+    if [ ! -f "$_site/havsfunc_legacy.py" ] || [ "${FORCE_REINSTALL:-0}" = "1" ]; then
+        log_info "Installing havsfunc_legacy (r33) from GitHub..."
+        curl -fsSL "https://raw.githubusercontent.com/HomeOfVapourSynthEvolution/havsfunc/refs/tags/r33/havsfunc.py" \
+            -o "$_site/havsfunc_legacy.py" || { log_error "Failed to download havsfunc r33"; return 1; }
         sed -i 's/^import mvsfunc as mvf$/import mvsfunc_pkg as mvf/' "$_site/havsfunc_legacy.py"
         sed -i 's/from mvsfunc import /from mvsfunc_pkg import /g' "$_site/havsfunc_legacy.py"
+        # VS R73+ no longer strips leading underscores from reserved-word kwargs;
+        # havsfunc r33 uses _global= but MVTools expects global_ (trailing underscore).
+        sed -i 's/_global=/global_=/g' "$_site/havsfunc_legacy.py"
         log_success "havsfunc_legacy installed to $_site/"
     else
         log_info "havsfunc_legacy already installed."
@@ -221,8 +234,25 @@ install_denoiser() {
             ln -sf /usr/lib/vapoursynth/libremovegrain.so "$VS_PLUGIN_PATH/libremovegrain.so"
             log_info "Symlinked libremovegrain.so to $VS_PLUGIN_PATH/"
         fi
+
+        # CTMF — median filter needed by ContraSharpening in havsfunc
+        if ! pacman -Qi vapoursynth-plugin-ctmf-git &>/dev/null; then
+            if [ -z "$_aur_user" ] || [ "$_aur_user" = "root" ]; then
+                log_warn "Cannot install vapoursynth-plugin-ctmf-git as root. Run manually: sudo -u <user> paru -S vapoursynth-plugin-ctmf-git"
+            else
+                log_info "Installing vapoursynth-plugin-ctmf-git from AUR as $_aur_user..."
+                sudo -u "$_aur_user" paru -S --needed --noconfirm vapoursynth-plugin-ctmf-git || \
+                    log_warn "Failed to install vapoursynth-plugin-ctmf-git (SMDegrain ContraSharpening may not work)"
+            fi
+        else
+            log_info "vapoursynth-plugin-ctmf already installed."
+        fi
+        if [ -f "/usr/lib/vapoursynth/libctmf.so" ] && [ "$VS_PLUGIN_PATH" != "/usr/lib/vapoursynth" ]; then
+            ln -sf /usr/lib/vapoursynth/libctmf.so "$VS_PLUGIN_PATH/libctmf.so"
+            log_info "Symlinked libctmf.so to $VS_PLUGIN_PATH/"
+        fi
     else
-        log_warn "Debian/Ubuntu: install vapoursynth-mvtools and vapoursynth-removegrain manually for --denoise-smdegrain support"
+        log_warn "Debian/Ubuntu: install vapoursynth-mvtools, vapoursynth-removegrain, and vapoursynth-ctmf manually for --denoise-smdegrain support"
     fi
 
     # Pre-download all SCUNet .pth model weights
@@ -234,6 +264,11 @@ install_denoiser() {
     # =========================================================================
     log_info "Exporting SCUNet color models to ONNX..."
     local ONNX_DIR="$VS_PLUGIN_PATH/models/scunet"
+    # Symlink models dir from /usr/lib/vapoursynth if it exists there but not in VS_PLUGIN_PATH
+    if [ -d "/usr/lib/vapoursynth/models" ] && [ "$VS_PLUGIN_PATH" != "/usr/lib/vapoursynth" ] && [ ! -e "$VS_PLUGIN_PATH/models" ]; then
+        ln -sf /usr/lib/vapoursynth/models "$VS_PLUGIN_PATH/models"
+        log_info "Symlinked existing models dir to $VS_PLUGIN_PATH/models"
+    fi
     mkdir -p "$ONNX_DIR"
     "$VENV_DIR/bin/python3" -c "
 import torch, sys
