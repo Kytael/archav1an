@@ -51,167 +51,79 @@ CRF stands for "Constant Rate Factor." It determines the balance between Video Q
 
 ## Prerequisites
 
-### Automatic Installation
+### Automatic Installation (recommended)
 
-For a detailed list of versions and software installed, see [DEPENDENCIES.md](DEPENDENCIES.md).
+Everything builds into a single isolated prefix at `/opt/archav1an/` so nothing collides with pacman-owned paths. For the full inventory (versions, plugins, system packages, Python deps), see [DEPENDENCIES.md](DEPENDENCIES.md).
 
+**One-time bootstrap (the only step requiring sudo):**
+```bash
+sudo install -d -o "$USER" -g "$USER" /opt/archav1an
+```
 
-We have provided a **modular** setup script to install or uninstall dependencies individually or in bulk.
-This script needs to be run as root.
+This creates the prefix and chowns it to your user. Every subsequent install step runs as your user — no `sudo` required.
 
+**Prerequisite: `uv`** (Python venv + pip replacement). Install once:
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+**Install everything:**
 ```bash
 chmod +x setup.sh
-sudo ./setup.sh
+./setup.sh --install A
 ```
 
-The script will launch an interactive menu where you can:
--   **Install All**: Setup everything in one go (Recommended).
--   **Selective Install**: Install specific tools (e.g., Av1an, SVT-AV1) by entering their numbers (e.g., `1 3 5`).
--   **Uninstall**: Switch to Uninstall mode (Press **T**) to remove specific tools or everything.
-
-**CLI Mode:**
-You can also run it without the menu:
+Or selectively:
 ```bash
-sudo ./setup.sh --install A      # Install Everything
-sudo ./setup.sh --install av1an  # Install Av1an only
-sudo ./setup.sh --uninstall A    # Uninstall Everything
+./setup.sh --install python_libs   # uv venv at /opt/archav1an/venv
+./setup.sh --install ffmpeg        # source-built ffmpeg w/ NVENC into prefix
+./setup.sh --install vapoursynth   # VS R73 + FFMS2 + BestSource
+./setup.sh --install denoiser      # SCUNet/SMDegrain/RVRT/STA-SUNet plugins
+./setup.sh --install wwxd vszip subtext  # core VS plugins
 ```
 
-If you prefer to install manually, follow the steps below.
+The setup runs `pacman -Q <pkg>` before any `pacman -S` so already-installed system packages skip cleanly. Packages it genuinely needs to install (most often `cudnn`, `tensorrt`, AUR `vapoursynth-plugin-ctmf-git`) will fail with a clear message telling you the exact `sudo pacman -S ...` command to run — install those manually and re-run.
 
-### 1. System Packages
-
-Install basic tools, FFmpeg, and x264 (required for scene detection):
-
-**Arch-based (CachyOS, Manjaro, etc.):**
+**Activate the env to use vspipe / Python tools from your shell:**
 ```bash
-sudo pacman -S ffmpeg x264 mkvtoolnix-cli mkvtoolnix-gui python python-pip git curl
+source activate-venv.sh
 ```
 
-**Ubuntu/Debian:**
+`activate-venv.sh` sources the venv, prepends `/opt/archav1an/bin` to PATH, sets `LD_LIBRARY_PATH=/opt/archav1an/lib` (the source-built R73 VapourSynth library deliberately has no SONAME so it's only visible inside this activated env — pacman's system v75 remains the global default outside it), and sets `VAPOURSYNTH_PLUGIN_PATH=/opt/archav1an/lib/vapoursynth`.
+
+**Choosing the Python version:**
 ```bash
-sudo apt update
-sudo apt install -y ffmpeg x264 mkvtoolnix mkvtoolnix-gui python3 python3-pip git curl
+PYTHON_VERSION=3.13 ./setup.sh --install python_libs   # pin to 3.13 (uv downloads if needed)
+./setup.sh --install python_libs                       # default: whatever `python3` resolves to
 ```
+If a Python bump (typically pacman to a new minor) breaks a binary dep, pin to a known-good version via `PYTHON_VERSION`. The installer warns and rebuilds the venv when the requested version differs from what's already there; rerun `--install vapoursynth` after a Python change because the VS module is binary-linked to the venv's interpreter.
 
-### 2. VapourSynth
-
-Install VapourSynth and its Python bindings.
-
-**Arch-based:**
-```bash
-sudo pacman -S vapoursynth
-```
-
-**Ubuntu:**
-```bash
-sudo apt install -y vapoursynth libvapoursynth-dev python3-vapoursynth
-```
-
-### 3. Python Dependencies
-
-Install the required Python packages:
-
-```bash
-pip3 install vsjetpack numpy rich vstools psutil
-```
-
-### 4. Av1an
-
-The automatic installer uses the latest version from Git for feature parity.
-Manual install:
-```bash
-cargo install --git https://github.com/rust-av/Av1an.git
-```
-
-### 5. fssimu2 (CPU Metrics)
-The automated installer compiles this native Rust tool for identical Windows parity.
-Manual install:
-```bash
-cargo install --git https://github.com/gianni-rosato/fssimu2.git
-```
-
-### 5b. vship / FFVship (GPU Metrics)
-The automated installer compiles this from source for GPU-accelerated metrics.
-Requires NVIDIA (CUDA) or AMD (HIP) drivers.
-Manual install: *See [Line-fr/Vship](https://github.com/Line-fr/Vship)*
-
-
-### 5. SVT-AV1
-
-The automatic installer compiles **SVT-AV1-PSY** (Psycho-visual fork) with Clang and PGO/LTO optimizations for best quality and speed on Linux.
-Manual install (Recommended Build Command):
-```bash
-git clone https://github.com/5fish/svt-av1-psy
-cd svt-av1-psy
-mkdir -p Build/linux && cd Build/linux
-cmake ../.. -G"Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DENABLE_AVX512=ON -DNATIVE=ON -DSVT_AV1_PGO=ON -DSVT_AV1_LTO=ON
-make -j $(nproc)
-sudo make install
-```
-Ensure `SvtAv1EncApp` is in your PATH.
-
-### 6. VapourSynth Plugins
-
-The script relies on the following plugins:
-1.  **FFMS2**: For video loading.
-2.  **WWXD**: For scene detection (required by `Progressive-Scene-Detection.py`).
-3.  **VSZIP**: For metrics calculation (fallback if `fssimu2` is missing).
-
-**Install FFMS2:**
-
-*Arch-based:* `sudo pacman -S ffms2` or compile from source.
-*Ubuntu:* `sudo apt install -y libffms2-4 libffms2-dev` or compile from source (recommended for latest ffmpeg support).
-
-**Install WWXD (Critical Fix):**
-You MUST link against the math library.
-```bash
-git clone https://github.com/dubhater/vapoursynth-wwxd.git
-cd vapoursynth-wwxd
-gcc -o libwwxd.so -fPIC -shared -O3 -Wall -Wextra -I. -I/usr/local/include/vapoursynth src/*.c -lm
-sudo cp libwwxd.so /usr/local/lib/vapoursynth/
-```
-
-**Install VSZIP (Metrics):**
-We recommend using the automated build script provided in the repository.
-```bash
-git clone https://github.com/dnjulek/vapoursynth-zip.git vszip
-cd vszip/build-help
-chmod +x build.sh
-./build.sh
-# Ensure the plugin is in your VapourSynth path (e.g., /usr/local/lib/vapoursynth)
-sudo cp ../zig-out/lib/libvszip.so /usr/local/lib/vapoursynth/
-```
-
-*Alternatively, you can install the `fssimu2` binary and place it in your PATH to avoid needing `vszip`.*
-
+For manual / step-by-step installation see [DEPENDENCIES.md](DEPENDENCIES.md) for the full component list and source URLs.
 
 ## Verification
 
-To verify that the installation was successful, run the following commands:
+After `source activate-venv.sh`:
 
 ```bash
-# Check Core Tools
+# Core tools (should resolve to /opt/archav1an/bin)
+which vspipe ffmpeg av1an SvtAv1EncApp
+vspipe --version    # should report "Core R73"
 ffmpeg -version | head -n 1
-mkvmerge --version
-python3 --version
-mediainfo --version
+SvtAv1EncApp --help | grep -i "SVT-AV1"
 
-# Check VapourSynth
-vspipe --version
-python3 -c "import vapoursynth; print(f'VapourSynth Core: {vapoursynth.core.version()}')"
+# VapourSynth Python (should resolve to /opt/archav1an/lib/python3.X/site-packages)
+python -c "import vapoursynth as v; print(v.__file__); print(v.core.version().split(chr(10))[0])"
 
-# Check Encoders
-av1an --version
-SvtAv1EncApp --help | grep "SVT"
+# Plugins
+python -c "
+from vapoursynth import core
+checks = ['wwxd','vszip','sub','ffms2','bs','knlm','trt','mv']
+for c in checks: print(f'{c:8s}: {hasattr(core, c)}')
+"
 
-# Check Metrics Tools
-zig version
-fssimu2 --version || echo "fssimu2 not installed (optional - will use vs-zip fallback)"
-FFVship --help | head -n 1 || echo "FFVship (GPU) not installed"
-
-# Check VapourSynth Plugins
-python3 -c "from vapoursynth import core; print('WWXD:', hasattr(core, 'wwxd')); print('VSZIP:', hasattr(core, 'vszip'))"
+# Isolation check — pacman owns nothing inside our prefix
+pacman -Qkk vapoursynth     # must report "0 altered files"
+pacman -Qo /opt/archav1an/bin/vspipe   # must say "No package owns ..."
 ```
 ## Usage
 
