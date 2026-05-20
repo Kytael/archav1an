@@ -16,7 +16,7 @@ install_denoiser() {
     fi
 
     local VS_INCLUDE_DIR
-    VS_INCLUDE_DIR="$(pkg-config --variable=includedir vapoursynth 2>/dev/null || echo /usr/local/include)"
+    VS_INCLUDE_DIR="$(pkg-config --variable=includedir vapoursynth 2>/dev/null || echo "$VS_PREFIX/include")"
     local _aur_user="${SUDO_USER:-}"
 
     # =========================================================================
