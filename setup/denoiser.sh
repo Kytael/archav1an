@@ -15,8 +15,14 @@ install_denoiser() {
         detect_gpu
     fi
 
+    set_native_build_flags
+    # VS_INCLUDE_DIR is set after set_native_build_flags above, which adjusts
+    # PKG_CONFIG_PATH to prefer $VS_PREFIX/lib/pkgconfig over pacman's R75 pc.
+    # Defining it earlier made pkg-config find pacman's vapoursynth.pc first and
+    # return /usr/lib/python3.14/site-packages/vapoursynth/include (no VapourSynth.h).
     local VS_INCLUDE_DIR
-    VS_INCLUDE_DIR="$(pkg-config --variable=includedir vapoursynth 2>/dev/null || echo "$VS_PREFIX/include")"
+    VS_INCLUDE_DIR="$(pkg-config --variable=includedir vapoursynth 2>/dev/null || echo "$VS_PREFIX/include/vapoursynth")"
+    log_info "VS_INCLUDE_DIR resolved to $VS_INCLUDE_DIR"
     local _aur_user="${SUDO_USER:-}"
 
     # =========================================================================
