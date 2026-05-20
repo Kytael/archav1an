@@ -28,9 +28,16 @@ tools/tag-manifest*.txt
 # Claude Code (agent-local runtime state)
 .claude/
 
-# Heavy ML artifacts (ONNX/TensorRT engines, image previews)
-models/
+# Heavy ML artifacts. Ignore all of models/ EXCEPT the canonical ep16_512_r4
+# STA-SUNet onnx (canonical source; engines are GPU/TRT-version-specific,
+# rebuilt per machine by tools/svtav1-dispatch and friends).
+models/*
+!models/stasunet_denoise_ep16_512_r4.onnx
+!models/stasunet_denoise_ep16_512_r4.onnx.data
 nominations_preview/
+
+# Implementation plans — local scratchpad, not versioned
+plans/
 
 # Test/probe source media (large videos + host-specific dumps)
 prefilter/*.MOV
