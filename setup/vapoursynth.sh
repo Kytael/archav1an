@@ -56,9 +56,11 @@ install_vapoursynth() {
         || { cd "$ORIG_DIR"; log_error "VapourSynth make failed"; return 1; }
     # Pin pythondir/pyexecdir into the prefix so make install never writes into
     # the pacman-owned /usr/lib/python3.14/site-packages/vapoursynth/ tree.
+    # Use the venv's actual major.minor (e.g. python3.13) — libtool refuses
+    # to install into an unversioned site-packages directory.
     make install \
-        pythondir="$VS_PREFIX/lib/python3/site-packages" \
-        pyexecdir="$VS_PREFIX/lib/python3/site-packages" \
+        pythondir="$VS_PREFIX/lib/python${_vs_py_ver}/site-packages" \
+        pyexecdir="$VS_PREFIX/lib/python${_vs_py_ver}/site-packages" \
         || { cd "$ORIG_DIR"; log_error "VapourSynth make install failed"; return 1; }
     cd "$BUILD_DIR"
 
@@ -142,7 +144,7 @@ uninstall_vapoursynth() {
                 "$VS_PREFIX/lib/libffms2"* \
                 "$VS_PREFIX/lib/libbestsource"* \
                 "$VS_PREFIX/lib/vapoursynth" \
-                "$VS_PREFIX/lib/python3/site-packages/vapoursynth"* \
+                "$VS_PREFIX/lib/python3."*/site-packages/vapoursynth* \
                 "$VS_PREFIX/include/vapoursynth" \
                 "$VS_PREFIX/include/ffms2" \
                 "$VS_PREFIX/lib/pkgconfig/vapoursynth.pc" \
