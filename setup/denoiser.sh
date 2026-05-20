@@ -41,7 +41,11 @@ install_denoiser() {
 
         # 2a. cuDNN (official repo)
         if [ "$DISTRO_FAMILY" = "arch" ]; then
-            pacman -S --needed --noconfirm cudnn || { log_error "Failed to install cudnn"; return 1; }
+            if pacman -Q cudnn &>/dev/null; then
+                log_info "cudnn already installed."
+            else
+                pacman -S --needed --noconfirm cudnn || { log_error "Failed to install cudnn. Run: sudo pacman -S cudnn"; return 1; }
+            fi
         else
             log_warn "Debian/Ubuntu: install libcudnn9-cuda-12 manually from NVIDIA repos"
         fi
@@ -127,9 +131,13 @@ install_denoiser() {
         # 2b. MIGraphX package
         log_info "Installing MIGraphX..."
         if [ "$DISTRO_FAMILY" = "arch" ]; then
-            pacman -S --needed --noconfirm rocm-migraphx 2>/dev/null \
-                || pacman -S --needed --noconfirm migraphx \
-                || { log_error "Failed to install migraphx (tried rocm-migraphx and migraphx)"; return 1; }
+            if pacman -Q rocm-migraphx &>/dev/null || pacman -Q migraphx &>/dev/null; then
+                log_info "migraphx already installed."
+            else
+                pacman -S --needed --noconfirm rocm-migraphx 2>/dev/null \
+                    || pacman -S --needed --noconfirm migraphx \
+                    || { log_error "Failed to install migraphx (tried rocm-migraphx and migraphx). Run: sudo pacman -S migraphx"; return 1; }
+            fi
         else
             log_warn "Debian/Ubuntu: install rocm-migraphx manually from your ROCm repo"
         fi
@@ -212,7 +220,11 @@ install_denoiser() {
     # =========================================================================
     log_info "Installing MVTools and RemoveGrain VapourSynth plugins..."
     if [ "$DISTRO_FAMILY" = "arch" ]; then
-        pacman -S --needed --noconfirm vapoursynth-plugin-mvtools || { log_error "Failed to install vapoursynth-plugin-mvtools"; return 1; }
+        if pacman -Q vapoursynth-plugin-mvtools &>/dev/null; then
+            log_info "vapoursynth-plugin-mvtools already installed."
+        else
+            pacman -S --needed --noconfirm vapoursynth-plugin-mvtools || { log_error "Failed to install vapoursynth-plugin-mvtools. Run: sudo pacman -S vapoursynth-plugin-mvtools"; return 1; }
+        fi
         # Pacman installs to /usr/lib/vapoursynth; symlink if VS_PLUGIN_PATH differs
         if [ -f "/usr/lib/vapoursynth/libmvtools.so" ] && [ "$VS_PLUGIN_PATH" != "/usr/lib/vapoursynth" ]; then
             ln -sf /usr/lib/vapoursynth/libmvtools.so "$VS_PLUGIN_PATH/libmvtools.so"
@@ -359,7 +371,17 @@ for sigma in [15, 25, 50]:
     # =========================================================================
     log_info "Installing build tools (cmake, ninja, meson)..."
     if [ "$DISTRO_FAMILY" = "arch" ]; then
-        pacman -S --needed --noconfirm cmake ninja meson || { log_error "Failed to install build tools"; return 1; }
+        local _missing=()
+        for _p in cmake ninja meson; do
+            pacman -Q "$_p" &>/dev/null || _missing+=("$_p")
+        done
+        if [ ${#_missing[@]} -eq 0 ]; then
+            log_info "KNLMeansCL build deps (cmake ninja meson) already installed."
+        else
+            pacman -S --needed --noconfirm "${_missing[@]}" \
+                || { log_error "Failed to install KNLMeansCL build deps (${_missing[*]}). Run: sudo pacman -S ${_missing[*]}"; return 1; }
+        fi
+        unset _missing _p
     else
         apt install -y cmake ninja-build meson || { log_error "Failed to install build tools"; return 1; }
     fi
@@ -380,7 +402,11 @@ for sigma in [15, 25, 50]:
     # =========================================================================
     log_info "Checking Boost..."
     if [ "$DISTRO_FAMILY" = "arch" ]; then
-        pacman -S --needed --noconfirm boost || { log_error "Failed to install boost"; return 1; }
+        if pacman -Q boost &>/dev/null; then
+            log_info "boost already installed."
+        else
+            pacman -S --needed --noconfirm boost || { log_error "Failed to install boost. Run: sudo pacman -S boost"; return 1; }
+        fi
     else
         apt install -y libboost-filesystem-dev libboost-system-dev || { log_error "Failed to install boost"; return 1; }
     fi
