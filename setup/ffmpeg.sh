@@ -40,6 +40,32 @@ _ffmpeg_configure() {
     local extra_cflags="$1"
     local extra_ldflags="$2"
     export PKG_CONFIG_PATH="$VS_PREFIX/lib/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+
+    # NVIDIA GPU accel: enable NVDEC+NVENC+CUDA if ffnvcodec headers and
+    # a CUDA toolkit are present. Detected at configure time so CPU-only
+    # machines still build.
+    local cuda_flags=()
+    local cuda_toolkit=""
+    for d in /opt/cuda /usr/local/cuda; do
+        [ -x "$d/bin/nvcc" ] && { cuda_toolkit="$d"; break; }
+    done
+    if [ -n "$cuda_toolkit" ] && pkg-config --exists ffnvcodec; then
+        # --enable-cuda-llvm uses clang to compile CUDA kernels (free license).
+        # --enable-cuda-nvcc is rejected without --enable-nonfree.
+        log_info "FFmpeg: enabling CUDA/NVDEC/NVENC (toolkit=$cuda_toolkit, llvm compiler)"
+        cuda_flags+=(
+            --enable-cuda-llvm
+            --enable-cuvid
+            --enable-nvdec
+            --enable-nvenc
+            --enable-ffnvcodec
+        )
+        extra_cflags="$extra_cflags -I$cuda_toolkit/include"
+        extra_ldflags="$extra_ldflags -L$cuda_toolkit/lib64"
+    else
+        log_warn "FFmpeg: skipping CUDA (ffnvcodec headers or CUDA toolkit missing)"
+    fi
+
     ./configure \
       --prefix="$VS_PREFIX" \
       --cc=clang \
@@ -68,9 +94,28 @@ _ffmpeg_configure() {
       --enable-gnutls \
       --enable-vaapi \
       --enable-vulkan \
+      "${cuda_flags[@]}" \
       --disable-doc \
       --extra-cflags="$extra_cflags -Wno-pass-failed -flto=thin" \
       --extra-ldflags="$extra_ldflags -flto=thin"
+}
+
+install_nv_codec_headers() {
+    # Headers for NVDEC/NVENC in ffmpeg. Tiny header-only repo, safe to always refresh.
+    if pkg-config --exists ffnvcodec && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
+        log_info "nv-codec-headers already installed ($(pkg-config --modversion ffnvcodec))."
+        return 0
+    fi
+    log_info "Installing FFmpeg nv-codec-headers..."
+    local ORIG_DIR="$(pwd)"
+    local BUILD_DIR="$ORIG_DIR/build_tmp"
+    mkdir -p "$BUILD_DIR" && cd "$BUILD_DIR" || return 1
+    if [ -d "nv-codec-headers" ]; then rm -rf nv-codec-headers; fi
+    git clone --depth 1 https://github.com/FFmpeg/nv-codec-headers.git || { cd "$ORIG_DIR"; log_error "nv-codec-headers clone failed"; return 1; }
+    cd nv-codec-headers || { cd "$ORIG_DIR"; return 1; }
+    make install PREFIX="$VS_PREFIX" || { cd "$ORIG_DIR"; log_error "nv-codec-headers install failed"; return 1; }
+    cd "$ORIG_DIR"
+    log_success "nv-codec-headers installed."
 }
 
 install_ffmpeg() {
@@ -81,6 +126,9 @@ install_ffmpeg() {
 
     # Build dav1d from source first
     install_dav1d
+
+    # Install ffnvcodec headers so --enable-cuda-llvm can see them
+    install_nv_codec_headers
 
     log_info "Compiling FFmpeg from source with PGO + LTO + native optimizations..."
     set_native_build_flags
