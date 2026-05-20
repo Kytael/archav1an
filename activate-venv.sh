@@ -2,7 +2,10 @@
 # Activate the Auto-Boost-Av1an Python virtual environment
 # Source this from any script that needs to call python3
 
-VENV_DIR="${VENV_DIR:-/opt/auto-boost-av1an/venv}"
+# Install prefix for the isolated archav1an native stack. Sourced standalone
+# (this file does NOT source setup/common.sh), so we define VS_PREFIX inline.
+VS_PREFIX="${VS_PREFIX:-/opt/archav1an}"
+VENV_DIR="${VENV_DIR:-$VS_PREFIX/venv}"
 
 if [ -f "$VENV_DIR/bin/activate" ]; then
     source "$VENV_DIR/bin/activate"
@@ -11,10 +14,11 @@ else
     echo "       Falling back to system python3."
 fi
 
-# Ensure source-built libraries and VapourSynth plugins are found at runtime
-export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
-export VAPOURSYNTH_PLUGIN_PATH="/usr/local/lib/vapoursynth"
-export PATH="/usr/local/bin:$PATH"
+# Resolve the R73 .so by directory (it has no SONAME) so it overrides the
+# pacman v75 library only inside this activated environment.
+export LD_LIBRARY_PATH="$VS_PREFIX/lib:${LD_LIBRARY_PATH:-}"
+export VAPOURSYNTH_PLUGIN_PATH="$VS_PREFIX/lib/vapoursynth"
+export PATH="$VS_PREFIX/bin:$PATH"
 
 # WSL2: use clean CUDA symlinks (originals in /usr/lib/wsl/lib crash glibc's ld.so)
 if uname -r | grep -qi microsoft; then
