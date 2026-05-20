@@ -68,22 +68,19 @@ get_python_site_packages() {
     }
 }
 
-# Helper: get the VapourSynth plugin path
+# Install prefix for the source-built native stack (VapourSynth + plugins +
+# ffmpeg + SVT-AV1 + venv). Chosen under /opt so pacman never owns anything
+# inside it; deliberately *not* /usr/local. See plans/2026-05-20-vapoursynth-isolation.md.
+VS_PREFIX="${VS_PREFIX:-/opt/archav1an}"
+export VS_PREFIX
+
+# Helper: get the VapourSynth plugin path. Single source of truth: $VS_PREFIX.
 get_vs_plugin_path() {
-    # Prefer source-built VapourSynth at /usr/local
-    if [ -f /usr/local/lib/pkgconfig/vapoursynth.pc ]; then
-        echo "/usr/local/lib/vapoursynth"
-    elif command -v pkg-config &> /dev/null && pkg-config --exists vapoursynth 2>/dev/null; then
-        echo "$(pkg-config --variable=libdir vapoursynth)/vapoursynth"
-    elif [ "$DISTRO_FAMILY" = "arch" ]; then
-        echo "/usr/local/lib/vapoursynth"
-    else
-        echo "/usr/lib/x86_64-linux-gnu/vapoursynth"
-    fi
+    echo "$VS_PREFIX/lib/vapoursynth"
 }
 
 # Virtual environment path for Python dependencies
-VENV_DIR="${VENV_DIR:-/opt/auto-boost-av1an/venv}"
+VENV_DIR="${VENV_DIR:-$VS_PREFIX/venv}"
 export VENV_DIR
 
 # Set native build optimization flags for all source builds
@@ -94,9 +91,9 @@ set_native_build_flags() {
     export CXXFLAGS="-march=native -O3 -flto"
     export LDFLAGS="-flto -fuse-ld=lld"
     export RUSTFLAGS="-C target-cpu=native -C opt-level=3"
-    export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-    export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
-    export LIBRARY_PATH="/usr/local/lib:${LIBRARY_PATH:-}"
+    export PKG_CONFIG_PATH="$VS_PREFIX/lib/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+    export LD_LIBRARY_PATH="$VS_PREFIX/lib:${LD_LIBRARY_PATH:-}"
+    export LIBRARY_PATH="$VS_PREFIX/lib:${LIBRARY_PATH:-}"
 }
 
 # Set up build_tmp on tmpfs (RAM) for faster compilation
