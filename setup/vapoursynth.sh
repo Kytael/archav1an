@@ -31,6 +31,25 @@ install_vapoursynth() {
         || { cd "$ORIG_DIR"; log_error "Failed to clone VapourSynth"; return 1; }
     cd vapoursynth || { cd "$ORIG_DIR"; log_error "Failed to cd into vapoursynth"; return 1; }
     ./autogen.sh || { cd "$ORIG_DIR"; log_error "VapourSynth autogen failed"; return 1; }
+    # VS R73's configure.ac uses PKG_CHECK_MODULES([PYTHON], [python-3.13]),
+    # which fails when only uv-managed Python is present (uv doesn't ship
+    # python-3.13.pc). Derive CFLAGS/LIBS from the venv's Python sysconfig
+    # and pass them as env vars — PKG_CHECK_MODULES skips pkg-config when
+    # the *_CFLAGS/*_LIBS vars are already set.
+    local _vs_py_inc _vs_py_libdir _vs_py_ldlib _vs_py_ver
+    _vs_py_inc="$("$VENV_DIR/bin/python" -c 'import sysconfig;print(sysconfig.get_config_var("INCLUDEPY"))')"
+    _vs_py_libdir="$("$VENV_DIR/bin/python" -c 'import sysconfig;print(sysconfig.get_config_var("LIBDIR"))')"
+    _vs_py_ldlib="$("$VENV_DIR/bin/python" -c 'import sysconfig;print(sysconfig.get_config_var("LDLIBRARY"))')"
+    _vs_py_ver="$("$VENV_DIR/bin/python" -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+    local _vs_py_lib_short
+    # Strip lib...so/.dylib to get the -l<name> form (e.g. libpython3.13.so -> python3.13)
+    _vs_py_lib_short="${_vs_py_ldlib#lib}"
+    _vs_py_lib_short="${_vs_py_lib_short%.so*}"
+    _vs_py_lib_short="${_vs_py_lib_short%.dylib*}"
+    log_info "VS configure: using Python $_vs_py_ver headers from $_vs_py_inc"
+
+    PYTHON_CFLAGS="-I$_vs_py_inc" \
+    PYTHON_LIBS="-L$_vs_py_libdir -l$_vs_py_lib_short" \
     ./configure --prefix="$VS_PREFIX" PYTHON="$VENV_DIR/bin/python" \
         || { cd "$ORIG_DIR"; log_error "VapourSynth configure failed"; return 1; }
     make -j "$(nproc)" \
