@@ -26,8 +26,8 @@ install_wwxd() {
     local VS_INCLUDE=""
     if command -v pkg-config &> /dev/null && pkg-config --exists vapoursynth 2>/dev/null; then
         VS_INCLUDE="$(pkg-config --cflags vapoursynth)"
-    elif [ -d "/usr/local/include/vapoursynth" ]; then
-        VS_INCLUDE="-I/usr/local/include/vapoursynth"
+    elif [ -d "$VS_PREFIX/include/vapoursynth" ]; then
+        VS_INCLUDE="-I$VS_PREFIX/include/vapoursynth"
     elif [ -d "/usr/include/vapoursynth" ]; then
         VS_INCLUDE="-I/usr/include/vapoursynth"
     else
@@ -47,6 +47,6 @@ uninstall_wwxd() {
     log_info "Uninstalling WWXD..."
     local VS_PLUGIN_PATH
     VS_PLUGIN_PATH="$(get_vs_plugin_path)"
-    find "$VS_PLUGIN_PATH" /usr/local/lib/vapoursynth -name "libwwxd.so" -delete 2>/dev/null
+    find "$VS_PLUGIN_PATH" "$VS_PREFIX/lib/vapoursynth" -name "libwwxd.so" -delete 2>/dev/null
     log_success "WWXD uninstalled."
 }

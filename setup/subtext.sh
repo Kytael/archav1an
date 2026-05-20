@@ -47,6 +47,6 @@ uninstall_subtext() {
     log_info "Uninstalling SubText..."
     local VS_PLUGIN_PATH
     VS_PLUGIN_PATH="$(get_vs_plugin_path)"
-    find "$VS_PLUGIN_PATH" /usr/local/lib/vapoursynth -name "libsubtext.so" -delete 2>/dev/null
+    find "$VS_PLUGIN_PATH" "$VS_PREFIX/lib/vapoursynth" -name "libsubtext.so" -delete 2>/dev/null
     log_success "SubText uninstalled."
 }

@@ -40,6 +40,6 @@ uninstall_vszip() {
     log_info "Uninstalling VSZIP..."
     local VS_PLUGIN_PATH
     VS_PLUGIN_PATH="$(get_vs_plugin_path)"
-    find "$VS_PLUGIN_PATH" /usr/local/lib/vapoursynth -name "libvszip.so" -delete 2>/dev/null
+    find "$VS_PLUGIN_PATH" "$VS_PREFIX/lib/vapoursynth" -name "libvszip.so" -delete 2>/dev/null
     log_success "VSZIP uninstalled."
 }
