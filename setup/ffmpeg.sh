@@ -6,7 +6,7 @@ if [ -z "$COMMON_SOURCED" ]; then
 fi
 
 install_dav1d() {
-    if [ -f /usr/local/lib/libdav1d.so ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
+    if [ -f "$VS_PREFIX/lib/libdav1d.so" ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         log_info "dav1d (source-built) is already installed."
         return 0
     fi
@@ -39,7 +39,7 @@ install_dav1d() {
 _ffmpeg_configure() {
     local extra_cflags="$1"
     local extra_ldflags="$2"
-    export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+    export PKG_CONFIG_PATH="$VS_PREFIX/lib/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
     ./configure \
       --prefix="$VS_PREFIX" \
       --cc=clang \
@@ -74,7 +74,7 @@ _ffmpeg_configure() {
 }
 
 install_ffmpeg() {
-    if [ -f /usr/local/bin/ffmpeg ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
+    if [ -f "$VS_PREFIX/bin/ffmpeg" ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         log_info "FFmpeg (source-built) is already installed."
         return 0
     fi
