@@ -20,6 +20,18 @@ export LD_LIBRARY_PATH="$VS_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 export VAPOURSYNTH_PLUGIN_PATH="$VS_PREFIX/lib/vapoursynth"
 export PATH="$VS_PREFIX/bin:$PATH"
 
+# vspipe links against libpython3.X.so.1.0 in uv's managed Python store
+# (outside $VS_PREFIX). The build-time rpath should handle this, but
+# extending LD_LIBRARY_PATH here is a safety net for other Python-embedding
+# tools that don't get the same rpath treatment.
+if [ -x "$VENV_DIR/bin/python" ]; then
+    _uv_py_libdir="$("$VENV_DIR/bin/python" -c 'import sysconfig;print(sysconfig.get_config_var("LIBDIR"))' 2>/dev/null)"
+    if [ -n "$_uv_py_libdir" ] && [ -d "$_uv_py_libdir" ]; then
+        export LD_LIBRARY_PATH="$_uv_py_libdir:$LD_LIBRARY_PATH"
+    fi
+    unset _uv_py_libdir
+fi
+
 # WSL2: use clean CUDA symlinks (originals in /usr/lib/wsl/lib crash glibc's ld.so)
 if uname -r | grep -qi microsoft; then
     if [ -d /usr/local/lib/wsl-cuda ]; then

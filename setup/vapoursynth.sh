@@ -48,8 +48,13 @@ install_vapoursynth() {
     _vs_py_lib_short="${_vs_py_lib_short%.dylib*}"
     log_info "VS configure: using Python $_vs_py_ver headers from $_vs_py_inc"
 
+    # Bake an rpath for the venv's Python lib dir into libtool-built binaries
+    # (vspipe links against libpython3.13.so.1.0 which lives outside $VS_PREFIX
+    # in uv's managed Python store). Without rpath, vspipe fails to start with
+    # "libpython3.13.so.1.0: cannot open shared object file".
     PYTHON3_CFLAGS="-I$_vs_py_inc" \
     PYTHON3_LIBS="-L$_vs_py_libdir -l$_vs_py_lib_short" \
+    LDFLAGS="-Wl,-rpath,$_vs_py_libdir ${LDFLAGS:-}" \
     ./configure --prefix="$VS_PREFIX" PYTHON="$VENV_DIR/bin/python" \
         || { cd "$ORIG_DIR"; log_error "VapourSynth configure failed"; return 1; }
     make -j "$(nproc)" \
