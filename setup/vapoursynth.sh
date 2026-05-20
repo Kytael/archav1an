@@ -48,8 +48,8 @@ install_vapoursynth() {
     _vs_py_lib_short="${_vs_py_lib_short%.dylib*}"
     log_info "VS configure: using Python $_vs_py_ver headers from $_vs_py_inc"
 
-    PYTHON_CFLAGS="-I$_vs_py_inc" \
-    PYTHON_LIBS="-L$_vs_py_libdir -l$_vs_py_lib_short" \
+    PYTHON3_CFLAGS="-I$_vs_py_inc" \
+    PYTHON3_LIBS="-L$_vs_py_libdir -l$_vs_py_lib_short" \
     ./configure --prefix="$VS_PREFIX" PYTHON="$VENV_DIR/bin/python" \
         || { cd "$ORIG_DIR"; log_error "VapourSynth configure failed"; return 1; }
     make -j "$(nproc)" \
