@@ -17,19 +17,29 @@ The `setup.sh` script builds and installs everything into a single isolated pref
 
 ## Core Tools (source-built into `$VS_PREFIX`)
 
-| Software | Version/Branch | Source |
+| Software | Version | Source |
 | :--- | :--- | :--- |
-| **VapourSynth** | **Pinned R73** | [vapoursynth/vapoursynth](https://github.com/vapoursynth/vapoursynth) — built with `--prefix=$VS_PREFIX PYTHON=$VENV_DIR/bin/python` |
-| **FFMS2** | **Branch 5.0** | [FFMS/ffms2](https://github.com/FFMS/ffms2) |
-| **BestSource** | Latest Git (Master) | [vapoursynth/bestsource](https://github.com/vapoursynth/bestsource) (meson+ninja, native opts) |
-| **FFmpeg** | Latest Git (Master) | [FFmpeg/FFmpeg](https://github.com/FFmpeg/FFmpeg) — Clang + PGO + LTO + NVENC/NVDEC/CUDA (auto-detected) |
-| **nv-codec-headers** | Latest Git (Master) | [FFmpeg/nv-codec-headers](https://github.com/FFmpeg/nv-codec-headers) — required for FFmpeg NVENC/NVDEC |
-| **SVT-AV1-PSY** | Latest Git (main) | [5fish/svt-av1-psy](https://github.com/5fish/svt-av1-psy) — Clang, PGO, LTO, AVX512, NATIVE |
-| **dav1d** | Latest Git (Master) | [VideoLAN/dav1d](https://code.videolan.org/videolan/dav1d) — required for FFmpeg `--enable-libdav1d` |
-| **Av1an** | Latest Git (Master) | [rust-av/Av1an](https://github.com/rust-av/Av1an) |
-| **oxipng** | Latest crates.io | `cargo install oxipng` |
-| **fssimu2** | Latest Git (Main) | [gianni-rosato/fssimu2](https://github.com/gianni-rosato/fssimu2) — Zig 0.15.2 build |
-| **vship / FFVship** | Latest Git (Main) | [Line-fr/Vship](https://github.com/Line-fr/Vship) — GPU SSIMU2 (CUDA/HIP) |
+| **VapourSynth** | **R73 (pinned, load-bearing)** | [vapoursynth/vapoursynth](https://github.com/vapoursynth/vapoursynth) — built with `--prefix=$VS_PREFIX PYTHON=$VENV_DIR/bin/python --disable-versioning` (no-SONAME isolation, see below) |
+| **FFMS2** | tag `5.0` | [FFMS/ffms2](https://github.com/FFMS/ffms2) |
+| **BestSource** | latest git (master) | [vapoursynth/bestsource](https://github.com/vapoursynth/bestsource) (meson+ninja, native opts) |
+| **FFmpeg** | latest git (master) | [FFmpeg/FFmpeg](https://github.com/FFmpeg/FFmpeg) — Clang + PGO + LTO + NVENC/NVDEC/CUDA (auto-detected) |
+| **nv-codec-headers** | latest git (master) | [FFmpeg/nv-codec-headers](https://github.com/FFmpeg/nv-codec-headers) — required for FFmpeg NVENC/NVDEC |
+| **SVT-AV1-PSY** | tag `v2.3.0-C` | [5fish/svt-av1-psy](https://github.com/5fish/svt-av1-psy) — Clang, PGO, LTO, AVX512, NATIVE |
+| **dav1d** | tag `1.5.3` | [VideoLAN/dav1d](https://code.videolan.org/videolan/dav1d) — required for FFmpeg `--enable-libdav1d` |
+| **Av1an** | latest git (master) | [rust-av/Av1an](https://github.com/rust-av/Av1an) |
+| **oxipng** | latest crates.io | `cargo install oxipng` |
+| **fssimu2** | tag `0.1.3` | [gianni-rosato/fssimu2](https://github.com/gianni-rosato/fssimu2) — Zig 0.15.2 build |
+| **vship / FFVship** | tag `v5.0.1` | [Line-fr/Vship](https://codeberg.org/Line-fr/Vship) — GPU SSIMU2 (CUDA/Vulkan; HIP discouraged by upstream) |
+
+Plugin tags (built into `$VS_PREFIX/lib/vapoursynth/`):
+
+| Plugin | Version |
+| :--- | :--- |
+| WWXD | tag `v1.0` (only tag) |
+| VSZIP | tag `R13` |
+| SubText | tag `R6` |
+
+**Pin policy:** dependencies that ship release tags are pinned to a known-good tag; tag-less projects (FFmpeg, BestSource, nv-codec-headers, Av1an) track master. To bump a pin, edit the `--branch <tag>` arg in the relevant `setup/*.sh` file and re-run `./setup.sh --install <component>`.
 
 ## System packages (pacman / paru)
 

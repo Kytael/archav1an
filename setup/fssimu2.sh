@@ -39,7 +39,7 @@ install_fssimu2() {
     cd "$BUILD_DIR" || exit 1
 
     if [ -d "fssimu2" ]; then rm -rf fssimu2; fi
-    git clone --branch 0.1.2 --depth 1 https://github.com/gianni-rosato/fssimu2.git || { cd "$ORIG_DIR"; log_error "Failed to clone fssimu2"; return 1; }
+    git clone --branch 0.1.3 --depth 1 https://github.com/gianni-rosato/fssimu2.git || { cd "$ORIG_DIR"; log_error "Failed to clone fssimu2"; return 1; }
     cd fssimu2 || { cd "$ORIG_DIR"; log_error "Failed to cd into fssimu2"; return 1; }
 
     log_info "Building fssimu2..."

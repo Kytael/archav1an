@@ -57,7 +57,7 @@ install_vs_plugins() {
     # 3. SubText
     log_info "Compiling SubText..."
     if [ -d "subtext" ]; then rm -rf subtext; fi
-    git clone --branch R5 --depth 1 https://github.com/vapoursynth/subtext.git
+    git clone --branch R6 --depth 1 https://github.com/vapoursynth/subtext.git
     cd subtext
     mkdir build && cd build
     meson setup .. --buildtype=release

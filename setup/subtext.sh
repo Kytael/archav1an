@@ -19,7 +19,7 @@ install_subtext() {
 
     log_info "Compiling SubText..."
     if [ -d "subtext" ]; then rm -rf subtext; fi
-    git clone --branch R5 --depth 1 https://github.com/vapoursynth/subtext.git || { cd "$ORIG_DIR"; log_error "Failed to clone SubText"; return 1; }
+    git clone --branch R6 --depth 1 https://github.com/vapoursynth/subtext.git || { cd "$ORIG_DIR"; log_error "Failed to clone SubText"; return 1; }
     cd subtext || { cd "$ORIG_DIR"; log_error "Failed to cd into subtext"; return 1; }
 
     # avcodec_close() was removed in FFmpeg 6.0; replace with avcodec_free_context()

@@ -20,7 +20,7 @@ install_dav1d() {
     cd "$BUILD_DIR" || exit 1
 
     if [ -d "dav1d" ]; then rm -rf dav1d; fi
-    git clone --branch 1.5.1 --depth 1 https://code.videolan.org/videolan/dav1d.git || { cd "$ORIG_DIR"; log_error "Failed to clone dav1d"; return 1; }
+    git clone --branch 1.5.3 --depth 1 https://code.videolan.org/videolan/dav1d.git || { cd "$ORIG_DIR"; log_error "Failed to clone dav1d"; return 1; }
     cd dav1d || { cd "$ORIG_DIR"; log_error "Failed to cd into dav1d"; return 1; }
 
     CC=clang CXX=clang++ meson setup build --buildtype=release \

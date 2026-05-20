@@ -8,10 +8,7 @@ fi
 install_python_libs() {
     log_info "Installing Python Libraries into venv ($VENV_DIR)..."
 
-    if ! command -v uv &> /dev/null; then
-        log_error "uv not found on PATH. Install with: curl -LsSf https://astral.sh/uv/install.sh | sh"
-        return 1
-    fi
+    ensure_uv || return 1
 
     # Target Python version:
     #   - default: whatever `python3` resolves to on PATH (latest pacman).

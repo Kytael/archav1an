@@ -23,6 +23,50 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# Ensure user-installed tools (uv, cargo, etc.) are visible even when the
+# script was invoked via sudo (which strips $PATH) or from a fresh
+# non-login shell that didn't source the user's fish/bash rc. Probe
+# common install locations under the invoking user's home and prepend
+# whichever exist.
+_invoking_user_home="${SUDO_USER:+/home/$SUDO_USER}"
+_invoking_user_home="${_invoking_user_home:-$HOME}"
+for _extra_bin in "$_invoking_user_home/.local/bin" "$_invoking_user_home/.cargo/bin"; do
+    if [ -d "$_extra_bin" ] && [[ ":$PATH:" != *":$_extra_bin:"* ]]; then
+        export PATH="$_extra_bin:$PATH"
+    fi
+done
+unset _invoking_user_home _extra_bin
+
+# Install uv (Python venv + pip replacement) into ~/.local/bin if missing.
+# Uses Astral's official installer; no sudo required.
+ensure_uv() {
+    if command -v uv &>/dev/null; then
+        return 0
+    fi
+    log_info "uv not found; installing via https://astral.sh/uv/install.sh..."
+    if ! command -v curl &>/dev/null; then
+        log_error "curl is required to bootstrap uv. Install curl (e.g. 'sudo pacman -S curl' or 'sudo apt install curl') and re-run."
+        return 1
+    fi
+    if ! curl -LsSf https://astral.sh/uv/install.sh | sh; then
+        log_error "uv installer failed. Install manually: curl -LsSf https://astral.sh/uv/install.sh | sh"
+        return 1
+    fi
+    # The installer writes to $HOME/.local/bin (or $XDG_BIN_HOME). Our PATH
+    # block above already includes ~/.local/bin, so a fresh probe should work.
+    if ! command -v uv &>/dev/null; then
+        # Last-ditch: source the installer's env file if it created one.
+        [ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
+        export PATH="$HOME/.local/bin:$PATH"
+    fi
+    if command -v uv &>/dev/null; then
+        log_success "uv installed: $(uv --version)"
+        return 0
+    fi
+    log_error "uv installed but still not on PATH. Open a new shell or check ~/.local/bin."
+    return 1
+}
+
 check_root() {
     # If the user owns $VS_PREFIX (set in this file above), they don't need
     # sudo for builds that land inside the prefix. Individual install tasks
@@ -35,7 +79,15 @@ check_root() {
         log_info "Running as $USER with write access to $VS_PREFIX (sudo not required for user-prefix builds)."
         return 0
     fi
-    log_error "Either run as root (sudo) OR ensure $VS_PREFIX exists and is writable by you (sudo install -d -o \$USER \$VS_PREFIX)."
+    # Prefix doesn't exist (or isn't writable by us). The only step that
+    # needs root is creating it with the right owner; do that here so
+    # plain `./setup.sh --install A` works as the first command.
+    log_info "Bootstrapping $VS_PREFIX (one-time sudo prompt; the rest of setup runs as $USER)..."
+    if sudo install -d -o "$USER" -g "$USER" "$VS_PREFIX"; then
+        log_success "Created $VS_PREFIX owned by $USER."
+        return 0
+    fi
+    log_error "Failed to create $VS_PREFIX. Create it manually: sudo install -d -o \$USER -g \$USER $VS_PREFIX"
     exit 1
 }
 

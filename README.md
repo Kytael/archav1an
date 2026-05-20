@@ -55,23 +55,13 @@ CRF stands for "Constant Rate Factor." It determines the balance between Video Q
 
 Everything builds into a single isolated prefix at `/opt/archav1an/` so nothing collides with pacman-owned paths. For the full inventory (versions, plugins, system packages, Python deps), see [DEPENDENCIES.md](DEPENDENCIES.md).
 
-**One-time bootstrap (the only step requiring sudo):**
-```bash
-sudo install -d -o "$USER" -g "$USER" /opt/archav1an
-```
-
-This creates the prefix and chowns it to your user. Every subsequent install step runs as your user — no `sudo` required.
-
-**Prerequisite: `uv`** (Python venv + pip replacement). Install once:
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
 **Install everything:**
 ```bash
 chmod +x setup.sh
 ./setup.sh --install A
 ```
+
+`setup.sh` prompts for sudo **once** at the start to create `/opt/archav1an/` and chown it to you; everything after that runs as your user. If `uv` (the Python venv/pip replacement) isn't installed, the script fetches Astral's official installer and drops it in `~/.local/bin`. No further sudo unless a system package is genuinely missing — in that case the script prints the exact `sudo pacman -S …` command and exits.
 
 Or selectively:
 ```bash

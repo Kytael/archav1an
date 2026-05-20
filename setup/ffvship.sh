@@ -34,7 +34,7 @@ install_ffvship() {
     cd "$BUILD_DIR" || exit 1
 
     if [ -d "Vship" ]; then rm -rf Vship; fi
-    git clone --branch v5.0.0 --depth 1 https://codeberg.org/Line-fr/Vship.git || { cd "$ORIG_DIR"; log_error "Failed to clone Vship"; return 1; }
+    git clone --branch v5.0.1 --depth 1 https://codeberg.org/Line-fr/Vship.git || { cd "$ORIG_DIR"; log_error "Failed to clone Vship"; return 1; }
     cd Vship || { cd "$ORIG_DIR"; log_error "Failed to cd into Vship"; return 1; }
 
     # WSL2: nvcc -arch=native can't query the GPU, so detect via Windows nvidia-smi
