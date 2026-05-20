@@ -67,7 +67,7 @@ install_python_libs() {
     log_info "Removing pip-installed vapoursynth stub (avoid R73 module shadow)..."
     VIRTUAL_ENV="$VENV_DIR" uv pip uninstall vapoursynth || true
 
-    log_success "Python libraries installed in venv (Python $TARGET_PY_CANON)."
+    log_success "Python libraries installed in venv (Python ${TARGET_PY_CANON:-$TARGET_PY})."
 }
 
 uninstall_python_libs() {
@@ -77,7 +77,7 @@ uninstall_python_libs() {
         VIRTUAL_ENV="$VENV_DIR" uv pip uninstall \
             vsjetpack numpy rich vstools psutil anitopy pyperclip \
             requests requests_toolbelt natsort colorama Cython \
-            || true
+            || log_warn "Some packages failed to uninstall (already removed?)"
         log_success "Python libraries uninstalled from venv."
     else
         log_warn "Venv not found at $VENV_DIR, nothing to uninstall."
