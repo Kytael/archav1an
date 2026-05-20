@@ -18,7 +18,7 @@ install_encoders() {
             local LLVM_PROFDATA=$(find /usr/bin -name "llvm-profdata-*" | sort -V | tail -n 1)
             if [ -n "$LLVM_PROFDATA" ]; then
                 log_info "Found $LLVM_PROFDATA. Linking..."
-                ln -sf "$LLVM_PROFDATA" /usr/local/bin/llvm-profdata
+                ln -sf "$LLVM_PROFDATA" "$VS_PREFIX/bin/llvm-profdata"
                 ln -sf "${LLVM_PROFDATA}" /usr/bin/llvm-profdata
             else
                 log_warn "llvm-profdata not found. PGO might fail."
@@ -64,7 +64,7 @@ install_encoders() {
 
         log_info "Building FFVship CLI..."
         make buildFFVSHIP
-        make install PREFIX=/usr/local
+        make install PREFIX="$VS_PREFIX"
         cd .. # Back to build_tmp
         log_success "FFVship installed."
     else
