@@ -24,10 +24,19 @@ log_error() {
 }
 
 check_root() {
-    if [ "$EUID" -ne 0 ]; then 
-        log_error "Please run as root (sudo)."
-        exit 1
+    # If the user owns $VS_PREFIX (set in this file above), they don't need
+    # sudo for builds that land inside the prefix. Individual install tasks
+    # that genuinely need root (e.g. install_system_deps invoking pacman)
+    # will fail with a clear permission error if invoked without sudo.
+    if [ "$EUID" -eq 0 ]; then
+        return 0
     fi
+    if [ -n "$VS_PREFIX" ] && [ -w "$VS_PREFIX" ]; then
+        log_info "Running as $USER with write access to $VS_PREFIX (sudo not required for user-prefix builds)."
+        return 0
+    fi
+    log_error "Either run as root (sudo) OR ensure $VS_PREFIX exists and is writable by you (sudo install -d -o \$USER \$VS_PREFIX)."
+    exit 1
 }
 
 check_distro() {
