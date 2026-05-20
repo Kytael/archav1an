@@ -19,13 +19,29 @@ logs/
 tools/sh-used-*.txt
 tools/workercount-config.txt
 tools/workercount-ssimu2.txt
+tools/tag-manifest*.txt
 
 # Index files
 *.bsindex
 *.ffindex
 
-# Claude Code (local overrides)
-.claude/settings.local.json
+# Claude Code (agent-local runtime state)
+.claude/
+
+# Heavy ML artifacts (ONNX/TensorRT engines, image previews)
+models/
+nominations_preview/
+
+# Test/probe source media (large videos + host-specific dumps)
+prefilter/*.MOV
+prefilter/*.mov
+prefilter/*.MP4
+prefilter/*.mp4
+prefilter/VP_VULKANINFO_*.json
+
+# Per-session reports and monitoring artifacts
+REPORT_*.md
+RESTART_MONITORING.md
 
 # Editor
 .vscode/
