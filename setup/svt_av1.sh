@@ -8,9 +8,9 @@ fi
 install_svt_av1() {
     # Check for PSY fork specifically — the standard svt-av1 from pacman won't have PSY flags
     local need_build=true
-    if [ -f /usr/local/bin/SvtAv1EncApp ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
+    if [ -f "$VS_PREFIX/bin/SvtAv1EncApp" ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         need_build=false
-        log_info "SVT-AV1-PSY already installed at /usr/local/bin/SvtAv1EncApp."
+        log_info "SVT-AV1-PSY already installed at $VS_PREFIX/bin/SvtAv1EncApp."
     fi
 
     if $need_build; then
@@ -22,7 +22,7 @@ install_svt_av1() {
             local LLVM_PROFDATA=$(find /usr/bin -name "llvm-profdata-*" 2>/dev/null | sort -V | tail -n 1)
             if [ -n "$LLVM_PROFDATA" ]; then
                 log_info "Found $LLVM_PROFDATA. Linking..."
-                ln -sf "$LLVM_PROFDATA" /usr/local/bin/llvm-profdata
+                ln -sf "$LLVM_PROFDATA" "$VS_PREFIX/bin/llvm-profdata"
             else
                 log_warn "llvm-profdata not found. PGO might fail."
             fi
@@ -48,7 +48,8 @@ install_svt_av1() {
         cmake ../.. -G"Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
             -DENABLE_AVX512=ON -DNATIVE=ON \
-            -DSVT_AV1_PGO=ON -DSVT_AV1_LTO=ON || { cd "$ORIG_DIR"; log_error "SVT-AV1 cmake failed"; return 1; }
+            -DSVT_AV1_PGO=ON -DSVT_AV1_LTO=ON \
+            -DCMAKE_INSTALL_PREFIX="$VS_PREFIX" || { cd "$ORIG_DIR"; log_error "SVT-AV1 cmake failed"; return 1; }
 
         make -j "$(nproc)" || { cd "$ORIG_DIR"; log_error "SVT-AV1 make failed"; return 1; }
         make install || { cd "$ORIG_DIR"; log_error "SVT-AV1 make install failed"; return 1; }
@@ -60,9 +61,9 @@ install_svt_av1() {
 
 uninstall_svt_av1() {
     log_info "Uninstalling SVT-AV1-PSY..."
-    rm -vf /usr/local/bin/SvtAv1EncApp
-    rm -vf /usr/local/lib/libSvtAv1Enc*
-    rm -rf /usr/local/include/svt-av1
-    rm -vf /usr/local/lib/pkgconfig/SvtAv1Enc.pc
+    rm -vf "$VS_PREFIX/bin/SvtAv1EncApp"
+    rm -vf "$VS_PREFIX/lib/libSvtAv1Enc"*
+    rm -rf "$VS_PREFIX/include/svt-av1"
+    rm -vf "$VS_PREFIX/lib/pkgconfig/SvtAv1Enc.pc"
     log_success "SVT-AV1-PSY uninstalled."
 }

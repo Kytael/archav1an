@@ -66,23 +66,23 @@ is_installed() {
             [ -d "$VENV_DIR" ] && "$VENV_DIR/bin/pip" show vsjetpack &> /dev/null
             ;;
         "vapoursynth")
-            [ -f /usr/local/bin/vspipe ]
+            [ -f "$VS_PREFIX/bin/vspipe" ]
             ;;
         "ffmpeg")
-            [ -f /usr/local/bin/ffmpeg ]
+            [ -f "$VS_PREFIX/bin/ffmpeg" ]
             ;;
         "av1an")
-            [ -f /usr/local/bin/av1an ]
+            [ -f "$VS_PREFIX/bin/av1an" ]
             ;;
         "svt_av1")
-            # Check for PSY fork at /usr/local/bin, not the standard pacman svt-av1
-            [ -f /usr/local/bin/SvtAv1EncApp ]
+            # Check for PSY fork at $VS_PREFIX/bin, not the standard pacman svt-av1
+            [ -f "$VS_PREFIX/bin/SvtAv1EncApp" ]
             ;;
         "ffvship")
             command -v FFVship &> /dev/null
             ;;
         "oxipng")
-            [ -f /usr/local/bin/oxipng ]
+            [ -f "$VS_PREFIX/bin/oxipng" ]
             ;;
         "fssimu2")
             command -v fssimu2 &> /dev/null
@@ -91,19 +91,19 @@ is_installed() {
             local wwxd_path
             wwxd_path="$(get_vs_plugin_path)"
             [ -f "$wwxd_path/libwwxd.so" ] || \
-            [ -f "/usr/local/lib/vapoursynth/libwwxd.so" ]
+            [ -f "$VS_PREFIX/lib/vapoursynth/libwwxd.so" ]
             ;;
         "vszip")
             local vszip_path
             vszip_path="$(get_vs_plugin_path)"
             [ -f "$vszip_path/libvszip.so" ] || \
-            [ -f "/usr/local/lib/vapoursynth/libvszip.so" ]
+            [ -f "$VS_PREFIX/lib/vapoursynth/libvszip.so" ]
             ;;
         "subtext")
             local subtext_path
             subtext_path="$(get_vs_plugin_path)"
             [ -f "$subtext_path/libsubtext.so" ] || \
-            [ -f "/usr/local/lib/vapoursynth/libsubtext.so" ]
+            [ -f "$VS_PREFIX/lib/vapoursynth/libsubtext.so" ]
             ;;
         "denoiser")
             local knlm_path

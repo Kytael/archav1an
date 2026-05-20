@@ -14,7 +14,7 @@ install_ffvship() {
     log_info "Compiling FFVship..."
 
     # Ensure pkg-config can find locally-built libraries (ffms2, ffmpeg, etc.)
-    export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+    export PKG_CONFIG_PATH="$VS_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
     # Ensure ROCm/HIP tools and environment are set up
     if [ -d "/opt/rocm" ]; then
@@ -71,16 +71,16 @@ install_ffvship() {
     fi
 
     make buildFFVSHIP || { cd "$ORIG_DIR"; log_error "FFVship make buildFFVSHIP failed"; return 1; }
-    make install PREFIX=/usr/local || { cd "$ORIG_DIR"; log_error "FFVship make install failed"; return 1; }
+    make install PREFIX="$VS_PREFIX" || { cd "$ORIG_DIR"; log_error "FFVship make install failed"; return 1; }
 
     # Ensure libvship.so is in the VapourSynth plugin path
     local VS_PLUGIN_PATH="$(get_vs_plugin_path)"
     mkdir -p "$VS_PLUGIN_PATH"
-    if [ -f /usr/local/lib/vapoursynth/libvship.so ] && [ "$VS_PLUGIN_PATH" != "/usr/local/lib/vapoursynth" ]; then
+    if [ -f "$VS_PREFIX/lib/vapoursynth/libvship.so" ] && [ "$VS_PLUGIN_PATH" != "$VS_PREFIX/lib/vapoursynth" ]; then
         log_info "Linking libvship.so to VapourSynth plugin path ($VS_PLUGIN_PATH)..."
-        ln -sf /usr/local/lib/vapoursynth/libvship.so "$VS_PLUGIN_PATH/libvship.so"
-    elif [ -f /usr/local/lib/libvship.so ]; then
-        ln -sf /usr/local/lib/libvship.so "$VS_PLUGIN_PATH/libvship.so"
+        ln -sf "$VS_PREFIX/lib/vapoursynth/libvship.so" "$VS_PLUGIN_PATH/libvship.so"
+    elif [ -f "$VS_PREFIX/lib/libvship.so" ]; then
+        ln -sf "$VS_PREFIX/lib/libvship.so" "$VS_PLUGIN_PATH/libvship.so"
     fi
 
     cd "$ORIG_DIR"
@@ -90,6 +90,6 @@ install_ffvship() {
 
 uninstall_ffvship() {
     log_info "Uninstalling FFVship..."
-    rm -vf /usr/local/bin/FFVship
+    rm -vf "$VS_PREFIX/bin/FFVship"
     log_success "FFVship uninstalled."
 }

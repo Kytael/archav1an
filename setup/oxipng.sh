@@ -6,7 +6,7 @@ if [ -z "$COMMON_SOURCED" ]; then
 fi
 
 install_oxipng() {
-    if [ -f /usr/local/bin/oxipng ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
+    if [ -f "$VS_PREFIX/bin/oxipng" ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         log_info "oxipng (source-built) is already installed."
         return 0
     fi
@@ -29,8 +29,8 @@ install_oxipng() {
     cargo install oxipng || { log_error "Failed to install oxipng via cargo"; return 1; }
 
     if [ -f "$HOME/.cargo/bin/oxipng" ]; then
-        cp "$HOME/.cargo/bin/oxipng" /usr/local/bin/oxipng
-        chmod +x /usr/local/bin/oxipng
+        cp "$HOME/.cargo/bin/oxipng" "$VS_PREFIX/bin/oxipng"
+        chmod +x "$VS_PREFIX/bin/oxipng"
         log_success "oxipng installed with LTO and -march=native."
     else
         log_warn "oxipng binary not found in cargo bin after install?"
@@ -40,7 +40,7 @@ install_oxipng() {
 
 uninstall_oxipng() {
     log_info "Uninstalling oxipng..."
-    rm -vf /usr/local/bin/oxipng
+    rm -vf "$VS_PREFIX/bin/oxipng"
     [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
     cargo uninstall oxipng 2>/dev/null || true
     log_success "oxipng uninstalled."

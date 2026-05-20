@@ -6,7 +6,7 @@ if [ -z "$COMMON_SOURCED" ]; then
 fi
 
 install_av1an() {
-    if [ -f /usr/local/bin/av1an ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
+    if [ -f "$VS_PREFIX/bin/av1an" ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         log_info "av1an (source-built) is already installed."
         return 0
     fi
@@ -29,8 +29,8 @@ install_av1an() {
     cargo install --git https://github.com/rust-av/Av1an.git --bin av1an || { log_error "Failed to install av1an via cargo"; return 1; }
 
     if [ -f "$HOME/.cargo/bin/av1an" ]; then
-        cp "$HOME/.cargo/bin/av1an" /usr/local/bin/av1an
-        chmod +x /usr/local/bin/av1an
+        cp "$HOME/.cargo/bin/av1an" "$VS_PREFIX/bin/av1an"
+        chmod +x "$VS_PREFIX/bin/av1an"
         log_success "av1an installed with LTO and -march=native."
     else
         log_warn "av1an binary not found in cargo bin after install?"
@@ -40,7 +40,7 @@ install_av1an() {
 
 uninstall_av1an() {
     log_info "Uninstalling av1an..."
-    rm -vf /usr/local/bin/av1an
+    rm -vf "$VS_PREFIX/bin/av1an"
     [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
     cargo uninstall av1an 2>/dev/null || true
     rm -vf "$HOME/.cargo/bin/av1an"

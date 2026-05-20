@@ -81,7 +81,7 @@ install_system_deps_debian() {
     git clone --depth 1 https://github.com/FFmpeg/FFmpeg.git ffmpeg || { cd "$ORIG_DIR"; log_error "Failed to clone ffmpeg repo"; return 1; }
     cd ffmpeg
     ./configure \
-      --prefix="/usr/local" \
+      --prefix="$VS_PREFIX" \
       --enable-shared \
       --enable-gpl \
       --enable-libx264 \
