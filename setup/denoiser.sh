@@ -188,6 +188,11 @@ install_denoiser() {
     # We install v33 (the original Holy's AviSynth port) manually as havsfunc_legacy below.
     "$VENV_DIR/bin/pip" install vsscunet onnx onnxscript adjust || { log_error "Failed to install vsscunet/onnx/adjust"; return 1; }
 
+    # RVRT (vsrvrt): --no-deps avoids pulling PyPI vapoursynth stub, which shadows the
+    # source-built VapourSynth and breaks ffms2/other plugins.
+    # TODO: revisit RVRT perf before enabling.
+    VIRTUAL_ENV="$VENV_DIR" uv pip install --no-deps vsrvrt || log_warn "Failed to install vsrvrt (RVRT denoising unavailable)"
+
     local _site
     _site="$("$VENV_DIR/bin/python3" -c "import sysconfig; print(sysconfig.get_path('purelib'))")"
 

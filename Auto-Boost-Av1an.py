@@ -194,6 +194,10 @@ parser.add_argument("--denoise-smdegrain", action="store_true", help="SMDegrain 
 parser.add_argument("--denoise-tr", type=int, default=4, help="SMDegrain temporal radius (--denoise-smdegrain) | Default: 4")
 parser.add_argument("--denoise-thsad", type=int, default=350, help="SMDegrain luma SAD threshold (--denoise-smdegrain) | Default: 350")
 parser.add_argument("--denoise-thsadc", type=int, default=450, help="SMDegrain chroma SAD threshold (--denoise-smdegrain) | Default: 450")
+parser.add_argument("--denoise-rvrt", action="store_true", help="RVRT temporal denoising (natively multi-frame; alternative to SCUNet+SMDegrain)")
+parser.add_argument("--denoise-rvrt-sigma", type=float, default=12.0, help="RVRT noise level (0-50, higher = stronger) | Default: 12.0")
+parser.add_argument("--denoise-stasunet", action="store_true", help="STA-SUNet spatial denoising via pre-built TensorRT engine (vs-mlrt vstrt plugin)")
+parser.add_argument("--denoise-stasunet-engine", default=None, help="Path to STA-SUNet .engine file | Default: <repo>/models/stasunet_custom.engine")
 parser.add_argument("--denoise-device", type=int, default=0, help="GPU device index for SCUnet | Default: 0")
 parser.add_argument("--denoise-knlm", action="store_true", help="Enable KNLMeansCL spatial+temporal denoising (OpenCL, all channels)")
 parser.add_argument("--denoise-tile", type=int, default=256, help="SCUnet tile size in pixels (256/512 recommended) | Default: 256")
@@ -552,6 +556,8 @@ def detect_crop_values(source_path: Path) -> tuple[int, int]:
 
 
 _denoise_model_dir = getattr(args, "denoise_model_dir", None) or ""
+_denoise_stasunet_engine = getattr(args, "denoise_stasunet_engine", None) or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "models", "stasunet_custom.engine")
 
 # Generate VPY file
 # Force regeneration if conversion flag differs from existing vpy
@@ -677,6 +683,21 @@ if {denoise_scunet} or {denoise_smdegrain}:
             _rgb = _SCUNet(_rgb, model=_model_enum, tilesize={denoise_tile}, overlap=8, backend=_backend)
             src = core.resize.Bicubic(_rgb, format=_src_fmt, matrix_s="709")
 
+# 3.5 DENOISE — RVRT (natively temporal, alternative to SCUNet+SMDegrain)
+if {denoise_rvrt}:
+    import vsrvrt as _vsrvrt
+    _src_fmt = src.format
+    _rgb = core.resize.Bicubic(src, format=vs.RGB24, matrix_in_s="709")
+    _rgb = _vsrvrt.Denoise(_rgb, sigma={denoise_rvrt_sigma}, tile_size=(16, {denoise_tile}, {denoise_tile}), tile_overlap=(2, 20, 20), use_fp16=True)
+    src = core.resize.Bicubic(_rgb, format=_src_fmt, matrix_s="709")
+
+# 3.6 DENOISE — STA-SUNet (custom pre-built TensorRT engine via vs-mlrt vstrt plugin)
+if {denoise_stasunet}:
+    _src_fmt = src.format
+    _rgb = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="709")
+    _rgb = core.trt.Model([_rgb], engine_path=r"{denoise_stasunet_engine}", overlap=[8, 8], tilesize=[{denoise_tile}, {denoise_tile}], num_streams={denoise_streams}, use_cuda_graph=True, device_id={denoise_device})
+    src = core.resize.Bicubic(_rgb, format=_src_fmt, matrix_s="709")
+
 # 4. DENOISE — KNLMeansCL spatial+temporal (optional, independent of SCUnet)
 if {denoise_knlm}:
     src = core.knlm.KNLMeansCL(src, d=1, a=2, h=0.5, channels="YUV")
@@ -701,6 +722,10 @@ final.set_output(0)
                 denoise_scunet=str(args.denoise_scunet),
                 denoise_model=getattr(args, "denoise_model", "color_real_psnr"),
                 denoise_smdegrain=str(getattr(args, "denoise_smdegrain", False)),
+                denoise_rvrt=str(getattr(args, "denoise_rvrt", False)),
+                denoise_rvrt_sigma=getattr(args, "denoise_rvrt_sigma", 12.0),
+                denoise_stasunet=str(getattr(args, "denoise_stasunet", False)),
+                denoise_stasunet_engine=_denoise_stasunet_engine,
                 denoise_tr=getattr(args, "denoise_tr", 4),
                 denoise_thsad=getattr(args, "denoise_thsad", 350),
                 denoise_thsadc=getattr(args, "denoise_thsadc", 450),

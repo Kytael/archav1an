@@ -50,12 +50,61 @@ def _mlrt_backend_lines(streams):
     return f'_backend = _Backend.MIGX(device_id=0, fp16=True, exhaustive_tune=False, num_streams={streams}, custom_env={{"MIGRAPHX_GPU_COMPILE_PARALLEL": "8"}})'
 
 def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
-                      use_smdegrain=False, tr=3, thsad=350, thsadc=450):
+                      use_smdegrain=False, tr=3, thsad=350, thsadc=450,
+                      use_rvrt=False, rvrt_sigma=12.0,
+                      use_stasunet=False, stasunet_engine="", stasunet_pre_darken_ev=0.0):
     source = os.path.abspath(source)
     backend_lines = _mlrt_backend_lines(streams)
     model_line = f'_model_enum = _SCUNetModel["scunet_{model_name}"]'
 
-    if use_smdegrain:
+    if use_stasunet:
+        stasunet_engine = os.path.abspath(stasunet_engine)
+        # STA-SUNet training normalizes BOTH input and GT to [-1,1] via (x-0.5)/0.5
+        # (datasets/data_augment.py:49). This applies to custom and BVI-RLV engines alike.
+        _norm_in = '# STA-SUNet: normalize [0,1] -> [-1,1] to match training.\n_rgb = core.std.Expr(_rgb, "x 2 * 1 -")\n'
+        _norm_out = '# Denormalize [-1,1] -> [0,1] and clip.\n_den = core.std.Expr(_den, "x 1 + 2 / 0 max 1 min")\n'
+        # STA-SUNet: 5-frame temporal denoiser via vs-mlrt vstrt plugin.
+        # Engine expects rank-4 input [1, 15, 512, 512] (5 frames * 3 RGB chans, channel-concat).
+        # Build 5 clips offset by [-2,-1,0,+1,+2] with edge padding, pass as list to trt.Model.
+        # Requires initLibNvInferPlugins() for ModulatedDeformConv2d v2 plugin (not auto-loaded by vstrt).
+        denoise_lines = (
+            f'import ctypes as _ct\n'
+            f'_plug = _ct.CDLL("/usr/lib/libnvinfer_plugin.so.10", mode=_ct.RTLD_GLOBAL)\n'
+            f'_plug.initLibNvInferPlugins.argtypes = [_ct.c_void_p, _ct.c_char_p]\n'
+            f'_plug.initLibNvInferPlugins.restype = _ct.c_bool\n'
+            f'assert _plug.initLibNvInferPlugins(None, b""), "initLibNvInferPlugins failed"\n'
+            f'_src_fmt = src.format\n'
+            f'_rgb = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="709")\n'
+            f'# Pre-darken to match training distribution: sRGB→linear, scale by alpha (2^stops), linear→sRGB.\n'
+            f'# Mirrors prepare_dataset.py: alpha=0.10 (~-3.32 EV, _10 variant), alpha=0.05 (~-4.32 EV, _20).\n'
+            f'_alpha = {2.0 ** stasunet_pre_darken_ev}\n'
+            f'if _alpha != 1.0:\n'
+            f'    _rgb = core.std.Expr(_rgb, "x 12.92 / x 0.055 + 1.055 / 2.4 pow x 0.04045 <= ?")\n'
+            f'    _rgb = core.std.Expr(_rgb, f"x {{_alpha}} *")\n'
+            f'    _rgb = core.std.Expr(_rgb, "x 12.92 * 1.055 x 0.4166666667 pow * 0.055 - x 0.0031308 <= ?")\n'
+            f'{_norm_in}'
+            f'_nf = _rgb.num_frames\n'
+            f'_m2 = _rgb.std.DuplicateFrames([0, 0]).std.Trim(first=0, last=_nf - 1)\n'
+            f'_m1 = _rgb.std.DuplicateFrames([0]).std.Trim(first=0, last=_nf - 1)\n'
+            f'_p0 = _rgb\n'
+            f'_p1 = _rgb.std.Trim(first=1).std.DuplicateFrames([_nf - 2])\n'
+            f'_p2 = _rgb.std.Trim(first=2).std.DuplicateFrames([_nf - 3, _nf - 3])\n'
+            f'_den = core.trt.Model([_m2, _m1, _p0, _p1, _p2], engine_path=r{stasunet_engine!r}, '
+            f'overlap=[64, 64], tilesize=[{tile}, {tile}], '
+            f'num_streams={streams}, use_cuda_graph=True, device_id=0)\n'
+            f'{_norm_out}'
+            f'src = core.resize.Bicubic(_den, format=_src_fmt, matrix_s="709")'
+        )
+    elif use_rvrt:
+        denoise_lines = (
+            f'import vsrvrt as _vsrvrt\n'
+            f'_src_fmt = src.format\n'
+            f'_rgb = core.resize.Bicubic(src, format=vs.RGB24, matrix_in_s="709")\n'
+            f'_rgb = _vsrvrt.Denoise(_rgb, sigma={rvrt_sigma}, tile_size=(16, {tile}, {tile}), '
+            f'tile_overlap=(2, 20, 20), use_fp16=True)\n'
+            f'src = core.resize.Bicubic(_rgb, format=_src_fmt, matrix_s="709")'
+        )
+    elif use_smdegrain:
         denoise_lines = (
             f'{model_line}\n'
             f'{backend_lines}\n'
@@ -89,6 +138,7 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
             f'src = core.resize.Bicubic(_rgb, format=_src_fmt, matrix_s="709")'
         )
     venv_site_pkgs = sysconfig.get_path('purelib')
+    vsmlrt_import = '' if (use_rvrt or use_stasunet) else 'from vsmlrt import SCUNet as _SCUNet, SCUNetModel as _SCUNetModel, Backend as _Backend\n'
     vpy = (
         f'import sys as _sys; _sys.path.insert(0, {venv_site_pkgs!r})\n'
         f'from vstools import vs, core, initialize_clip, finalize_clip\n'
@@ -97,7 +147,7 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
         f'src = core.ffms2.Source(source=r{source!r}, cachefile=r{cachefile!r})\n'
         f'src = initialize_clip(src)\n'
         f'\n'
-        f'from vsmlrt import SCUNet as _SCUNet, SCUNetModel as _SCUNetModel, Backend as _Backend\n'
+        f'{vsmlrt_import}'
         f'{denoise_lines}\n'
         f'\n'
         f'final = finalize_clip(src)\n'
@@ -338,6 +388,14 @@ def main():
     denoise_tile = 256
     denoise_streams = 2
     denoise_smdegrain = False
+    denoise_rvrt = False
+    denoise_rvrt_sigma = 12.0
+    denoise_stasunet = False
+    _default_stasunet_engine = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "models", "stasunet_denoise_ep16_512_r4_fp16.engine")
+    denoise_stasunet_engine = _default_stasunet_engine
+    denoise_stasunet_pre_darken_ev = 0.0
     denoise_tr = 4
     denoise_thsad = 350
     denoise_thsadc = 450
@@ -376,6 +434,16 @@ def main():
             denoise_streams = int(nextval() or 2); i += 2
         elif arg == "--denoise-smdegrain":
             denoise_smdegrain = True; i += 1
+        elif arg == "--denoise-rvrt":
+            denoise_rvrt = True; i += 1
+        elif arg == "--denoise-rvrt-sigma":
+            denoise_rvrt_sigma = float(nextval() or 12.0); i += 2
+        elif arg == "--denoise-stasunet":
+            denoise_stasunet = True; i += 1
+        elif arg == "--denoise-stasunet-engine":
+            denoise_stasunet_engine = nextval() or _default_stasunet_engine; i += 2
+        elif arg == "--denoise-stasunet-pre-darken-ev":
+            denoise_stasunet_pre_darken_ev = float(nextval() or 0.0); i += 2
         elif arg == "--denoise-tr":
             denoise_tr = int(nextval() or 4); i += 2
         elif arg == "--denoise-thsad":
@@ -444,20 +512,40 @@ def main():
     src_stat = os.stat(input_file) if os.path.exists(input_file) else None
 
     # --- Encode ---
-    if denoise_scunet or denoise_smdegrain:
-        mlrt_plugin = find_mlrt_plugin()
-        if not mlrt_plugin:
-            print("[svtav1-dispatch] Error: no vs-mlrt plugin found (libvstrt.so or libvsmigx.so). Run setup.sh --install denoiser.")
-            sys.exit(1)
-        _backend_name = "TRT" if "vstrt" in mlrt_plugin else "MIGraphX"
+    if denoise_scunet or denoise_smdegrain or denoise_rvrt or denoise_stasunet:
+        if denoise_rvrt:
+            _backend_name = "RVRT"
+        elif denoise_stasunet:
+            if not os.path.exists(denoise_stasunet_engine):
+                print(f"[svtav1-dispatch] Error: STA-SUNet engine not found at {denoise_stasunet_engine}")
+                sys.exit(1)
+            _engine_base = os.path.basename(denoise_stasunet_engine)
+            _engine_tile = 768 if "_768" in _engine_base else 512
+            if denoise_tile != _engine_tile:
+                print(f"[svtav1-dispatch] STA-SUNet engine {_engine_base} is fixed-shape {_engine_tile}x{_engine_tile}; forcing --denoise-tile {_engine_tile} (was {denoise_tile}).")
+                denoise_tile = _engine_tile
+            _backend_name = "STA-SUNet-TRT"
+        else:
+            mlrt_plugin = find_mlrt_plugin()
+            if not mlrt_plugin:
+                print("[svtav1-dispatch] Error: no vs-mlrt plugin found (libvstrt.so or libvsmigx.so). Run setup.sh --install denoiser.")
+                sys.exit(1)
+            _backend_name = "TRT" if "vstrt" in mlrt_plugin else "MIGraphX"
         vpy_path = os.path.join(temp_dir, f"{stem}_denoise.vpy")
         cachefile = os.path.join(temp_dir, f"{stem}.ffindex")
         write_denoise_vpy(vpy_path, input_file, cachefile,
                           denoise_model, denoise_tile, denoise_streams,
                           use_smdegrain=denoise_smdegrain,
-                          tr=denoise_tr, thsad=denoise_thsad, thsadc=denoise_thsadc)
-        if denoise_smdegrain:
-            print(f"[svtav1-dispatch] vspipe ({_backend_name} SCUNet+SMDegrain tr={denoise_tr} thSAD={denoise_thsad} thSADC={denoise_thsadc}, tile={denoise_tile}, streams={denoise_streams}) | SvtAv1EncApp{svt_params}")
+                          tr=denoise_tr, thsad=denoise_thsad, thsadc=denoise_thsadc,
+                          use_rvrt=denoise_rvrt, rvrt_sigma=denoise_rvrt_sigma,
+                          use_stasunet=denoise_stasunet, stasunet_engine=denoise_stasunet_engine,
+                          stasunet_pre_darken_ev=denoise_stasunet_pre_darken_ev)
+        if denoise_rvrt:
+            print(f"[svtav1-dispatch] vspipe (RVRT sigma={denoise_rvrt_sigma}, tile={denoise_tile}) | SvtAv1EncApp{svt_params}")
+        elif denoise_stasunet:
+            print(f"[svtav1-dispatch] vspipe (STA-SUNet engine={os.path.basename(denoise_stasunet_engine)}, tile={denoise_tile}, streams={denoise_streams}) | SvtAv1EncApp{svt_params}")
+        elif denoise_smdegrain:
+            print(f"[svtav1-dispatch] vspipe ({_backend_name} SCUNet+SMDegrain tr={denoise_tr} thSAD={denoise_thsad}, tile={denoise_tile}, streams={denoise_streams}) | SvtAv1EncApp{svt_params}")
         else:
             print(f"[svtav1-dispatch] vspipe ({_backend_name} SCUNet-{denoise_model}, tile={denoise_tile}, streams={denoise_streams}) | SvtAv1EncApp{svt_params}")
         print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
@@ -520,7 +608,11 @@ def main():
         if photon_noise and photon_noise != "0":
             general_flags.append(f"--photon-noise {photon_noise}")
         general_flags.append(f"--speed {speed}")
-        if denoise_scunet:
+        if denoise_rvrt:
+            general_flags.append(f"--denoise-rvrt --denoise-rvrt-sigma {denoise_rvrt_sigma}")
+        elif denoise_stasunet:
+            general_flags.append(f"--denoise-stasunet --denoise-tile {denoise_tile}")
+        elif denoise_scunet:
             general_flags.append(f"--denoise-scunet --denoise-model {denoise_model} --denoise-tile {denoise_tile}")
         encoding_settings, encoder_name = _tag.build_tag_strings(
             general_flags, encoder_params, quality, speed, fish_version
