@@ -173,19 +173,19 @@ install_ffmpeg() {
 
 uninstall_ffmpeg() {
     log_info "Uninstalling source-built FFmpeg and dav1d..."
-    rm -vf "$VS_PREFIX"/bin/ff{mpeg,probe,play}
-    rm -vf "$VS_PREFIX"/lib/libav{codec,format,util,device,filter}*
-    rm -vf "$VS_PREFIX"/lib/libsw{scale,resample}*
-    rm -vf "$VS_PREFIX"/lib/libpostproc*
-    rm -vf "$VS_PREFIX"/lib/libdav1d*
-    rm -rf "$VS_PREFIX"/include/libav{codec,format,util,device,filter}
-    rm -rf "$VS_PREFIX"/include/libsw{scale,resample}
-    rm -rf "$VS_PREFIX"/include/libpostproc
-    rm -rf "$VS_PREFIX"/include/dav1d
-    rm -vf "$VS_PREFIX"/lib/pkgconfig/libav*.pc
-    rm -vf "$VS_PREFIX"/lib/pkgconfig/libsw*.pc
-    rm -vf "$VS_PREFIX"/lib/pkgconfig/libpostproc.pc
-    rm -vf "$VS_PREFIX"/lib/pkgconfig/dav1d.pc
+    rm -vf "${VS_PREFIX}/bin/ff"{mpeg,probe,play}
+    rm -vf "${VS_PREFIX}/lib/libav"{codec,format,util,device,filter}*
+    rm -vf "${VS_PREFIX}/lib/libsw"{scale,resample}*
+    rm -vf "${VS_PREFIX}/lib/libpostproc"*
+    rm -vf "${VS_PREFIX}/lib/libdav1d"*
+    rm -rf "${VS_PREFIX}/include/libav"{codec,format,util,device,filter}
+    rm -rf "${VS_PREFIX}/include/libsw"{scale,resample}
+    rm -rf "${VS_PREFIX}/include/libpostproc"
+    rm -rf "${VS_PREFIX}/include/dav1d"
+    rm -vf "${VS_PREFIX}/lib/pkgconfig/libav"*.pc
+    rm -vf "${VS_PREFIX}/lib/pkgconfig/libsw"*.pc
+    rm -vf "${VS_PREFIX}/lib/pkgconfig/libpostproc.pc"
+    rm -vf "${VS_PREFIX}/lib/pkgconfig/dav1d.pc"
     ldconfig
     log_success "FFmpeg and dav1d uninstalled."
 }
