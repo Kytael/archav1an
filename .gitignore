@@ -39,6 +39,10 @@ nominations_preview/
 # Implementation plans — local scratchpad, not versioned
 plans/
 
+# Per-host design docs that turned out to be moot (e.g. R76 superseded the
+# vapoursynth-isolation design that was the original target of the plan).
+docs/vapoursynth-isolation.md
+
 # Test/probe source media (large videos + host-specific dumps)
 prefilter/*.MOV
 prefilter/*.mov

@@ -151,16 +151,26 @@ install_tool() {
     log_info "Target: $target_tool"
     echo "Dependency Tree Calculation:"
     local install_queue=()
-    
+
+    # FORCE_REINSTALL=1 in the environment overrides the is_installed
+    # short-circuit so every node in the resolved plan rebuilds without
+    # the interactive Y/n prompt. Inside install_tool we re-export it
+    # so the called installer functions (which honor it independently
+    # to clear caches, re-clone, etc.) see the same value.
+    local _env_force="${FORCE_REINSTALL:-0}"
+
     for item in "${RESOLVE_PLAN[@]}"; do
-        if is_installed "$item"; then
+        if [ "$_env_force" = "1" ]; then
+            echo -e "  - $item: ${RED}To be reinstalled (FORCE_REINSTALL=1)${NC}"
+            install_queue+=("$item")
+        elif is_installed "$item"; then
             echo -e "  - $item: ${GREEN}Already Installed${NC}"
         else
             echo -e "  - $item: ${RED}To be installed${NC}"
             install_queue+=("$item")
         fi
     done
-    
+
     if [ ${#install_queue[@]} -eq 0 ]; then
         log_success "All dependencies for $target_tool are already installed."
         if ! ask_yes_no "Re-install/Update $target_tool anyway?" "N"; then
@@ -172,7 +182,7 @@ install_tool() {
 
     echo ""
     log_info "The following will be installed: ${install_queue[*]}"
-    if ! ask_yes_no "Proceed?" "Y"; then
+    if [ "$_env_force" != "1" ] && ! ask_yes_no "Proceed?" "Y"; then
         log_warn "Installation cancelled."
         return 0
     fi

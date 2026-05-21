@@ -47,7 +47,23 @@ install_system_deps_arch() {
         fi
     fi
 
-    pacman -S --needed --noconfirm "${DEPS[@]}" || { log_error "Failed to install system dependencies via pacman"; return 1; }
+    # Precheck which DEPS are missing so non-root invocations don't
+    # uselessly hit pacman -S (which requires sudo) when everything is
+    # already installed — the common case under FORCE_REINSTALL=1.
+    local _missing=()
+    for _dep in "${DEPS[@]}"; do
+        pacman -Qi "$_dep" &>/dev/null || _missing+=("$_dep")
+    done
+    if [ "${#_missing[@]}" -eq 0 ]; then
+        log_info "All ${#DEPS[@]} system packages already installed; skipping pacman -S."
+    else
+        log_info "Installing ${#_missing[@]} missing system packages via pacman -S: ${_missing[*]}"
+        if [ "$EUID" -ne 0 ]; then
+            log_error "Need root for pacman -S. Run: sudo pacman -S --needed --noconfirm ${_missing[*]}"
+            return 1
+        fi
+        pacman -S --needed --noconfirm "${_missing[@]}" || { log_error "Failed to install system dependencies via pacman"; return 1; }
+    fi
 
     log_success "Build tools and system libraries installed."
 }
