@@ -23,7 +23,18 @@ install_denoiser() {
     local VS_INCLUDE_DIR
     VS_INCLUDE_DIR="$(pkg-config --variable=includedir vapoursynth 2>/dev/null || echo "$VS_PREFIX/include/vapoursynth")"
     log_info "VS_INCLUDE_DIR resolved to $VS_INCLUDE_DIR"
-    local _aur_user="${SUDO_USER:-}"
+    # AUR builds (paru / makepkg) cannot run as root, so we need a non-root
+    # user to drop into when invoked via sudo. When the script is run by a
+    # regular user (the recommended path now), $USER is already that user
+    # and `sudo -u $USER paru ...` is a no-op-equivalent — paru just runs
+    # in the same uid, prompting for the targeted user's sudo password
+    # only when it needs to escalate for the system-install phase.
+    local _aur_user
+    if [ "$EUID" -eq 0 ]; then
+        _aur_user="${SUDO_USER:-}"
+    else
+        _aur_user="$USER"
+    fi
 
     # =========================================================================
     # 1. OpenCL runtime (required by KNLMeansCL)
@@ -262,14 +273,23 @@ install_denoiser() {
             log_info "Symlinked $_rg_src to $VS_PLUGIN_PATH/libremovegrain.so"
         fi
 
-        # CTMF — median filter needed by ContraSharpening in havsfunc
+        # CTMF — median filter needed by ContraSharpening in havsfunc.
+        # The AUR PKGBUILD still uses the V3 API (#include <VapourSynth.h>),
+        # which neither R76 (our source build) nor pacman v75 ships in their
+        # installed headers — both apply meson.build's `exclude_files` rule.
+        # We backfill the V3 headers into $VS_PREFIX/include/vapoursynth/
+        # during install_vapoursynth, so pass them through to paru's build
+        # env via CPPFLAGS. Once the AUR package is updated for V4 API this
+        # can be dropped.
         if ! pacman -Qi vapoursynth-plugin-ctmf-git &>/dev/null; then
             if [ -z "$_aur_user" ] || [ "$_aur_user" = "root" ]; then
                 log_warn "Cannot install vapoursynth-plugin-ctmf-git as root. Run manually: sudo -u <user> paru -S vapoursynth-plugin-ctmf-git"
             else
-                log_info "Installing vapoursynth-plugin-ctmf-git from AUR as $_aur_user..."
-                sudo -u "$_aur_user" paru -S --needed --noconfirm vapoursynth-plugin-ctmf-git || \
-                    log_warn "Failed to install vapoursynth-plugin-ctmf-git (SMDegrain ContraSharpening may not work)"
+                log_info "Installing vapoursynth-plugin-ctmf-git from AUR as $_aur_user (with V3-header CPPFLAGS bridge)..."
+                sudo -u "$_aur_user" \
+                    CPPFLAGS="-I$VS_PREFIX/include/vapoursynth ${CPPFLAGS:-}" \
+                    paru -S --needed --noconfirm vapoursynth-plugin-ctmf-git || \
+                        log_warn "Failed to install vapoursynth-plugin-ctmf-git (SMDegrain ContraSharpening may not work)"
             fi
         else
             log_info "vapoursynth-plugin-ctmf already installed."

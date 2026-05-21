@@ -131,30 +131,28 @@ nvcc_pick_ccbin() {
 }
 
 # Locate a pacman-installed VapourSynth plugin .so. The layout moved
-# between v74 and v75+/R76: v74 shipped `/usr/lib/vapoursynth/libmvtools.so`,
-# v75+/R76 ships `/usr/lib/python3.X/site-packages/vapoursynth/plugins/mvtools.so`
-# (no `lib` prefix). Probe both and echo the first hit.
+# between v74 and v75+/R76: v74 shipped /usr/lib/vapoursynth/lib*.so,
+# v75+ ships /usr/lib/python3.X/site-packages/vapoursynth/plugins/*.so
+# (no `lib` prefix). Some AUR packages also install to /usr/vapoursynth
+# (e.g. vapoursynth-plugin-ctmf-git, a PKGBUILD quirk).
 #
 # Usage: find_pacman_vs_plugin mvtools  ->  prints the path on stdout
 find_pacman_vs_plugin() {
     local name="$1"
     local _candidate
-    # New site-packages layout (v75+ / R76)
-    for _candidate in /usr/lib/python3.*/site-packages/vapoursynth/plugins/"$name".so; do
+    # Use compgen to dodge zsh's "no matches found" failure on unmatched
+    # globs and bash's literal-string behavior on the same.
+    for _candidate in \
+        $(compgen -G "/usr/lib/python3.*/site-packages/vapoursynth/plugins/${name}.so" 2>/dev/null) \
+        "/usr/lib/vapoursynth/lib${name}.so" \
+        "/usr/lib/vapoursynth/${name}.so" \
+        "/usr/vapoursynth/lib${name}.so" \
+        "/usr/vapoursynth/${name}.so"; do
         if [ -f "$_candidate" ]; then
             echo "$_candidate"
             return 0
         fi
     done
-    # Old /usr/lib/vapoursynth layout (v74 and earlier)
-    if [ -f "/usr/lib/vapoursynth/lib$name.so" ]; then
-        echo "/usr/lib/vapoursynth/lib$name.so"
-        return 0
-    fi
-    if [ -f "/usr/lib/vapoursynth/$name.so" ]; then
-        echo "/usr/lib/vapoursynth/$name.so"
-        return 0
-    fi
     return 1
 }
 
