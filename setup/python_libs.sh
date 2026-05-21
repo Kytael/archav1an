@@ -10,24 +10,37 @@ install_python_libs() {
 
     ensure_uv || return 1
 
-    # Target Python version:
-    #   - default: whatever `python3` resolves to on PATH (latest pacman).
+    # Target Python interpreter:
+    #   - default: the system `python3` (absolute path, not the bare name —
+    #     uv interprets a bare "python3" as "any python3" and would happily
+    #     reuse a previously-cached uv-managed interpreter at an older
+    #     minor, which is not what the user expects when they don't pin).
     #   - override: PYTHON_VERSION=<x.y> (e.g. 3.13) — uv downloads if missing.
-    local TARGET_PY="${PYTHON_VERSION:-python3}"
+    local TARGET_PY="${PYTHON_VERSION:-}"
+    if [ -z "$TARGET_PY" ]; then
+        TARGET_PY="$(command -v python3 2>/dev/null || true)"
+        if [ -z "$TARGET_PY" ]; then
+            log_error "No python3 found on PATH and PYTHON_VERSION is unset. Install python3 or set PYTHON_VERSION=<x.y>."
+            return 1
+        fi
+    fi
 
-    # Detect current venv's Python version (if venv exists). We rebuild only
-    # when the user EXPLICITLY pinned PYTHON_VERSION to a version that
-    # doesn't match what's already in the venv — otherwise leave the venv
-    # alone (uv may have picked a different minor than the system python3
-    # due to wheel availability, and we don't want to churn the venv on
-    # every re-run).
+    # Compute the target's major.minor for upgrade detection. PYTHON_VERSION
+    # is already "x.y"; for a path, ask the interpreter itself.
+    local TARGET_PY_MM
+    if [[ "$TARGET_PY" == /* ]]; then
+        TARGET_PY_MM="$("$TARGET_PY" -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "")"
+    else
+        TARGET_PY_MM="$TARGET_PY"
+    fi
+
     local CURRENT_PY=""
     if [ -x "$VENV_DIR/bin/python" ]; then
         CURRENT_PY="$("$VENV_DIR/bin/python" -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "")"
     fi
 
-    if [ -n "$PYTHON_VERSION" ] && [ -n "$CURRENT_PY" ] && [ "$CURRENT_PY" != "$PYTHON_VERSION" ]; then
-        log_warn "Python version change requested: venv has $CURRENT_PY, PYTHON_VERSION=$PYTHON_VERSION. Rebuilding venv at $VENV_DIR."
+    if [ -n "$CURRENT_PY" ] && [ -n "$TARGET_PY_MM" ] && [ "$CURRENT_PY" != "$TARGET_PY_MM" ]; then
+        log_warn "Python version mismatch: venv has $CURRENT_PY, target is $TARGET_PY_MM. Rebuilding venv at $VENV_DIR."
         log_warn "VapourSynth source-build is binary-linked to the venv's Python; rerun '--install vapoursynth' after this completes."
         rm -rf "$VENV_DIR"
     fi

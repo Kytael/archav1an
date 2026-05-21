@@ -26,15 +26,29 @@ export VAPOURSYNTH_PLUGIN_PATH="$VS_PREFIX/lib/vapoursynth"
 export VAPOURSYNTH_EXTRA_PLUGIN_PATH="$VS_PREFIX/lib/vapoursynth"
 export PATH="$VS_PREFIX/bin:$PATH"
 
-# vspipe links against libpython3.X.so.1.0 in uv's managed Python store
-# (outside $VS_PREFIX). The build-time rpath should handle this, but
-# extending LD_LIBRARY_PATH here is a safety net for other Python-embedding
-# tools that don't get the same rpath treatment.
+# Cover Python embedders (vspipe and friends) that need libpython3.X.so.1.0
+# when the venv interpreter lives outside $VS_PREFIX (typical for uv-managed
+# Pythons under ~/.local/share/uv/python/...). The build-time rpath should
+# handle this for our own binaries, but other tools that load libvsscript
+# don't always get the rpath treatment.
+#
+# Skip when the venv's libpython lives in a global libdir like /usr/lib —
+# prepending those would put pacman's libvapoursynth.so.4 (v75) ahead of
+# our R76 build (which is symlinked in via $VS_PREFIX/lib) and break the
+# isolation. The system loader will find /usr/lib via its default search
+# regardless, so adding it to LD_LIBRARY_PATH only loses us, never helps.
 if [ -x "$VENV_DIR/bin/python" ]; then
     _uv_py_libdir="$("$VENV_DIR/bin/python" -c 'import sysconfig;print(sysconfig.get_config_var("LIBDIR"))' 2>/dev/null)"
-    if [ -n "$_uv_py_libdir" ] && [ -d "$_uv_py_libdir" ]; then
-        export LD_LIBRARY_PATH="$_uv_py_libdir:$LD_LIBRARY_PATH"
-    fi
+    case "$_uv_py_libdir" in
+        /usr/lib|/usr/lib64|/lib|/lib64|/usr/local/lib|/usr/local/lib64)
+            # System libdir; loader already searches it. Do nothing.
+            ;;
+        *)
+            if [ -n "$_uv_py_libdir" ] && [ -d "$_uv_py_libdir" ]; then
+                export LD_LIBRARY_PATH="$_uv_py_libdir:$LD_LIBRARY_PATH"
+            fi
+            ;;
+    esac
     unset _uv_py_libdir
 fi
 

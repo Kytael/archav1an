@@ -67,10 +67,24 @@ install_vapoursynth() {
     # to the traditional bin/lib/include layout via symlinks so plugin
     # builds (wwxd, vszip, subtext, denoiser) and consumers (activate-venv.sh,
     # ffmpeg detection) keep finding things where they expect.
-    local VS_PKG_DIR
-    VS_PKG_DIR="$(find "$VS_PREFIX/lib" -name 'vapoursynth.abi*.so' -path '*site-packages*' 2>/dev/null | head -1)"
-    if [ -n "$VS_PKG_DIR" ]; then
-        VS_PKG_DIR="$(dirname "$VS_PKG_DIR")"
+    #
+    # Anchor the bridge on the venv's actual Python major.minor (not just
+    # the first `vapoursynth.abi*.so` we trip over) — when the venv is
+    # rebuilt at a new Python version, the prior install_dir lingers under
+    # the old python3.X/ tree until manually cleaned, and grabbing the
+    # stale one would wire the bridge to the wrong build.
+    local VS_PKG_DIR="$VS_PREFIX/lib/python${_vs_py_ver}/site-packages/vapoursynth"
+    if [ -d "$VS_PKG_DIR" ] && [ -f "$VS_PKG_DIR"/vapoursynth.abi*.so ]; then
+        # Sweep older python3.X/ install_dirs from prior venvs to avoid
+        # ambiguity for anything that does `find ... -name vapoursynth.abi*.so`
+        # (e.g. our own pre-bridge code in older revisions of this script).
+        local _old
+        for _old in "$VS_PREFIX"/lib/python3.*/site-packages/vapoursynth; do
+            [ "$_old" = "$VS_PKG_DIR" ] && continue
+            [ -d "$_old" ] || continue
+            log_info "Removing stale vapoursynth install dir from a prior venv: $_old"
+            rm -rf "$_old"
+        done
         log_info "Bridging R76 package layout to traditional prefix from $VS_PKG_DIR..."
         mkdir -p "$VS_PREFIX/bin" "$VS_PREFIX/lib" "$VS_PREFIX/include" "$VS_PREFIX/lib/pkgconfig"
 
@@ -90,9 +104,24 @@ install_vapoursynth() {
         ln -sf "libvapoursynth.so.4"             "$VS_PREFIX/lib/libvapoursynth.so"
         rm -f "$VS_PREFIX/lib/libvsscript.so"
 
-        # headers — point a directory symlink at the package's include/ subtree
+        # Headers — point a directory symlink at the package's include/ subtree.
+        # R76 only installs the V4 headers (VapourSynth4.h, VSHelper4.h,
+        # VSScript4.h, VSConstants4.h); the V3 compat headers (VapourSynth.h,
+        # VSHelper.h) are exclude_files in meson.build:301. vs-mlrt master and
+        # some other consumers still `#include <VapourSynth.h>`, so we also
+        # copy the V3 headers from the build tree into the same include/.
         rm -rf "$VS_PREFIX/include/vapoursynth"
         ln -sfn "$VS_PKG_DIR/include"            "$VS_PREFIX/include/vapoursynth"
+        local _vs_src_inc="$PWD/vapoursynth/include"
+        [ -d "$_vs_src_inc" ] || _vs_src_inc="$BUILD_DIR/vapoursynth/include"
+        if [ -d "$_vs_src_inc" ]; then
+            for _v3_hdr in VapourSynth.h VSHelper.h; do
+                if [ -f "$_vs_src_inc/$_v3_hdr" ] && [ ! -e "$VS_PKG_DIR/include/$_v3_hdr" ]; then
+                    cp "$_vs_src_inc/$_v3_hdr" "$VS_PKG_DIR/include/$_v3_hdr"
+                    log_info "Copied V3 compat header $_v3_hdr (vs-mlrt and other consumers still include it)."
+                fi
+            done
+        fi
 
         # pkg-config: the upstream .pc uses ${pcfiledir}/.. so we can't symlink
         # it (the relative path would resolve to $VS_PREFIX/lib instead of the
@@ -119,6 +148,18 @@ EOF
         VENV_SP="$("$VENV_DIR/bin/python" -c 'import sysconfig;print(sysconfig.get_path("purelib"))')"
         dirname "$VS_PKG_DIR" > "$VENV_SP/_vapoursynth_native.pth"
         log_info "Wrote $VENV_SP/_vapoursynth_native.pth pointing at $(dirname "$VS_PKG_DIR")"
+
+        # R76 added a runtime config file (~/.config/vapoursynth/vapoursynth.toml)
+        # that maps each libvsscript.so path to its embedded Python interpreter +
+        # libpython. Without this, vspipe fails to initialize VSScript on first
+        # use. libvsscript will auto-trigger `vapoursynth config` on first import,
+        # but only if `vapoursynth` is on PATH — write the entry pre-emptively
+        # while we already know the venv interpreter.
+        if "$VENV_DIR/bin/python" -m vapoursynth config &>/dev/null; then
+            log_info "Wrote vapoursynth.toml entry for $VS_PKG_DIR/libvsscript.so."
+        else
+            log_warn "Could not pre-write vapoursynth.toml. First vspipe call may need 'python -m vapoursynth config' run manually."
+        fi
     fi
 
     # 2. FFMS2

@@ -407,7 +407,10 @@ for sigma in [15, 25, 50]:
     # =========================================================================
     log_info "Installing vsmlrt.py..."
     local VSMLRT_PY
-    VSMLRT_PY="$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || echo /usr/lib/python3/site-packages)/vsmlrt.py"
+    # Land vsmlrt.py inside the venv's site-packages, not the system one
+    # (system /usr/lib/python3.X/site-packages requires sudo and would
+    # pollute the pacman-owned tree).
+    VSMLRT_PY="$("$VENV_DIR/bin/python" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || echo "$VENV_DIR/lib/python3/site-packages")/vsmlrt.py"
     curl -fsSL "https://raw.githubusercontent.com/AmusementClub/vs-mlrt/master/scripts/vsmlrt.py" -o "$VSMLRT_PY" || { log_error "Failed to download vsmlrt.py"; return 1; }
     # Patch bug: alter_mxr_path cache check used wrong variable name
     sed -i 's/os.access(alter_mxr_path, mode=os.R_OK) and os.path.getsize(mxr_path)/os.access(alter_mxr_path, mode=os.R_OK) and os.path.getsize(alter_mxr_path)/' "$VSMLRT_PY"
@@ -471,7 +474,10 @@ uninstall_denoiser() {
     rm -f "$VS_PLUGIN_PATH/vsmlrt-cuda/trtexec" || true
     rm -f "$VS_PLUGIN_PATH/vsmlrt-hip/migraphx-driver" || true
     local VSMLRT_PY
-    VSMLRT_PY="$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || echo /usr/lib/python3/site-packages)/vsmlrt.py"
+    # Land vsmlrt.py inside the venv's site-packages, not the system one
+    # (system /usr/lib/python3.X/site-packages requires sudo and would
+    # pollute the pacman-owned tree).
+    VSMLRT_PY="$("$VENV_DIR/bin/python" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || echo "$VENV_DIR/lib/python3/site-packages")/vsmlrt.py"
     rm -f "$VSMLRT_PY" || true
 
     log_info "Removing SCUNet ONNX models..."

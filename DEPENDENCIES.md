@@ -19,7 +19,7 @@ The `setup.sh` script builds and installs everything into a single isolated pref
 
 | Software | Version | Source |
 | :--- | :--- | :--- |
-| **VapourSynth** | **R73 (pinned, load-bearing)** | [vapoursynth/vapoursynth](https://github.com/vapoursynth/vapoursynth) — built with `--prefix=$VS_PREFIX PYTHON=$VENV_DIR/bin/python --disable-versioning` (no-SONAME isolation, see below) |
+| **VapourSynth** | **R76 (pinned)** | [vapoursynth/vapoursynth](https://github.com/vapoursynth/vapoursynth) — meson build, installed under `$VS_PREFIX/lib/python<X.Y>/site-packages/vapoursynth/` (R74+ ships everything as a Python package) and bridged into the traditional `bin/lib/include` layout via symlinks |
 | **FFMS2** | tag `5.0` | [FFMS/ffms2](https://github.com/FFMS/ffms2) |
 | **BestSource** | latest git (master) | [vapoursynth/bestsource](https://github.com/vapoursynth/bestsource) (meson+ninja, native opts) |
 | **FFmpeg** | latest git (master) | [FFmpeg/FFmpeg](https://github.com/FFmpeg/FFmpeg) — Clang + PGO + LTO + NVENC/NVDEC/CUDA (auto-detected) |
@@ -82,7 +82,7 @@ These are installed via the host package manager. `setup.sh` runs `pacman -Q <pk
 | **removegrain** (symlink) | pacman/AUR | Symlinked from `/usr/lib/vapoursynth/libremovegrain.so` |
 | **ctmf** (symlink) | AUR | Optional, for SMDegrain ContraSharpening |
 
-The pacman v75 vapoursynth library coexists with our R73 build by design — the R73 `.so` has no SONAME, so ldconfig doesn't see it. R73 vs v75 selection happens via `LD_LIBRARY_PATH=$VS_PREFIX/lib` set by `activate-venv.sh`.
+The pacman v75 vapoursynth library coexists with our R76 build by both having SONAME `libvapoursynth.so.4` (the v74+ ABI). `activate-venv.sh` sets `LD_LIBRARY_PATH=$VS_PREFIX/lib`, which the dynamic linker searches *before* the ldconfig cache — so inside the activated env you get R76, outside the env you get pacman's v75. The bridge deliberately skips creating `$VS_PREFIX/lib/libvsscript.so`: `libvsscript` uses `dladdr()` to find itself and looks the result up in `~/.config/vapoursynth/vapoursynth.toml`; a symlink would be loaded via `LD_LIBRARY_PATH` first, `dladdr` would return the symlink path, and the toml lookup (keyed by the real path) would miss.
 
 ## Python <a id="python"></a>
 
