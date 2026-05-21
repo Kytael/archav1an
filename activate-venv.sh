@@ -14,10 +14,16 @@ else
     echo "       Falling back to system python3."
 fi
 
-# Resolve the R73 .so by directory (it has no SONAME) so it overrides the
-# pacman v75 library only inside this activated environment.
+# libvapoursynth.so.4 is symlinked into $VS_PREFIX/lib from the package dir.
+# LD_LIBRARY_PATH=$VS_PREFIX/lib puts our R76 build ahead of pacman's system
+# v75 (which is cached by ldconfig under the same SONAME) only inside this
+# activated env; outside the env, the system v75 stays the default.
 export LD_LIBRARY_PATH="$VS_PREFIX/lib:${LD_LIBRARY_PATH:-}"
+# R76 renamed VAPOURSYNTH_PLUGIN_PATH -> VAPOURSYNTH_EXTRA_PLUGIN_PATH and
+# also auto-loads plugins from <libvapoursynth-dir>/plugins/. Set both so
+# scripts written against the R73 env var keep working.
 export VAPOURSYNTH_PLUGIN_PATH="$VS_PREFIX/lib/vapoursynth"
+export VAPOURSYNTH_EXTRA_PLUGIN_PATH="$VS_PREFIX/lib/vapoursynth"
 export PATH="$VS_PREFIX/bin:$PATH"
 
 # vspipe links against libpython3.X.so.1.0 in uv's managed Python store

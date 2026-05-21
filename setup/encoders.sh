@@ -54,6 +54,7 @@ install_encoders() {
         cd Vship
         
         if command -v nvcc &> /dev/null; then
+            nvcc_pick_ccbin
             make buildcuda
         elif command -v hipcc &> /dev/null; then
             make build

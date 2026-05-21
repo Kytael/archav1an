@@ -52,6 +52,7 @@ install_ffvship() {
     # e.g.: GPU_BACKEND=vulkan FORCE_REINSTALL=1 sudo ./setup.sh --install ffvship
     if [ "${GPU_BACKEND,,}" = "cuda" ]; then
         log_info "Building FFVship with CUDA (forced via GPU_BACKEND)..."
+        nvcc_pick_ccbin
         make buildcuda || { cd "$ORIG_DIR"; log_error "FFVship buildcuda failed"; return 1; }
     elif [ "${GPU_BACKEND,,}" = "hip" ]; then
         log_info "Building FFVship with HIP (forced via GPU_BACKEND)..."
@@ -61,6 +62,7 @@ install_ffvship() {
         make buildVulkan || { cd "$ORIG_DIR"; log_error "FFVship Vulkan build failed"; return 1; }
     elif command -v nvcc &> /dev/null; then
         log_info "Building FFVship with CUDA (NVIDIA)..."
+        nvcc_pick_ccbin
         make buildcuda || { cd "$ORIG_DIR"; log_error "FFVship buildcuda failed"; return 1; }
     elif command -v hipcc &> /dev/null; then
         log_info "Building FFVship with HIP (AMD)..."

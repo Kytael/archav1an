@@ -25,61 +25,100 @@ install_vapoursynth() {
     mkdir -p "$BUILD_DIR"
     cd "$BUILD_DIR" || exit 1
 
-    # 1. VapourSynth (R73, built against the uv-managed Python in $VENV_DIR)
+    # 1. VapourSynth R76 (meson build, against the uv-managed Python in $VENV_DIR).
+    # R74 migrated the build system from autotools to meson; libvapoursynth.so
+    # now has a SONAME (libvapoursynth.so.4 from soversion derived from
+    # VAPOURSYNTH_API_MAJOR). Isolation continues to work because activate-venv.sh
+    # puts $VS_PREFIX/lib on LD_LIBRARY_PATH, and ld.so checks LD_LIBRARY_PATH
+    # before the ldconfig cache. Outside the activated env, the system v75
+    # remains the default.
     if [ -d "vapoursynth" ]; then rm -rf vapoursynth; fi
-    git clone --branch R73 --depth 1 https://github.com/vapoursynth/vapoursynth.git \
+    git clone --branch R76 --depth 1 https://github.com/vapoursynth/vapoursynth.git \
         || { cd "$ORIG_DIR"; log_error "Failed to clone VapourSynth"; return 1; }
     cd vapoursynth || { cd "$ORIG_DIR"; log_error "Failed to cd into vapoursynth"; return 1; }
-    ./autogen.sh || { cd "$ORIG_DIR"; log_error "VapourSynth autogen failed"; return 1; }
-    # VS R73's configure.ac uses PKG_CHECK_MODULES([PYTHON], [python-3.13]),
-    # which fails when only uv-managed Python is present (uv doesn't ship
-    # python-3.13.pc). Derive CFLAGS/LIBS from the venv's Python sysconfig
-    # and pass them as env vars — PKG_CHECK_MODULES skips pkg-config when
-    # the *_CFLAGS/*_LIBS vars are already set.
-    local _vs_py_inc _vs_py_libdir _vs_py_ldlib _vs_py_ver
-    _vs_py_inc="$("$VENV_DIR/bin/python" -c 'import sysconfig;print(sysconfig.get_config_var("INCLUDEPY"))')"
-    _vs_py_libdir="$("$VENV_DIR/bin/python" -c 'import sysconfig;print(sysconfig.get_config_var("LIBDIR"))')"
-    _vs_py_ldlib="$("$VENV_DIR/bin/python" -c 'import sysconfig;print(sysconfig.get_config_var("LDLIBRARY"))')"
-    _vs_py_ver="$("$VENV_DIR/bin/python" -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-    local _vs_py_lib_short
-    # Strip lib...so/.dylib to get the -l<name> form (e.g. libpython3.13.so -> python3.13)
-    _vs_py_lib_short="${_vs_py_ldlib#lib}"
-    _vs_py_lib_short="${_vs_py_lib_short%.so*}"
-    _vs_py_lib_short="${_vs_py_lib_short%.dylib*}"
-    log_info "VS configure: using Python $_vs_py_ver headers from $_vs_py_inc"
 
-    # Bake an rpath for the venv's Python lib dir into libtool-built binaries
-    # (vspipe links against libpython3.13.so.1.0 which lives outside $VS_PREFIX
-    # in uv's managed Python store). Without rpath, vspipe fails to start with
-    # "libpython3.13.so.1.0: cannot open shared object file".
-    PYTHON3_CFLAGS="-I$_vs_py_inc" \
-    PYTHON3_LIBS="-L$_vs_py_libdir -l$_vs_py_lib_short" \
-    LDFLAGS="-Wl,-rpath,$_vs_py_libdir ${LDFLAGS:-}" \
-    ./configure --prefix="$VS_PREFIX" PYTHON="$VENV_DIR/bin/python" \
-        || { cd "$ORIG_DIR"; log_error "VapourSynth configure failed"; return 1; }
-    make -j "$(nproc)" \
-        || { cd "$ORIG_DIR"; log_error "VapourSynth make failed"; return 1; }
-    # Pin pythondir/pyexecdir into the prefix so make install never writes into
-    # the pacman-owned /usr/lib/python3.14/site-packages/vapoursynth/ tree.
-    # Use the venv's actual major.minor (e.g. python3.13) — libtool refuses
-    # to install into an unversioned site-packages directory.
-    make install \
-        pythondir="$VS_PREFIX/lib/python${_vs_py_ver}/site-packages" \
-        pyexecdir="$VS_PREFIX/lib/python${_vs_py_ver}/site-packages" \
-        || { cd "$ORIG_DIR"; log_error "VapourSynth make install failed"; return 1; }
+    # Install meson + ninja INTO the venv so that meson runs on the
+    # venv's Python interpreter. meson.python.find_installation() returns
+    # the interpreter meson itself runs on (per meson docs), so using
+    # /usr/sbin/meson — which is shebanged to system /usr/bin/python (3.14
+    # on current Arch) — would build VS against the wrong Python.
+    VIRTUAL_ENV="$VENV_DIR" uv pip install --quiet meson ninja \
+        || { cd "$ORIG_DIR"; log_error "Failed to install meson/ninja into venv"; return 1; }
+
+    local _vs_py_ver
+    _vs_py_ver="$("$VENV_DIR/bin/python" -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+    log_info "VS R76 build: targeting Python $_vs_py_ver from $VENV_DIR (via $VENV_DIR/bin/meson)"
+
+    "$VENV_DIR/bin/meson" setup build \
+        --prefix="$VS_PREFIX" \
+        --buildtype=release \
+        -Dpython.platlibdir="lib/python${_vs_py_ver}/site-packages" \
+        -Dpython.purelibdir="lib/python${_vs_py_ver}/site-packages" \
+        || { cd "$ORIG_DIR"; log_error "VapourSynth meson setup failed"; return 1; }
+    "$VENV_DIR/bin/meson" compile -C build \
+        || { cd "$ORIG_DIR"; log_error "VapourSynth meson compile failed"; return 1; }
+    "$VENV_DIR/bin/meson" install -C build \
+        || { cd "$ORIG_DIR"; log_error "VapourSynth meson install failed"; return 1; }
     cd "$BUILD_DIR"
 
-    # Make the R73 Python module visible in the venv via .pth (NOT a symlink
-    # into system site-packages, which is what triggered the pacman conflict).
-    local VS_PY
-    VS_PY="$(find "$VS_PREFIX/lib" -name 'vapoursynth*.so' -path '*site-packages*' 2>/dev/null | head -1)"
-    if [ -n "$VS_PY" ]; then
+    # R76 installs everything (libvapoursynth.so.4, libvsscript.so, vspipe,
+    # headers, vapoursynth.pc) inside the Python package directory because
+    # upstream's install_dir = py.get_install_dir() / 'vapoursynth'. Bridge
+    # to the traditional bin/lib/include layout via symlinks so plugin
+    # builds (wwxd, vszip, subtext, denoiser) and consumers (activate-venv.sh,
+    # ffmpeg detection) keep finding things where they expect.
+    local VS_PKG_DIR
+    VS_PKG_DIR="$(find "$VS_PREFIX/lib" -name 'vapoursynth.abi*.so' -path '*site-packages*' 2>/dev/null | head -1)"
+    if [ -n "$VS_PKG_DIR" ]; then
+        VS_PKG_DIR="$(dirname "$VS_PKG_DIR")"
+        log_info "Bridging R76 package layout to traditional prefix from $VS_PKG_DIR..."
+        mkdir -p "$VS_PREFIX/bin" "$VS_PREFIX/lib" "$VS_PREFIX/include" "$VS_PREFIX/lib/pkgconfig"
+
+        # vspipe binary
+        ln -sf "$VS_PKG_DIR/vspipe" "$VS_PREFIX/bin/vspipe"
+
+        # core libraries — symlink the SONAME-versioned file + the unversioned alias.
+        # Do NOT symlink libvsscript.so: vsscript.cpp uses dladdr() to find itself
+        # and looks up that path in ~/.config/vapoursynth/vapoursynth.toml. With
+        # LD_LIBRARY_PATH=$VS_PREFIX/lib set by activate-venv.sh, a symlink at
+        # $VS_PREFIX/lib/libvsscript.so would be loaded first, dladdr would
+        # return the symlink path, and the toml lookup (keyed by the real path)
+        # would miss — vspipe then fails with "Python executable and library
+        # path couldn't be determined". vspipe finds libvsscript via its own
+        # $ORIGIN rpath, so the symlink wasn't pulling weight anyway.
+        ln -sf "$VS_PKG_DIR/libvapoursynth.so.4" "$VS_PREFIX/lib/libvapoursynth.so.4"
+        ln -sf "libvapoursynth.so.4"             "$VS_PREFIX/lib/libvapoursynth.so"
+        rm -f "$VS_PREFIX/lib/libvsscript.so"
+
+        # headers — point a directory symlink at the package's include/ subtree
+        rm -rf "$VS_PREFIX/include/vapoursynth"
+        ln -sfn "$VS_PKG_DIR/include"            "$VS_PREFIX/include/vapoursynth"
+
+        # pkg-config: the upstream .pc uses ${pcfiledir}/.. so we can't symlink
+        # it (the relative path would resolve to $VS_PREFIX/lib instead of the
+        # package dir). Generate an absolute-path .pc inside lib/pkgconfig.
+        cat > "$VS_PREFIX/lib/pkgconfig/vapoursynth.pc" <<EOF
+prefix=$VS_PKG_DIR
+includedir=\${prefix}/include
+libdir=\${prefix}
+
+Name: vapoursynth
+Description: A frameserver for the 21st century
+Version: 76
+Cflags: -I\${includedir}
+Libs: -L\${libdir} -lvapoursynth
+EOF
+        log_success "R76 layout bridged: bin/vspipe, lib/libvapoursynth.so.4, include/vapoursynth/, lib/pkgconfig/vapoursynth.pc all wired."
+    else
+        log_warn "Source-built vapoursynth abi*.so not found under $VS_PREFIX/lib — bridge symlinks NOT created."
+    fi
+
+    # Make the Python module visible in the venv via .pth.
+    if [ -n "$VS_PKG_DIR" ]; then
         local VENV_SP
         VENV_SP="$("$VENV_DIR/bin/python" -c 'import sysconfig;print(sysconfig.get_path("purelib"))')"
-        dirname "$VS_PY" > "$VENV_SP/_vapoursynth_native.pth"
-        log_info "Wrote $VENV_SP/_vapoursynth_native.pth pointing at $(dirname "$VS_PY")"
-    else
-        log_warn "Source-built vapoursynth Python module not found under $VS_PREFIX/lib — .pth not written."
+        dirname "$VS_PKG_DIR" > "$VENV_SP/_vapoursynth_native.pth"
+        log_info "Wrote $VENV_SP/_vapoursynth_native.pth pointing at $(dirname "$VS_PKG_DIR")"
     fi
 
     # 2. FFMS2

@@ -67,6 +67,97 @@ ensure_uv() {
     return 1
 }
 
+# Pick a host C++ compiler that the installed nvcc accepts.
+#
+# nvcc trails gcc by roughly 6-12 months on major releases. Distros ship
+# the latest gcc immediately (Arch had gcc 16 within weeks of release),
+# so the default g++ is often ahead of nvcc's supported range. Symptom is
+# usually a libstdc++ header pulling in a compiler builtin that nvcc
+# doesn't recognize (e.g. __builtin_is_virtual_base_of in libstdc++ 16).
+#
+# Strategy: probe the default g++ with a real nvcc compile of a header
+# that exercises libstdc++. If it works, use it (i.e. once nvcc catches
+# up to gcc 16, this function becomes a no-op). Otherwise enumerate all
+# side-installed g++-N on PATH, try them in descending order of N, and
+# pick the newest one that nvcc accepts.
+nvcc_pick_ccbin() {
+    if ! command -v nvcc &> /dev/null; then
+        return 0
+    fi
+
+    # The probe must include something that pulls in libstdc++. A bare
+    # `int main(){return 0;}` compiles even when nvcc + gcc 16 are
+    # mutually unhappy because nothing in it touches the offending
+    # libstdc++ headers. <memory> is small but exercises the new C++26
+    # builtins that gcc 16 uses internally.
+    local _probe='#include <memory>\nint main(){return 0;}'
+    local _probe_obj
+    _probe_obj="$(mktemp --suffix=.o)"
+
+    _nvcc_test() {
+        local _ccbin="$1"
+        local _flag=""
+        [ -n "$_ccbin" ] && _flag="-ccbin $_ccbin"
+        # shellcheck disable=SC2086
+        printf '%b' "$_probe" | nvcc $_flag -x cu -c -o "$_probe_obj" - &>/dev/null
+    }
+
+    if _nvcc_test ""; then
+        rm -f "$_probe_obj"
+        unset -f _nvcc_test
+        return 0
+    fi
+
+    # Enumerate g++-N on PATH and sort by N descending.
+    local _candidates _candidate
+    _candidates="$(compgen -c g++- 2>/dev/null \
+        | awk -F- '/^g\+\+-[0-9]+$/ {print $NF}' \
+        | sort -u -nr)"
+
+    for _candidate in $_candidates; do
+        if _nvcc_test "g++-$_candidate"; then
+            export NVCC_PREPEND_FLAGS="-ccbin g++-$_candidate ${NVCC_PREPEND_FLAGS:-}"
+            log_info "nvcc: using host compiler g++-$_candidate (default g++ is too new for this CUDA toolkit; will switch back to default once nvcc gains support)."
+            rm -f "$_probe_obj"
+            unset -f _nvcc_test
+            return 0
+        fi
+    done
+
+    rm -f "$_probe_obj"
+    unset -f _nvcc_test
+    log_warn "nvcc: default g++ rejected by the installed CUDA toolkit and no compatible g++-N found on PATH. Install a supported version (e.g. 'sudo pacman -S gcc15' on Arch when CUDA 13.x is installed) if nvcc builds fail."
+    return 0
+}
+
+# Locate a pacman-installed VapourSynth plugin .so. The layout moved
+# between v74 and v75+/R76: v74 shipped `/usr/lib/vapoursynth/libmvtools.so`,
+# v75+/R76 ships `/usr/lib/python3.X/site-packages/vapoursynth/plugins/mvtools.so`
+# (no `lib` prefix). Probe both and echo the first hit.
+#
+# Usage: find_pacman_vs_plugin mvtools  ->  prints the path on stdout
+find_pacman_vs_plugin() {
+    local name="$1"
+    local _candidate
+    # New site-packages layout (v75+ / R76)
+    for _candidate in /usr/lib/python3.*/site-packages/vapoursynth/plugins/"$name".so; do
+        if [ -f "$_candidate" ]; then
+            echo "$_candidate"
+            return 0
+        fi
+    done
+    # Old /usr/lib/vapoursynth layout (v74 and earlier)
+    if [ -f "/usr/lib/vapoursynth/lib$name.so" ]; then
+        echo "/usr/lib/vapoursynth/lib$name.so"
+        return 0
+    fi
+    if [ -f "/usr/lib/vapoursynth/$name.so" ]; then
+        echo "/usr/lib/vapoursynth/$name.so"
+        return 0
+    fi
+    return 1
+}
+
 check_root() {
     # If the user owns $VS_PREFIX (set in this file above), they don't need
     # sudo for builds that land inside the prefix. Individual install tasks

@@ -236,10 +236,13 @@ install_denoiser() {
         else
             pacman -S --needed --noconfirm vapoursynth-plugin-mvtools || { log_error "Failed to install vapoursynth-plugin-mvtools. Run: sudo pacman -S vapoursynth-plugin-mvtools"; return 1; }
         fi
-        # Pacman installs to /usr/lib/vapoursynth; symlink if VS_PLUGIN_PATH differs
-        if [ -f "/usr/lib/vapoursynth/libmvtools.so" ] && [ "$VS_PLUGIN_PATH" != "/usr/lib/vapoursynth" ]; then
-            ln -sf /usr/lib/vapoursynth/libmvtools.so "$VS_PLUGIN_PATH/libmvtools.so"
-            log_info "Symlinked libmvtools.so to $VS_PLUGIN_PATH/"
+        # Pacman's plugin install location moved from /usr/lib/vapoursynth/
+        # to /usr/lib/python3.X/site-packages/vapoursynth/plugins/ between
+        # v74 and v75+. find_pacman_vs_plugin probes both layouts.
+        _mvtools_src="$(find_pacman_vs_plugin mvtools)"
+        if [ -n "$_mvtools_src" ]; then
+            ln -sf "$_mvtools_src" "$VS_PLUGIN_PATH/libmvtools.so"
+            log_info "Symlinked $_mvtools_src to $VS_PLUGIN_PATH/libmvtools.so"
         fi
 
         if ! pacman -Qi vapoursynth-plugin-removegrain &>/dev/null && ! pacman -Qi vapoursynth-plugin-removegrain-git &>/dev/null; then
@@ -253,9 +256,10 @@ install_denoiser() {
         else
             log_info "vapoursynth-plugin-removegrain already installed."
         fi
-        if [ -f "/usr/lib/vapoursynth/libremovegrain.so" ] && [ "$VS_PLUGIN_PATH" != "/usr/lib/vapoursynth" ]; then
-            ln -sf /usr/lib/vapoursynth/libremovegrain.so "$VS_PLUGIN_PATH/libremovegrain.so"
-            log_info "Symlinked libremovegrain.so to $VS_PLUGIN_PATH/"
+        _rg_src="$(find_pacman_vs_plugin removegrain)"
+        if [ -n "$_rg_src" ]; then
+            ln -sf "$_rg_src" "$VS_PLUGIN_PATH/libremovegrain.so"
+            log_info "Symlinked $_rg_src to $VS_PLUGIN_PATH/libremovegrain.so"
         fi
 
         # CTMF — median filter needed by ContraSharpening in havsfunc
@@ -270,9 +274,10 @@ install_denoiser() {
         else
             log_info "vapoursynth-plugin-ctmf already installed."
         fi
-        if [ -f "/usr/lib/vapoursynth/libctmf.so" ] && [ "$VS_PLUGIN_PATH" != "/usr/lib/vapoursynth" ]; then
-            ln -sf /usr/lib/vapoursynth/libctmf.so "$VS_PLUGIN_PATH/libctmf.so"
-            log_info "Symlinked libctmf.so to $VS_PLUGIN_PATH/"
+        _ctmf_src="$(find_pacman_vs_plugin ctmf)"
+        if [ -n "$_ctmf_src" ]; then
+            ln -sf "$_ctmf_src" "$VS_PLUGIN_PATH/libctmf.so"
+            log_info "Symlinked $_ctmf_src to $VS_PLUGIN_PATH/libctmf.so"
         fi
     else
         log_warn "Debian/Ubuntu: install vapoursynth-mvtools, vapoursynth-removegrain, and vapoursynth-ctmf manually for --denoise-smdegrain support"
