@@ -191,7 +191,7 @@ parser.add_argument("--denoise-model", default="color_real_psnr",
     choices=["color_15","color_25","color_50","color_real_psnr","color_real_gan","gray_15","gray_25","gray_50"],
     help="SCUnet model: color_15/25/50 (Gaussian), color_real_psnr/gan (blind, best for camera), gray_15/25/50 (luma-only) | Default: color_real_psnr")
 parser.add_argument("--denoise-smdegrain", action="store_true", help="SMDegrain with SCUNet as prefilter (temporal+spatial hybrid; mutually exclusive with --denoise-scunet direct output)")
-parser.add_argument("--denoise-tr", type=int, default=4, help="SMDegrain temporal radius (--denoise-smdegrain) | Default: 4")
+parser.add_argument("--denoise-tr", type=int, default=3, help="SMDegrain temporal radius (--denoise-smdegrain) | Default: 3 (havsfunc_legacy.SMDegrain caps tr at 3 — values 4/6/8/12 silently dispatch to identical MDegrain3, see memory havsfunc_legacy_smdegrain_tr_capped_at_3.md)")
 parser.add_argument("--denoise-thsad", type=int, default=350, help="SMDegrain luma SAD threshold (--denoise-smdegrain) | Default: 350")
 parser.add_argument("--denoise-thsadc", type=int, default=450, help="SMDegrain chroma SAD threshold (--denoise-smdegrain) | Default: 450")
 parser.add_argument("--denoise-rvrt", action="store_true", help="RVRT temporal denoising (natively multi-frame; alternative to SCUNet+SMDegrain)")

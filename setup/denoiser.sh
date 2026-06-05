@@ -474,10 +474,63 @@ for sigma in [15, 25, 50]:
     cd "$ORIG_DIR2"
     ldconfig
 
+    # =========================================================================
+    # 9. BSVD denoiser (V2 stateful streaming via ORT-TRT/ORT-MIGraphX EP)
+    #    Python-side ORT (no VS plugin) + staged model assets.
+    # =========================================================================
+    log_info "Installing onnxruntime for BSVD denoise path..."
     if [ "$GPU_VENDOR" = "nvidia" ] || [ "$GPU_VENDOR" = "both" ]; then
-        log_success "Denoiser installed (PyTorch CUDA, vsscunet, TensorRT, libvstrt.so, vsmlrt.py, KNLMeansCL)."
+        # onnxruntime-gpu ships CUDA + TensorRT EPs (the latter is what we use
+        # for BSVD V2 stateful streaming).
+        "$VENV_DIR/bin/pip" install -U onnxruntime-gpu \
+            || log_warn "Failed to install onnxruntime-gpu — --denoise-bsvd will fail at dispatch"
+        if "$VENV_DIR/bin/python" -c "import onnxruntime as o; assert 'TensorrtExecutionProvider' in o.get_available_providers()" 2>/dev/null; then
+            log_success "onnxruntime + TensorrtExecutionProvider available"
+        else
+            log_warn "onnxruntime installed but TensorrtExecutionProvider not registered. Check TensorRT install."
+        fi
+    elif [ "$GPU_VENDOR" = "amd" ]; then
+        # ROCm/MIGraphX EP requires a from-source ORT build — see memory
+        # encoder-host_ort_rocm_build.md. We don't rebuild from this script (long,
+        # ROCm-version-coupled). Probe for MIGraphX EP via whatever onnxruntime
+        # is already in the venv or system path.
+        if "$VENV_DIR/bin/python" -c "import onnxruntime as o; assert 'MIGraphXExecutionProvider' in o.get_available_providers()" 2>/dev/null; then
+            log_success "onnxruntime + MIGraphXExecutionProvider available"
+        else
+            log_warn "MIGraphXExecutionProvider not registered. Build ORT-ROCm from source per memory encoder-host_ort_rocm_build.md; --denoise-bsvd will not work until then."
+        fi
+    fi
+
+    log_info "Staging BSVD model assets (ft_ep5 ONNX + σ-estimator)..."
+    local _bsvd_repo
+    if [ "$EUID" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+        _bsvd_repo="/home/$SUDO_USER/gitproj/bsvd"
     else
-        log_success "Denoiser installed (PyTorch ROCm, vsscunet, MIGraphX, libvsmigx.so, vsmlrt.py, KNLMeansCL)."
+        _bsvd_repo="$HOME/gitproj/bsvd"
+    fi
+    local _archav1an_models
+    _archav1an_models="$(dirname "$(dirname "$(readlink -f "$0")")")/models"
+    mkdir -p "$_archav1an_models"
+    local _src _dst _pair
+    for _pair in \
+        "$_bsvd_repo/runs/bsvd_v4_finetune/ft_ep5_stateful_v2_dyn_fp16.onnx:$_archav1an_models/bsvd_ft_ep5_stateful_v2_dyn_fp16.onnx" \
+        "$_bsvd_repo/runs/sigma_estimator_v3.pth:$_archav1an_models/bsvd_sigma_estimator_v3.pth"
+    do
+        _src="${_pair%:*}"
+        _dst="${_pair#*:}"
+        if [ -f "$_dst" ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
+            log_info "  $(basename "$_dst") already present"
+        elif [ -f "$_src" ]; then
+            cp "$_src" "$_dst" && log_success "  staged $(basename "$_dst") from $_src"
+        else
+            log_warn "  source missing: $_src — copy manually if you want --denoise-bsvd on this host"
+        fi
+    done
+
+    if [ "$GPU_VENDOR" = "nvidia" ] || [ "$GPU_VENDOR" = "both" ]; then
+        log_success "Denoiser installed (PyTorch CUDA, vsscunet, TensorRT, libvstrt.so, vsmlrt.py, onnxruntime-gpu, KNLMeansCL, BSVD assets staged)."
+    else
+        log_success "Denoiser installed (PyTorch ROCm, vsscunet, MIGraphX, libvsmigx.so, vsmlrt.py, KNLMeansCL, BSVD assets staged)."
     fi
 }
 

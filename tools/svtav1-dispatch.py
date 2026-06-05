@@ -23,9 +23,12 @@ import tag as _tag
 
 def find_mlrt_plugin():
     """Return path to libvstrt.so (NVIDIA) or libvsmigx.so (AMD), or empty string."""
+    _vs_prefix = os.environ.get("VS_PREFIX", "/opt/archav1an")
     for p in [
+        f"{_vs_prefix}/lib/vapoursynth/libvstrt.so",
         "/usr/local/lib/vapoursynth/libvstrt.so",
         "/usr/lib/vapoursynth/libvstrt.so",
+        f"{_vs_prefix}/lib/vapoursynth/libvsmigx.so",
         "/usr/local/lib/vapoursynth/libvsmigx.so",
         "/usr/lib/vapoursynth/libvsmigx.so",
     ]:
@@ -52,12 +55,41 @@ def _mlrt_backend_lines(streams):
 def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
                       use_smdegrain=False, tr=3, thsad=350, thsadc=450,
                       use_rvrt=False, rvrt_sigma=12.0,
-                      use_stasunet=False, stasunet_engine="", stasunet_pre_darken_ev=0.0):
+                      use_stasunet=False, stasunet_engine="", stasunet_pre_darken_ev=0.0,
+                      use_bsvd=False, use_bsvd_smdegrain=False,
+                      bsvd_onnx="", bsvd_sigma=0.08, bsvd_ep="TRT", bsvd_device=0):
     source = os.path.abspath(source)
     backend_lines = _mlrt_backend_lines(streams)
     model_line = f'_model_enum = _SCUNetModel["scunet_{model_name}"]'
 
-    if use_stasunet:
+    if use_bsvd or use_bsvd_smdegrain:
+        bsvd_onnx = os.path.abspath(bsvd_onnx)
+        _tools_dir = os.path.dirname(os.path.abspath(__file__))
+        denoise_lines = (
+            f'import sys as _sys; _sys.path.insert(0, r{_tools_dir!r})\n'
+            f'from bsvd_vs_filter import build_bsvd_streaming\n'
+            f'_src_fmt = src.format\n'
+            f'_rgb = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="709", range_in_s="limited")\n'
+            f'_bsvd_rgb = build_bsvd_streaming(_rgb, onnx_path=r{bsvd_onnx!r}, '
+            f'sigma={bsvd_sigma}, ep={bsvd_ep!r}, device_id={bsvd_device}, fp16=True)\n'
+        )
+        if use_bsvd_smdegrain:
+            denoise_lines += (
+                f'import havsfunc_legacy as _haf\n'
+                f'_bsvd_yuv = core.resize.Bicubic(_bsvd_rgb, format=vs.YUV444P16, '
+                f'matrix_s="709", range_s="limited")\n'
+                f'_src444 = core.resize.Bicubic(src, format=vs.YUV444P16, range_s="limited")\n'
+                f'src = _haf.SMDegrain(_src444, tr={tr}, thSAD={thsad}, plane=0, '
+                f'prefilter=_bsvd_yuv, contrasharp=True, RefineMotion=True)\n'
+                f'src = core.std.ShufflePlanes([src, _bsvd_yuv, _bsvd_yuv], '
+                f'planes=[0, 1, 2], colorfamily=vs.YUV)\n'
+                f'src = core.resize.Bicubic(src, format=_src_fmt)'
+            )
+        else:
+            denoise_lines += (
+                f'src = core.resize.Bicubic(_bsvd_rgb, format=_src_fmt, matrix_s="709", range_s="limited")'
+            )
+    elif use_stasunet:
         stasunet_engine = os.path.abspath(stasunet_engine)
         # STA-SUNet training normalizes BOTH input and GT to [-1,1] via (x-0.5)/0.5
         # (datasets/data_augment.py:49). This applies to custom and BVI-RLV engines alike.
@@ -138,11 +170,13 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
             f'src = core.resize.Bicubic(_rgb, format=_src_fmt, matrix_s="709")'
         )
     venv_site_pkgs = sysconfig.get_path('purelib')
-    vsmlrt_import = '' if (use_rvrt or use_stasunet) else 'from vsmlrt import SCUNet as _SCUNet, SCUNetModel as _SCUNetModel, Backend as _Backend\n'
+    vsmlrt_import = '' if (use_rvrt or use_stasunet or use_bsvd or use_bsvd_smdegrain) else 'from vsmlrt import SCUNet as _SCUNet, SCUNetModel as _SCUNetModel, Backend as _Backend\n'
+    # BSVD streaming + SMDegrain stacks many YUV444P16 intermediates; bump cache.
+    _cache_mb = 4096 if use_bsvd_smdegrain else 1024
     vpy = (
         f'import sys as _sys; _sys.path.insert(0, {venv_site_pkgs!r})\n'
         f'from vstools import vs, core, initialize_clip, finalize_clip\n'
-        f'core.max_cache_size = 1024\n'
+        f'core.max_cache_size = {_cache_mb}\n'
         f'\n'
         f'src = core.ffms2.Source(source=r{source!r}, cachefile=r{cachefile!r})\n'
         f'src = initialize_clip(src)\n'
@@ -396,9 +430,21 @@ def main():
         "models", "stasunet_denoise_ep16_512_r4_fp16.engine")
     denoise_stasunet_engine = _default_stasunet_engine
     denoise_stasunet_pre_darken_ev = 0.0
-    denoise_tr = 4
+    denoise_tr = 3
     denoise_thsad = 350
     denoise_thsadc = 450
+    denoise_bsvd = False
+    denoise_bsvd_smdegrain = False
+    _default_bsvd_onnx = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "models", "bsvd_ft_ep5_stateful_v2_dyn_fp16.onnx")
+    _default_bsvd_sigma_estimator = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "models", "bsvd_sigma_estimator_v3.pth")
+    denoise_bsvd_onnx = _default_bsvd_onnx
+    denoise_bsvd_sigma = "auto"
+    denoise_bsvd_device = 0
+    denoise_bsvd_warmup = 30
 
     i = 0
     while i < len(args):
@@ -450,6 +496,18 @@ def main():
             denoise_thsad = int(nextval() or 350); i += 2
         elif arg == "--denoise-thsadc":
             denoise_thsadc = int(nextval() or 450); i += 2
+        elif arg == "--denoise-bsvd":
+            denoise_bsvd = True; i += 1
+        elif arg == "--denoise-bsvd-smdegrain":
+            denoise_bsvd_smdegrain = True; i += 1
+        elif arg == "--bsvd-onnx":
+            denoise_bsvd_onnx = nextval() or _default_bsvd_onnx; i += 2
+        elif arg == "--bsvd-sigma":
+            denoise_bsvd_sigma = nextval() or "auto"; i += 2
+        elif arg == "--bsvd-device":
+            denoise_bsvd_device = int(nextval() or 0); i += 2
+        elif arg == "--bsvd-warmup":
+            denoise_bsvd_warmup = int(nextval() or 30); i += 2
         else:
             i += 1
 
@@ -511,9 +569,48 @@ def main():
     # Preserve source mtime
     src_stat = os.stat(input_file) if os.path.exists(input_file) else None
 
+    # BSVD+SMDegrain wants a much lower thSAD than SCUNet+SMDegrain, because
+    # BSVD already does heavy temporal denoising — high thSAD just smears it.
+    # Lossless FFV1 sweep on MVI_4378/0487/8656 showed thSAD=150 strictly
+    # dominates 350 by 0.5–1.3 SSIMU2 (see memory bsvd_smdegrain_hybrid_sweep.md).
+    # Only swap if the user didn't explicitly pass --denoise-thsad.
+    if denoise_bsvd_smdegrain and denoise_thsad == 350:
+        denoise_thsad = 150
+
+    # Mutual exclusion: BSVD is incompatible with the other temporal denoisers.
+    _denoise_flags = [denoise_scunet, denoise_smdegrain, denoise_rvrt,
+                       denoise_stasunet, denoise_bsvd, denoise_bsvd_smdegrain]
+    if sum(bool(f) for f in _denoise_flags) > 1:
+        print("[svtav1-dispatch] Error: --denoise-{scunet,smdegrain,rvrt,stasunet,bsvd,bsvd-smdegrain} are mutually exclusive.")
+        sys.exit(1)
+
     # --- Encode ---
-    if denoise_scunet or denoise_smdegrain or denoise_rvrt or denoise_stasunet:
-        if denoise_rvrt:
+    if any(_denoise_flags):
+        if denoise_bsvd or denoise_bsvd_smdegrain:
+            if not os.path.exists(denoise_bsvd_onnx):
+                print(f"[svtav1-dispatch] Error: BSVD ONNX not found at {denoise_bsvd_onnx}. "
+                      "Stage it via setup.sh --install denoiser or pass --bsvd-onnx.")
+                sys.exit(1)
+            # EP detection: prefer NVIDIA (TRT EP) if the vstrt plugin is present,
+            # else AMD (MIGraphX EP). Both rely on Python onnxruntime providers.
+            mlrt_plugin = find_mlrt_plugin()
+            bsvd_ep = "TRT" if (mlrt_plugin and "vstrt" in mlrt_plugin) else "MIGRAPHX"
+            # σ resolution
+            if str(denoise_bsvd_sigma).lower() == "auto":
+                if not os.path.exists(_default_bsvd_sigma_estimator):
+                    print(f"[svtav1-dispatch] Error: --bsvd-sigma=auto needs {_default_bsvd_sigma_estimator}; "
+                          "stage via setup.sh --install denoiser or pass --bsvd-sigma <float>.")
+                    sys.exit(1)
+                sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+                from bsvd_optsig import compute_sigma_for_video
+                bsvd_sigma_val = compute_sigma_for_video(
+                    input_file, sigma_estimator_pth=_default_bsvd_sigma_estimator,
+                    warmup_frames=denoise_bsvd_warmup,
+                    device=f"cuda:{denoise_bsvd_device}")
+            else:
+                bsvd_sigma_val = float(denoise_bsvd_sigma)
+            _backend_name = f"BSVD-V2-ORT-{bsvd_ep}"
+        elif denoise_rvrt:
             _backend_name = "RVRT"
         elif denoise_stasunet:
             if not os.path.exists(denoise_stasunet_engine):
@@ -539,8 +636,17 @@ def main():
                           tr=denoise_tr, thsad=denoise_thsad, thsadc=denoise_thsadc,
                           use_rvrt=denoise_rvrt, rvrt_sigma=denoise_rvrt_sigma,
                           use_stasunet=denoise_stasunet, stasunet_engine=denoise_stasunet_engine,
-                          stasunet_pre_darken_ev=denoise_stasunet_pre_darken_ev)
-        if denoise_rvrt:
+                          stasunet_pre_darken_ev=denoise_stasunet_pre_darken_ev,
+                          use_bsvd=denoise_bsvd, use_bsvd_smdegrain=denoise_bsvd_smdegrain,
+                          bsvd_onnx=denoise_bsvd_onnx,
+                          bsvd_sigma=(bsvd_sigma_val if (denoise_bsvd or denoise_bsvd_smdegrain) else 0.08),
+                          bsvd_ep=(bsvd_ep if (denoise_bsvd or denoise_bsvd_smdegrain) else "TRT"),
+                          bsvd_device=denoise_bsvd_device)
+        if denoise_bsvd_smdegrain:
+            print(f"[svtav1-dispatch] vspipe ({_backend_name} + SMDegrain tr={denoise_tr} thSAD={denoise_thsad}, σ={bsvd_sigma_val:.3f}) | SvtAv1EncApp{svt_params}")
+        elif denoise_bsvd:
+            print(f"[svtav1-dispatch] vspipe ({_backend_name} σ={bsvd_sigma_val:.3f}) | SvtAv1EncApp{svt_params}")
+        elif denoise_rvrt:
             print(f"[svtav1-dispatch] vspipe (RVRT sigma={denoise_rvrt_sigma}, tile={denoise_tile}) | SvtAv1EncApp{svt_params}")
         elif denoise_stasunet:
             print(f"[svtav1-dispatch] vspipe (STA-SUNet engine={os.path.basename(denoise_stasunet_engine)}, tile={denoise_tile}, streams={denoise_streams}) | SvtAv1EncApp{svt_params}")
@@ -608,7 +714,11 @@ def main():
         if photon_noise and photon_noise != "0":
             general_flags.append(f"--photon-noise {photon_noise}")
         general_flags.append(f"--speed {speed}")
-        if denoise_rvrt:
+        if denoise_bsvd_smdegrain:
+            general_flags.append(f"--denoise-bsvd-smdegrain --bsvd-sigma {bsvd_sigma_val:.3f} --denoise-tr {denoise_tr} --denoise-thsad {denoise_thsad}")
+        elif denoise_bsvd:
+            general_flags.append(f"--denoise-bsvd --bsvd-sigma {bsvd_sigma_val:.3f}")
+        elif denoise_rvrt:
             general_flags.append(f"--denoise-rvrt --denoise-rvrt-sigma {denoise_rvrt_sigma}")
         elif denoise_stasunet:
             general_flags.append(f"--denoise-stasunet --denoise-tile {denoise_tile}")

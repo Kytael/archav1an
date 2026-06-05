@@ -34,6 +34,8 @@ tools/tag-manifest*.txt
 models/*
 !models/stasunet_denoise_ep16_512_r4.onnx
 !models/stasunet_denoise_ep16_512_r4.onnx.data
+!models/bsvd_ft_ep5_stateful_v2_dyn_fp16.onnx
+!models/bsvd_sigma_estimator_v3.pth
 nominations_preview/
 
 # Implementation plans — local scratchpad, not versioned

@@ -106,6 +106,8 @@ Installed via `VIRTUAL_ENV=$VENV_DIR uv pip install ...`:
 - `vsrvrt` (RVRT denoiser; installed with `--no-deps` to avoid pulling the PyPI vapoursynth stub)
 - `mvsfunc_pkg` (havsfunc dependency; installed manually from GitHub)
 - `havsfunc_legacy` (r33 tag, patched for VS R73+ kwarg quirks)
+- `onnxruntime-gpu` — ONNX Runtime with CUDA + TensorRT EPs, used by the BSVD V2 stateful streaming path (`--denoise-bsvd` / `--denoise-bsvd-smdegrain` in `tools/svtav1-dispatch.py`). On AMD/encoder-host, replace with the encoder-host ORT-ROCm from-source build (memory `encoder-host_ort_rocm_build.md`).
+- `av` (PyAV) — used by `tools/bsvd_optsig.py` to decode the warmup window for the V3 optimal-σ predictor.
 
 ## Build tools
 
