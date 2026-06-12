@@ -214,6 +214,18 @@ EOF
     # Discovery happens via LD_LIBRARY_PATH in activate-venv.sh.
     cd "$ORIG_DIR"
 
+    # R76 VSScript refuses to init until ~/.config/vapoursynth/vapoursynth.toml
+    # exists mapping each libvsscript.so to its Python interpreter + libpython
+    # ("Python executable and library path couldn't be determined"). vspipe and
+    # SvtAv1EncApp's VapourSynth reader both embed VSScript, so without this the
+    # encode pipeline produces zero frames and every run fails instantly. Run it
+    # under the venv interpreter with $VS_PREFIX/lib on LD_LIBRARY_PATH so the
+    # R76 build (not pacman's v75) is the one detected and registered.
+    log_info "Writing VapourSynth VSScript config (vapoursynth.toml)..."
+    LD_LIBRARY_PATH="$VS_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
+        "$VENV_DIR/bin/python" -m vapoursynth config \
+        || log_warn "vapoursynth config failed; run '$VENV_DIR/bin/python -m vapoursynth config' manually if encodes report 'Failed to initialize VSScript'."
+
     log_success "VapourSynth, FFMS2, and BestSource installed under $VS_PREFIX with native optimizations."
 }
 
