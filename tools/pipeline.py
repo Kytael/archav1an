@@ -98,8 +98,8 @@ PRESETS = {
         "final_speed": 4,
         "autocrop": False,
         "aggressive": True,
-        "fast_params": "--ac-bias 1.0 --complex-hvs 1 --keyint -1 --variance-boost-strength 1 --enable-dlf 2 --luminance-qp-bias 20 --qm-min 8 --keyint -1 --tune 0 --filtering-noise-detection 4 --chroma-qm-min 10",
-        "final_params": "--ac-bias 1.0 --complex-hvs 1 --keyint -1 --variance-boost-strength 1 --enable-dlf 2 --luminance-qp-bias 20 --qm-min 8 --keyint -1 --tune 0 --filtering-noise-detection 4 --chroma-qm-min 10 --lp 3",
+        "fast_params": "--ac-bias 1.0 --complex-hvs 1 --keyint -1 --variance-boost-strength 1 --enable-dlf 2 --luminance-qp-bias 20 --qm-min 8 --tune 0 --filtering-noise-detection 4 --chroma-qm-min 10",
+        "final_params": "--ac-bias 1.0 --complex-hvs 1 --keyint -1 --variance-boost-strength 1 --enable-dlf 2 --luminance-qp-bias 20 --qm-min 8 --tune 0 --filtering-noise-detection 4 --chroma-qm-min 10 --lp 3",
     },
     "anime-crf18": {
         "quality": 18,
@@ -344,7 +344,8 @@ def process_file(source, preset, ssimu2_tool, ssimu2_workers, worker_count, no_o
         dispatch_cmd.append("--denoise-scunet")
         dispatch_cmd += ["--denoise-model", p.get("denoise_model", "color_real_psnr")]
         if p.get("denoise_temporal"):
-            dispatch_cmd.append("--denoise-temporal")
+            # Auto-Boost-Av1an.py's temporal mode is SCUNet+SMDegrain hybrid
+            dispatch_cmd.append("--denoise-smdegrain")
         dispatch_cmd += ["--denoise-device", str(p.get("denoise_device", 0))]
         dispatch_cmd += ["--denoise-tile", str(p.get("denoise_tile", 256))]
         dispatch_cmd += ["--denoise-streams", str(p.get("denoise_streams", 3))]
@@ -386,9 +387,13 @@ def process_file(source, preset, ssimu2_tool, ssimu2_workers, worker_count, no_o
             "-i", source_str,
             "-map", "0:v",
             "-map", "1:a?",
+            "-map", "1:s?",
+            "-map", "1:t?",
+            "-map_chapters", "1",
             "-c:v", "copy",
             "-c:a", "libopus",
             "-b:a", bitrate,
+            "-c:s", "copy",
             str(output_file),
         ]
         ret = subprocess.run(mux_cmd, cwd=str(ROOT_DIR))
@@ -453,11 +458,11 @@ def main():
     )
     parser.add_argument(
         "--tag-script", type=str,
-        help="Shell script name for tag.py marker (e.g. run_linux_live_crf32.sh)",
+        help="Accepted for run_linux_*.sh compatibility; ignored (tagging is done inline, no tag.py marker is created)",
     )
     parser.add_argument("--denoise-scunet", action="store_true", help="Enable SCUnet spatial denoising")
     parser.add_argument("--denoise-model", default="color_real_psnr", choices=["color_15","color_25","color_50","color_real_psnr","color_real_gan","gray_15","gray_25","gray_50"])
-    parser.add_argument("--denoise-temporal", action="store_true")
+    parser.add_argument("--denoise-temporal", action="store_true", help="Temporal denoising (SCUNet+SMDegrain hybrid, maps to Auto-Boost --denoise-smdegrain)")
     parser.add_argument("--denoise-device", type=int, default=0)
     parser.add_argument("--denoise-knlm", action="store_true", help="Enable KNLMeansCL spatial+temporal denoising")
     parser.add_argument("--denoise-tile", type=int, default=256, help="SCUnet tile size in pixels | Default: 256")
@@ -530,26 +535,9 @@ def main():
     print(f"Pipeline: {label} | Workers: {args.workers}")
     print(f"SSIMU2 Mode: {ssimu2_tool} | SSIMU2 Workers: {ssimu2_workers}")
 
-    # Create tagging marker (for tag.py compatibility)
-    if args.tag_script:
-        marker_name = args.tag_script
-    elif args.preset:
-        preset_to_script = {
-            "live-crf15": "run_linux_live_crf15.sh",
-            "live-crf18": "run_linux_live_crf18.sh",
-            "live-crf25": "run_linux_live_crf25.sh",
-            "live-crf32": "run_linux_live_crf32.sh",
-            "anime-crf15": "run_linux_anime_crf15.sh",
-            "anime-crf18": "run_linux_anime_crf18.sh",
-            "anime-crf25": "run_linux_anime_crf25.sh",
-            "anime-crf32": "run_linux_anime_crf32.sh",
-            "dance-crf27": "run_linux_dance_crf27.sh",
-            "sports-crf27": "run_linux_sports_crf27.sh",
-        }
-        marker_name = preset_to_script.get(args.preset, f"pipeline-{args.preset}")
-    else:
-        marker_name = f"pipeline-crf{preset['quality']}"
-    (SCRIPT_DIR / f"sh-used-{marker_name}.txt").touch()
+    # Note: no sh-used-* marker is created here — pipeline.py tags inline via
+    # _tag.apply_tag_to_file and never invokes tag.py's marker flow, so a marker
+    # would leak and poison a later tag.py run from av1an-batch-*.sh.
 
     # Build tag strings from preset
     fish_version = _tag.get_5fish_version()

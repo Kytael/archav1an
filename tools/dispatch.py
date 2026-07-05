@@ -178,6 +178,14 @@ def main():
         else:
             final_cmd.append(arg)
 
+    # If the user didn't pass --fast-params/--final-params, still emit the
+    # detected color flags so they aren't silently dropped
+    if current_flags:
+        if "--fast-params" not in args:
+            final_cmd += ["--fast-params", current_flags.strip()]
+        if "--final-params" not in args:
+            final_cmd += ["--final-params", current_flags.strip()]
+
     # Inject auto-detected conversion flag if not already in args
     if convert_yuv420p10 and "--convert-to-YUV420P10" not in args and "--convert-to-yuv420p10" not in args:
         final_cmd.append("--convert-to-YUV420P10")

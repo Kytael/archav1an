@@ -195,8 +195,8 @@ parser.add_argument("--denoise-tr", type=int, default=3, help="SMDegrain tempora
 parser.add_argument("--denoise-thsad", type=int, default=350, help="SMDegrain luma SAD threshold (--denoise-smdegrain) | Default: 350")
 parser.add_argument("--denoise-rvrt", action="store_true", help="RVRT temporal denoising (natively multi-frame; alternative to SCUNet+SMDegrain)")
 parser.add_argument("--denoise-rvrt-sigma", type=float, default=12.0, help="RVRT noise level (0-50, higher = stronger) | Default: 12.0")
-parser.add_argument("--denoise-stasunet", action="store_true", help="STA-SUNet spatial denoising via pre-built TensorRT engine (vs-mlrt vstrt plugin)")
-parser.add_argument("--denoise-stasunet-engine", default=None, help="Path to STA-SUNet .engine file | Default: <repo>/models/stasunet_custom.engine")
+parser.add_argument("--denoise-stasunet", action="store_true", help="DEPRECATED here — use tools/svtav1-dispatch.py --denoise-stasunet instead")
+parser.add_argument("--denoise-stasunet-engine", default=None, help="DEPRECATED here — use tools/svtav1-dispatch.py --denoise-stasunet-engine instead")
 parser.add_argument("--denoise-device", type=int, default=0, help="GPU device index for SCUnet | Default: 0")
 parser.add_argument("--denoise-knlm", action="store_true", help="Enable KNLMeansCL spatial+temporal denoising (OpenCL, all channels)")
 parser.add_argument("--denoise-tile", type=int, default=256, help="SCUnet tile size in pixels (256/512 recommended) | Default: 256")
@@ -204,6 +204,13 @@ parser.add_argument("--denoise-model-dir", default=None, help="Parent dir contai
 parser.add_argument("--denoise-streams", type=int, default=2, help="Inference streams for TRT/MIGraphX | Default: 2")
 
 args = parser.parse_args()
+
+if args.denoise_stasunet:
+    parser.error(
+        "--denoise-stasunet is no longer supported here: this script's VPY template "
+        "predates the rank-4 5-frame STA-SUNet engine and cannot work with it. "
+        "Use tools/svtav1-dispatch.py --denoise-stasunet instead."
+    )
 
 
 # --- PRIVACY HELPER ---
@@ -555,14 +562,12 @@ def detect_crop_values(source_path: Path) -> tuple[int, int]:
 
 
 _denoise_model_dir = getattr(args, "denoise_model_dir", None) or ""
-_denoise_stasunet_engine = getattr(args, "denoise_stasunet_engine", None) or os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "models", "stasunet_custom.engine")
 
 # Generate VPY file
 # Force regeneration if conversion flag differs from existing vpy.
 # Test the explicit "# convert=..." marker written into the template —
 # substring-matching "if True:" false-positived on enabled denoise blocks
-# (rvrt/stasunet/knlm/smdegrain render literal "if True:"), regenerating the
+# (rvrt/knlm/smdegrain render literal "if True:"), regenerating the
 # VPY and re-running autocrop on every invocation.
 if os.path.exists(vpy_file):
     _existing_vpy = open(vpy_file).read()
@@ -695,13 +700,6 @@ if {denoise_rvrt}:
     _rgb = _vsrvrt.Denoise(_rgb, sigma={denoise_rvrt_sigma}, tile_size=(16, {denoise_tile}, {denoise_tile}), tile_overlap=(2, 20, 20), use_fp16=True)
     src = core.resize.Bicubic(_rgb, format=_src_fmt, matrix_s="709")
 
-# 3.6 DENOISE — STA-SUNet (custom pre-built TensorRT engine via vs-mlrt vstrt plugin)
-if {denoise_stasunet}:
-    _src_fmt = src.format
-    _rgb = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="709")
-    _rgb = core.trt.Model([_rgb], engine_path=r"{denoise_stasunet_engine}", overlap=[8, 8], tilesize=[{denoise_tile}, {denoise_tile}], num_streams={denoise_streams}, use_cuda_graph=True, device_id={denoise_device})
-    src = core.resize.Bicubic(_rgb, format=_src_fmt, matrix_s="709")
-
 # 4. DENOISE — KNLMeansCL spatial+temporal (optional, independent of SCUnet)
 if {denoise_knlm}:
     src = core.knlm.KNLMeansCL(src, d=1, a=2, h=0.5, channels="YUV")
@@ -728,8 +726,6 @@ final.set_output(0)
                 denoise_smdegrain=str(getattr(args, "denoise_smdegrain", False)),
                 denoise_rvrt=str(getattr(args, "denoise_rvrt", False)),
                 denoise_rvrt_sigma=getattr(args, "denoise_rvrt_sigma", 12.0),
-                denoise_stasunet=str(getattr(args, "denoise_stasunet", False)),
-                denoise_stasunet_engine=_denoise_stasunet_engine,
                 denoise_tr=getattr(args, "denoise_tr", 4),
                 denoise_thsad=getattr(args, "denoise_thsad", 350),
                 denoise_device=getattr(args, "denoise_device", 0),
@@ -765,29 +761,7 @@ def get_file_info(
 
     # Setup VPY environment to get src info from Windows VPY
     vpy_vars = {}
-    # Safer exec with restricted globals to prevent arbitrary code execution
-    try:
-        vpy_vars = {}
-        # Restrict builtins to only what we need - this prevents dangerous operations
-        safe_globals = {
-            '__builtins__': {
-                'len': len, 'str': str, 'int': int, 'bool': bool,
-                'float': float, 'tuple': tuple, 'list': list
-            },
-            'core': type('core', (), {
-                'ffms2': type('ffms2', (), {
-                    'Source': lambda source, cachefile=False: type('MockSrc', (), {
-                        'width': 1920, 'height': 1080, 'fps': type('fps', (), {'numerator': 30, 'denominator': 1}),
-                        '__len__': lambda self: 1000
-                    })()
-                })()
-            })()
-        }
-        exec(open(vpy_file).read(), safe_globals, vpy_vars)
-    except Exception as e:
-        # Fallback to original method if safe execution fails
-        vpy_vars = {}
-        exec(open(vpy_file).read(), globals(), vpy_vars)
+    exec(open(vpy_file).read(), globals(), vpy_vars)
 
     if mode == "src":
         src = vpy_vars["src"]
@@ -887,32 +861,7 @@ def fast_pass() -> None:
         # Load VPY to check for HR content (High Resolution)
         try:
             vpy_vars = {}
-            # Safer exec with restricted globals
-            try:
-                vpy_vars = {}
-                safe_globals = {
-                    '__builtins__': {
-                        'len': len, 'str': str, 'int': int, 'bool': bool,
-                        'float': float, 'tuple': tuple, 'list': list
-                    },
-                    'core': type('core', (), {
-                        'ffms2': type('ffms2', (), {
-                            'Source': lambda source, cachefile=False: type('MockSrc', (), {
-                                'width': 1920, 'height': 1080, 'fps': type('fps', (), {'numerator': 30, 'denominator': 1}),
-                                '__len__': lambda self: 1000
-                            })()
-                        })()
-                    })()
-                }
-                exec(open(vpy_file).read(), safe_globals, vpy_vars)
-                src = vpy_vars["src"]
-                hr = src.width * src.height > 1920 * 1080
-            except Exception as e:
-                # Fallback to original method
-                vpy_vars = {}
-                exec(open(vpy_file).read(), globals(), vpy_vars)
-                src = vpy_vars["src"]
-                hr = src.width * src.height > 1920 * 1080
+            exec(open(vpy_file).read(), globals(), vpy_vars)
             src = vpy_vars["src"]
             hr = src.width * src.height > 1920 * 1080
         except Exception as e:
@@ -1074,30 +1023,7 @@ def calculate_metric() -> None:
 
     # Use Windows VPY for source
     vpy_vars = {}
-    # Safer exec with restricted globals
-    try:
-        vpy_vars = {}
-        safe_globals = {
-            '__builtins__': {
-                'len': len, 'str': str, 'int': int, 'bool': bool,
-                'float': float, 'tuple': tuple, 'list': list
-            },
-            'core': type('core', (), {
-                'ffms2': type('ffms2', (), {
-                    'Source': lambda source, cache=False: type('MockSrc', (), {
-                        'width': 1920, 'height': 1080, 'fps': type('fps', (), {'numerator': 30, 'denominator': 1}),
-                        '__len__': lambda self: 1000
-                    })()
-                })()
-            })()
-        }
-        exec(open(vpy_file).read(), safe_globals, vpy_vars)
-        source_clip = vpy_vars["src"]
-    except Exception as e:
-        # Fallback to original method
-        vpy_vars = {}
-        exec(open(vpy_file).read(), globals(), vpy_vars)
-        source_clip = vpy_vars["src"]
+    exec(open(vpy_file).read(), globals(), vpy_vars)
     source_clip = vpy_vars["src"]
 
     # Read Fast Pass MKV
