@@ -559,11 +559,15 @@ _denoise_stasunet_engine = getattr(args, "denoise_stasunet_engine", None) or os.
     os.path.dirname(os.path.abspath(__file__)), "models", "stasunet_custom.engine")
 
 # Generate VPY file
-# Force regeneration if conversion flag differs from existing vpy
+# Force regeneration if conversion flag differs from existing vpy.
+# Test the explicit "# convert=..." marker written into the template —
+# substring-matching "if True:" false-positived on enabled denoise blocks
+# (rvrt/stasunet/knlm/smdegrain render literal "if True:"), regenerating the
+# VPY and re-running autocrop on every invocation.
 if os.path.exists(vpy_file):
     _existing_vpy = open(vpy_file).read()
-    _has_convert = "if True:" in _existing_vpy
-    if _has_convert != bool(convert_yuv420p10):
+    _has_convert = f"# convert={bool(convert_yuv420p10)}" not in _existing_vpy
+    if _has_convert:
         os.remove(vpy_file)
 
 if not os.path.exists(vpy_file):
@@ -580,6 +584,7 @@ core.max_cache_size = 1024
 src = core.ffms2.Source(source=r"{source}", cachefile=r"{cache}")
 
 # Conversion
+# convert={convert}
 if {convert}:
     src = src.resize.Bicubic(format=vs.YUV420P10, chromaloc_in_s='left', chromaloc_s='left')
 
@@ -1024,7 +1029,20 @@ def final_pass() -> None:
         # Use generated scenes
         av1an_cmd.extend(["-s", scenes_file.name])
     else:
-        v_params = f"--preset {final_speed} --crf {quality} {final_params}"
+        # Map quality presets to numeric CRF — SVT-AV1 rejects '--crf medium'.
+        _hr = bool(globals().get("hr", False))
+        match quality:
+            case "low":
+                _crf = 40 if _hr else 35
+            case "medium":
+                _crf = 35 if _hr else 30
+            case "high":
+                _crf = 30 if _hr else 25
+            case "breeze":
+                _crf = 18
+            case _:
+                _crf = float(quality)
+        v_params = f"--preset {final_speed} --crf {_crf} {final_params}"
         av1an_cmd.extend(["-v", v_params])
 
     # Show command ALWAYS per user request
