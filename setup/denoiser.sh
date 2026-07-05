@@ -479,6 +479,10 @@ for sigma in [15, 25, 50]:
     #    Python-side ORT (no VS plugin) + staged model assets.
     # =========================================================================
     log_info "Installing onnxruntime for BSVD denoise path..."
+    # PyAV is required by the default --bsvd-sigma=auto path
+    # (tools/bsvd_optsig.py imports av to decode warmup frames).
+    "$VENV_DIR/bin/pip" install -U av \
+        || log_warn "Failed to install PyAV — --denoise-bsvd with sigma=auto will fail; pass --bsvd-sigma <float>"
     if [ "$GPU_VENDOR" = "nvidia" ] || [ "$GPU_VENDOR" = "both" ]; then
         # onnxruntime-gpu ships CUDA + TensorRT EPs (the latter is what we use
         # for BSVD V2 stateful streaming).
@@ -509,7 +513,9 @@ for sigma in [15, 25, 50]:
         _bsvd_repo="$HOME/gitproj/bsvd"
     fi
     local _archav1an_models
-    _archav1an_models="$(dirname "$(dirname "$(readlink -f "$0")")")/models"
+    # BASH_SOURCE, not $0: this file is sourced by setup.sh, so $0 points at
+    # setup.sh's caller and would stage models into the repo's parent dir.
+    _archav1an_models="$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")/models"
     mkdir -p "$_archav1an_models"
     local _src _dst _pair
     for _pair in \

@@ -38,7 +38,10 @@ def find_mlrt_plugin():
 
 def _mlrt_backend_lines(streams):
     """Return multi-line Python code that sets _backend to the best available vs-mlrt backend."""
-    for p in ["/usr/local/lib/vapoursynth/libvstrt.so", "/usr/lib/vapoursynth/libvstrt.so"]:
+    _vs_prefix = os.environ.get("VS_PREFIX", "/opt/archav1an")
+    for p in [f"{_vs_prefix}/lib/vapoursynth/libvstrt.so",
+              "/usr/local/lib/vapoursynth/libvstrt.so",
+              "/usr/lib/vapoursynth/libvstrt.so"]:
         if os.path.exists(p):
             # vsmlrt.py calls trtexec with a minimal env dict (no inheritance).
             # On WSL2, /usr/lib/libcuda.so is a stub; the real driver is in /usr/lib/wsl/lib/.
@@ -610,10 +613,27 @@ def main():
                 print(f"[svtav1-dispatch] Error: BSVD ONNX not found at {denoise_bsvd_onnx}. "
                       "Stage it via setup.sh --install denoiser or pass --bsvd-onnx.")
                 sys.exit(1)
-            # EP detection: prefer NVIDIA (TRT EP) if the vstrt plugin is present,
-            # else AMD (MIGraphX EP). Both rely on Python onnxruntime providers.
-            mlrt_plugin = find_mlrt_plugin()
-            bsvd_ep = "TRT" if (mlrt_plugin and "vstrt" in mlrt_plugin) else "MIGRAPHX"
+            # EP detection: BSVD runs via Python onnxruntime, so ask ORT what it
+            # can actually use (presence of the unrelated vstrt VS plugin used to
+            # pick MIGraphX on NVIDIA hosts and let ORT fall back to CPU silently).
+            try:
+                import onnxruntime as _ort
+            except ImportError:
+                print("[svtav1-dispatch] Error: --denoise-bsvd needs onnxruntime "
+                      "(pip install onnxruntime-gpu, or setup.sh --install denoiser).")
+                sys.exit(1)
+            _ort_providers = _ort.get_available_providers()
+            if "TensorrtExecutionProvider" in _ort_providers:
+                bsvd_ep = "TRT"
+            elif "CUDAExecutionProvider" in _ort_providers:
+                bsvd_ep = "CUDA"
+            elif "MIGraphXExecutionProvider" in _ort_providers:
+                bsvd_ep = "MIGRAPHX"
+            else:
+                print("[svtav1-dispatch] Error: no GPU execution provider in onnxruntime "
+                      f"(available: {_ort_providers}). Install onnxruntime-gpu (NVIDIA) "
+                      "or an ORT-ROCm build (AMD).")
+                sys.exit(1)
             # σ resolution
             if str(denoise_bsvd_sigma).lower() == "auto":
                 if not os.path.exists(_default_bsvd_sigma_estimator):
@@ -621,11 +641,20 @@ def main():
                           "stage via setup.sh --install denoiser or pass --bsvd-sigma <float>.")
                     sys.exit(1)
                 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-                from bsvd_optsig import compute_sigma_for_video
-                bsvd_sigma_val = compute_sigma_for_video(
-                    input_file, sigma_estimator_pth=_default_bsvd_sigma_estimator,
-                    warmup_frames=denoise_bsvd_warmup,
-                    device=f"cuda:{denoise_bsvd_device}")
+                try:
+                    from bsvd_optsig import compute_sigma_for_video
+                    bsvd_sigma_val = compute_sigma_for_video(
+                        input_file, sigma_estimator_pth=_default_bsvd_sigma_estimator,
+                        warmup_frames=denoise_bsvd_warmup,
+                        device=f"cuda:{denoise_bsvd_device}")
+                except ImportError as _e:
+                    # bsvd_optsig imports torch at module level and PyAV inside
+                    # compute_sigma_for_video, so both paths land here.
+                    print(f"[svtav1-dispatch] Error: --bsvd-sigma=auto needs the σ-estimator "
+                          f"dependencies (missing: {getattr(_e, 'name', None) or _e}). "
+                          "pip install av torch (or setup.sh --install denoiser), "
+                          "or pass --bsvd-sigma <float>.")
+                    sys.exit(1)
             else:
                 bsvd_sigma_val = float(denoise_bsvd_sigma)
             _backend_name = f"BSVD-V2-ORT-{bsvd_ep}"
