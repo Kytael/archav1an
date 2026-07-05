@@ -427,6 +427,44 @@ for s in scores:
 # Main
 # ---------------------------------------------------------------------------
 
+def count_video_packets(path):
+    """Video packet count of the first video stream (demux-only, no decode).
+
+    Packets == frames for the codecs this pipeline handles; used to verify the
+    encode is complete before muxing.
+    """
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    try:
+        out = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0",
+             "-count_packets", "-show_entries", "stream=nb_read_packets",
+             "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=1800)
+        return int(out.stdout.strip().splitlines()[0])
+    except (subprocess.SubprocessError, ValueError, IndexError, OSError):
+        return None
+
+
+USAGE = """\
+svtav1-dispatch.py — single-pass vspipe|SvtAv1EncApp encode with Opus mux.
+
+Required:
+  -i/--input FILE, -o/--output FILE
+
+Encode:      --quality CRF, --speed PRESET, --lp N, --photon-noise N,
+             --encoder-params "...", --no-opus, --ssimu2
+Denoisers (mutually exclusive):
+  --denoise-scunet        [--denoise-model NAME --denoise-tile N --denoise-streams N]
+  --denoise-smdegrain     [--denoise-tr N --denoise-thsad N]
+  --denoise-rvrt          [--denoise-rvrt-sigma F]
+  --denoise-stasunet      [--denoise-stasunet-engine PATH --denoise-stasunet-pre-darken-ev F]
+  --denoise-bsvd          [--bsvd-onnx PATH --bsvd-sigma auto|F --bsvd-device N --bsvd-warmup N]
+  --denoise-bsvd-smdegrain  (BSVD as SMDegrain prefilter; same --bsvd-* options)
+"""
+
+
 def main():
     args = sys.argv[1:]
 
@@ -527,8 +565,15 @@ def main():
             denoise_bsvd_device = int(nextval() or 0); i += 2
         elif arg == "--bsvd-warmup":
             denoise_bsvd_warmup = int(nextval() or 30); i += 2
+        elif arg in ("-h", "--help"):
+            print(USAGE)
+            sys.exit(0)
         else:
-            i += 1
+            # Unknown flags used to be silently ignored — a typo'd
+            # --denoise flag meant an un-denoised encode shipped as success.
+            print(f"[svtav1-dispatch] Error: unrecognized argument: {arg}")
+            print(USAGE)
+            sys.exit(2)
 
     if not input_file or not output_file:
         print("[svtav1-dispatch] Error: -i and -o are required.")
@@ -721,6 +766,20 @@ def main():
         sys.stdout.flush()
         run_piped([vspipe_exe, "-c", "y4m", src_vpy_path, "-"], svt_cmd,
                   source_label="vspipe")
+
+    # --- Frame-count verification (closes the truncated-encode hole even when
+    # every process exits 0, e.g. an upstream EOF at a frame boundary) ---
+    _src_frames = count_video_packets(input_file)
+    _enc_frames = count_video_packets(ivf_path)
+    if _src_frames and _enc_frames:
+        if _enc_frames != _src_frames:
+            print(f"[svtav1-dispatch] Error: encoded frame count {_enc_frames} "
+                  f"!= source {_src_frames}; aborting before mux.")
+            sys.exit(1)
+        print(f"[svtav1-dispatch] Frame count verified: {_enc_frames} frames.")
+    else:
+        print("[svtav1-dispatch] Warning: could not verify frame count "
+              "(ffprobe missing or stream unreadable).")
 
     # --- Mux ---
     print("[svtav1-dispatch] Muxing...")
