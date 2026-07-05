@@ -8,6 +8,7 @@ source "$(dirname "$(realpath "$0")")/../activate-venv.sh"
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 TOOL_SCRIPT="$ROOT_DIR/tools/deband-nvencc.py"
+cd "$SCRIPT_DIR"
 
 echo "=================================================="
 echo "NVIDIA Deband Script"

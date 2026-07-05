@@ -12,6 +12,7 @@ SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 TOOLS_DIR="$ROOT_DIR/tools"
 AC3_SCRIPT="$TOOLS_DIR/ac3.py"
+cd "$SCRIPT_DIR"
 
 echo "============================================================"
 echo "      Audio Encoder (AC3) - Linux"

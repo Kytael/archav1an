@@ -25,6 +25,7 @@ read -p "Press Enter to continue..."
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 TOOL_SCRIPT="$ROOT_DIR/tools/x265-prefilter.py"
+cd "$SCRIPT_DIR"
 
 # Check for x265
 if ! command -v x265 &> /dev/null; then

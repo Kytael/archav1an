@@ -24,6 +24,7 @@ read -p "Press Enter to continue..."
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 TOOL_SCRIPT="$ROOT_DIR/tools/nvidia-prefilter.py"
+cd "$SCRIPT_DIR"
 
 # Check for nvencc
 if ! command -v nvencc &> /dev/null && ! command -v NVEncC &> /dev/null; then

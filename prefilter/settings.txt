@@ -35,8 +35,3 @@ filter_command=--vpp-libplacebo-deband threshold=1.0,radius=16
 ; VapourSynth Deband Command
 ; Matches template: core.placebo.Deband(src, threshold=1.0, planes=1)
 vapoursynth_deband=core.placebo.Deband(src, threshold=1.0, planes=1)
-
-[x265_DENOISE_DEBAND]
-; Chain: Denoise -> Deband
-vapoursynth_denoise=DFTTest().denoise(src, {0.00:0.30, 0.40:0.30, 0.60:0.60, 0.80:1.50, 1.00:2.00}, planes=[0, 1, 2])
-vapoursynth_deband=core.placebo.Deband(src, threshold=1.0, planes=1)

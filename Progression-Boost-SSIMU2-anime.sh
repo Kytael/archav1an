@@ -1,4 +1,5 @@
 #!/bin/bash
+cd "$(dirname "$0")"
 
 # Notepad++ is suggested for editing this file.
 
@@ -35,11 +36,6 @@ rm -f tools/bat*.txt
 echo ""
 # Creating a marker ending in .sh.txt so python script can detect it
 touch "tools/bat-used-Progression-Boost-SSIMU2-anime.sh.txt"
-
-# --- STEP 0B: SET TEMP PATH ---
-# In Linux, we assume tools are installed or relative.
-# Use standard PATH. If you have a local VapourSynth/Av1an env, ensure it's active.
-export PATH="$PWD/tools/av1an:$PWD/tools/MKVToolNix:$PATH"
 
 # --- STEP 1A: WORKER COUNT CHECK (ENCODE) ---
 if [ -f "tools/workercount-progression.txt" ]; then
