@@ -19,6 +19,17 @@ if not X265_EXE:
     )
     sys.exit(1)
 
+# Stock x265 only reads raw YUV/Y4M, so the VPY must be piped through vspipe,
+# and its raw HEVC output must be muxed into a real MKV with mkvmerge.
+VSPIPE_EXE = shutil.which("vspipe")
+if not VSPIPE_EXE:
+    print("[ERROR] vspipe executable not found in PATH.")
+    sys.exit(1)
+MKVMERGE_EXE = shutil.which("mkvmerge")
+if not MKVMERGE_EXE:
+    print("[ERROR] mkvmerge executable not found in PATH.")
+    sys.exit(1)
+
 X265_SETTINGS = [
     "--preset",
     "superfast",
@@ -34,6 +45,29 @@ X265_SETTINGS = [
     "--level-idc",
     "0",
 ]
+
+
+def run_piped_encode(vpy_file, hevc_file):
+    """Pipes vspipe -c y4m into x265, writing a raw HEVC elementary stream."""
+    vspipe_cmd = [VSPIPE_EXE, "-c", "y4m", vpy_file, "-"]
+    x265_cmd = [X265_EXE] + X265_SETTINGS + ["-o", hevc_file, "-", "--y4m"]
+    print(f"Running: {' '.join(vspipe_cmd)} | {' '.join(x265_cmd)}")
+    try:
+        p1 = subprocess.Popen(vspipe_cmd, stdout=subprocess.PIPE)
+        p2 = subprocess.Popen(x265_cmd, stdin=p1.stdout)
+        p1.stdout.close()
+        p2.wait()
+        p1.wait()
+    except Exception as e:
+        print(f"[ERROR] Pipeline failed: {e}")
+        return False
+    if p1.returncode != 0:
+        print(f"[ERROR] vspipe failed with code {p1.returncode}")
+        return False
+    if p2.returncode != 0:
+        print(f"[ERROR] x265 failed with code {p2.returncode}")
+        return False
+    return True
 
 
 def run_shell_command(cmd_list):
@@ -155,19 +189,24 @@ def main():
         if not create_vpy_script(source_file, vpy_file):
             continue
 
-        # B. Construct x265 Command
-        # Format: x265 [settings] -o output.mkv input.vpy
-        cmd = [X265_EXE] + X265_SETTINGS + ["-o", output_file, vpy_file]
+        # B. Encode via vspipe -> x265 (stock x265 cannot read a .vpy, and its
+        # -o output is a raw HEVC stream, not a Matroska container)
+        hevc_file = f"{base_name}-x265lossless.hevc"
+        success = run_piped_encode(vpy_file, hevc_file)
 
-        # C. Run Encode
-        success = run_shell_command(cmd)
+        # C. Mux the raw HEVC with the source's audio/subs into a real MKV
+        if success:
+            success = run_shell_command(
+                [MKVMERGE_EXE, "-o", output_file, hevc_file, "--no-video", source_file]
+            )
 
         # D. Cleanup
-        if os.path.exists(vpy_file):
-            try:
-                os.remove(vpy_file)
-            except OSError:
-                pass
+        for tmp_file in (vpy_file, hevc_file):
+            if os.path.exists(tmp_file):
+                try:
+                    os.remove(tmp_file)
+                except OSError:
+                    pass
 
         if success:
             print(f"Success! Created: {output_file}")

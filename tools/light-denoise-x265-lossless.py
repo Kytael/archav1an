@@ -127,22 +127,25 @@ def run_x265_pipe(vpy_file, output_hevc, is_bt709):
 
     print(f"\n[x265] Encoding: {vpy_file} -> {output_hevc}")
 
-    # VSPipe Command
-    vspipe_cmd = [VSPIPE_EXE, "-y", str(vpy_file), "-"]
+    # VSPipe Command — the old "-y" y4m flag was removed; current VSPipe uses "-c y4m"
+    vspipe_cmd = [VSPIPE_EXE, "-c", "y4m", str(vpy_file), "-"]
 
     try:
-        # Pipe: vspipe -> x265
-        p1 = subprocess.Popen(
-            vspipe_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
+        # Pipe: vspipe -> x265. vspipe stderr stays on the console so script
+        # failures are visible (it used to be captured and never read).
+        p1 = subprocess.Popen(vspipe_cmd, stdout=subprocess.PIPE)
         p2 = subprocess.Popen(x265_cmd, stdin=p1.stdout)
 
         # Allow p1 to receive a SIGPIPE if p2 exits.
         p1.stdout.close()
 
         p2.communicate()
+        p1.wait()
 
         # Check return codes
+        if p1.returncode != 0:
+            print(f"Error: vspipe failed with code {p1.returncode}")
+            return False
         if p2.returncode == 0:
             return True
         else:

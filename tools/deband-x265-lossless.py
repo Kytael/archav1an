@@ -113,8 +113,8 @@ final.set_output(0)
 def run_x265(vpy_file, output_hevc, is_bt709):
     """Runs x265 encoding via VapourSynth pipe."""
 
-    # Get frame info from vspipe
-    vspipe_cmd = ["vspipe", "-y", vpy_file, "-"]
+    # vspipe's old "-y" y4m flag was removed; current VSPipe uses "-c y4m"
+    vspipe_cmd = ["vspipe", "-c", "y4m", vpy_file, "-"]
     x265_cmd = [
         X265_EXE,
         "--preset",
@@ -139,12 +139,15 @@ def run_x265(vpy_file, output_hevc, is_bt709):
     print(f"\n[x265] Encoding: {vpy_file} -> {output_hevc}")
 
     try:
-        vspipe_proc = subprocess.Popen(
-            vspipe_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
-        )
+        # vspipe stderr stays on the console so script failures are visible
+        vspipe_proc = subprocess.Popen(vspipe_cmd, stdout=subprocess.PIPE)
         x265_proc = subprocess.Popen(x265_cmd, stdin=vspipe_proc.stdout)
         vspipe_proc.stdout.close()
         x265_proc.wait()
+        vspipe_proc.wait()
+        if vspipe_proc.returncode != 0:
+            print(f"[x265] Error: vspipe failed with code {vspipe_proc.returncode}")
+            return False
         return x265_proc.returncode == 0
     except Exception as e:
         print(f"[x265] Error: {e}")
