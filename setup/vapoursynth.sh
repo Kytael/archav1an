@@ -191,16 +191,21 @@ EOF
         || { cd "$ORIG_DIR"; log_error "Failed to clone BestSource"; return 1; }
     cd bestsource || { cd "$ORIG_DIR"; log_error "Failed to cd into bestsource"; return 1; }
 
+    # Prefer system meson/ninja; fall back to venv-installed copies (which land
+    # in $VENV_DIR/bin, never on PATH — so invoke them by absolute path).
+    local MESON=meson NINJA=ninja
     if ! command -v meson &> /dev/null && [ -d "$VENV_DIR" ]; then
-        VIRTUAL_ENV="$VENV_DIR" uv pip install meson || true
+        VIRTUAL_ENV="$VENV_DIR" uv pip install meson ninja || true
+        MESON="$VENV_DIR/bin/meson"
+        command -v ninja &> /dev/null || NINJA="$VENV_DIR/bin/ninja"
     fi
-    meson setup build --prefix="$VS_PREFIX" --buildtype=release \
+    "$MESON" setup build --prefix="$VS_PREFIX" --buildtype=release \
         -Dc_args="-march=native -O3" \
         -Dcpp_args="-march=native -O3" \
         -Db_lto=true \
         || { cd "$ORIG_DIR"; log_error "BestSource meson setup failed"; return 1; }
-    ninja -C build || { cd "$ORIG_DIR"; log_error "BestSource ninja build failed"; return 1; }
-    ninja -C build install || { cd "$ORIG_DIR"; log_error "BestSource ninja install failed"; return 1; }
+    "$NINJA" -C build || { cd "$ORIG_DIR"; log_error "BestSource ninja build failed"; return 1; }
+    "$NINJA" -C build install || { cd "$ORIG_DIR"; log_error "BestSource ninja install failed"; return 1; }
 
     local BS_SO
     BS_SO="$(find "$VS_PREFIX/lib" -name 'libbestsource*' -type f 2>/dev/null | head -1)"

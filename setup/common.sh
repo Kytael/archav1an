@@ -220,7 +220,7 @@ get_python_site_packages() {
 
 # Install prefix for the source-built native stack (VapourSynth + plugins +
 # ffmpeg + SVT-AV1 + venv). Chosen under /opt so pacman never owns anything
-# inside it; deliberately *not* /usr/local. See plans/2026-05-20-vapoursynth-isolation.md.
+# inside it; deliberately *not* /usr/local.
 VS_PREFIX="${VS_PREFIX:-/opt/archav1an}"
 export VS_PREFIX
 

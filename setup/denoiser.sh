@@ -544,8 +544,19 @@ uninstall_denoiser() {
     local VS_PLUGIN_PATH
     VS_PLUGIN_PATH="$(get_vs_plugin_path)"
 
-    log_info "Removing torch, vsscunet, havsfunc from venv..."
-    "$VENV_DIR/bin/pip" uninstall -y torch vsscunet havsfunc || true
+    log_info "Removing denoiser Python packages from venv..."
+    # Mirror what install_denoiser pip-installs (havsfunc is never pip-installed
+    # under that name — it is curled in as havsfunc_legacy.py below).
+    "$VENV_DIR/bin/pip" uninstall -y torch torchvision vsscunet vsrvrt \
+        onnxruntime-gpu onnx onnxscript adjust av || true
+
+    log_info "Removing havsfunc_legacy + mvsfunc_pkg from venv site-packages..."
+    local _site
+    _site="$("$VENV_DIR/bin/python3" -c "import sysconfig; print(sysconfig.get_path('purelib'))" 2>/dev/null)"
+    if [ -n "$_site" ]; then
+        rm -f "$_site/havsfunc_legacy.py" || true
+        rm -rf "$_site/mvsfunc_pkg" || true
+    fi
 
     log_info "Removing vs-mlrt files..."
     rm -f "$VS_PLUGIN_PATH/libvstrt.so" || true
@@ -564,6 +575,13 @@ uninstall_denoiser() {
 
     log_info "Removing KNLMeansCL plugin..."
     rm -f "$VS_PLUGIN_PATH/libknlmeanscl.so" || true
+
+    log_info "Removing SMDegrain plugin symlinks (mvtools/removegrain/ctmf)..."
+    # Symlinks only — the pacman packages they point at are left installed.
+    rm -f "$VS_PLUGIN_PATH/libmvtools.so" "$VS_PLUGIN_PATH/libremovegrain.so" \
+        "$VS_PLUGIN_PATH/libctmf.so" || true
+
+    # Staged BSVD model assets in models/ are git-tracked repo content — left in place.
 
     log_success "Denoiser dependencies removed."
 }

@@ -60,7 +60,7 @@ install_python_libs() {
         || log_warn "pip upgrade failed, continuing..."
 
     if ! VIRTUAL_ENV="$VENV_DIR" uv pip install \
-            vsjetpack numpy rich vstools psutil anitopy pyperclip requests \
+            vsjetpack numpy scipy rich vstools psutil anitopy pyperclip requests \
             requests_toolbelt natsort colorama Cython; then
         local _failed_py
         _failed_py="$("$VENV_DIR/bin/python" -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "unknown")"
@@ -86,7 +86,7 @@ uninstall_python_libs() {
 
     if [ -d "$VENV_DIR" ]; then
         VIRTUAL_ENV="$VENV_DIR" uv pip uninstall \
-            vsjetpack numpy rich vstools psutil anitopy pyperclip \
+            vsjetpack numpy scipy rich vstools psutil anitopy pyperclip \
             requests requests_toolbelt natsort colorama Cython \
             || log_warn "Some packages failed to uninstall (already removed?)"
         log_success "Python libraries uninstalled from venv."

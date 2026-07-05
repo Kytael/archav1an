@@ -6,9 +6,6 @@ if [ -z "$COMMON_SOURCED" ]; then
 fi
 
 install_system_deps_arch() {
-    log_info "Updating system packages..."
-    pacman -Syu --noconfirm
-
     log_info "Installing build tools and libraries (pacman)..."
     local DEPS=(
         # Build tools
@@ -62,6 +59,11 @@ install_system_deps_arch() {
             log_error "Need root for pacman -S. Run: sudo pacman -S --needed --noconfirm ${_missing[*]}"
             return 1
         fi
+        # Sync + full upgrade only when we actually need to install something:
+        # installing against a stale db (or after a bare -Sy) is the classic
+        # Arch partial-upgrade hazard.
+        log_info "Updating system packages..."
+        pacman -Syu --noconfirm || { log_error "pacman -Syu failed"; return 1; }
         pacman -S --needed --noconfirm "${_missing[@]}" || { log_error "Failed to install system dependencies via pacman"; return 1; }
     fi
 
@@ -70,7 +72,7 @@ install_system_deps_arch() {
 
 install_system_deps_debian() {
     log_info "Updating apt..."
-    apt update
+    apt update || { log_error "apt update failed (root required?)"; return 1; }
 
     log_info "Installing System Packages (apt)..."
     local DEPS=(

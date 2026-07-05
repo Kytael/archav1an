@@ -79,13 +79,15 @@ is_installed() {
             [ -f "$VS_PREFIX/bin/SvtAv1EncApp" ]
             ;;
         "ffvship")
-            command -v FFVship &> /dev/null
+            # Installed to $VS_PREFIX/bin, which is never on setup's PATH
+            [ -x "$VS_PREFIX/bin/FFVship" ] || command -v FFVship &> /dev/null
             ;;
         "oxipng")
             [ -f "$VS_PREFIX/bin/oxipng" ]
             ;;
         "fssimu2")
-            command -v fssimu2 &> /dev/null
+            # Installed to $VS_PREFIX/bin, which is never on setup's PATH
+            [ -x "$VS_PREFIX/bin/fssimu2" ] || command -v fssimu2 &> /dev/null
             ;;
         "wwxd")
             local wwxd_path
