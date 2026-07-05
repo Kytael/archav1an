@@ -6,6 +6,7 @@ import shutil
 import platform
 import tempfile
 import shlex
+import time
 from datetime import datetime, timezone
 
 
@@ -426,11 +427,23 @@ def main():
             print(f"Warning: Could not read/remove manifest: {e}")
 
     if not files_to_tag:
-        # Fallback: scan for output MKVs (no manifest present)
-        for root, _, files in os.walk("."):
+        # Fallback (no manifest): only scan Output/ and only files modified in
+        # the last 24h. Walking the whole tree here used to re-tag every old
+        # output whenever a batch re-run skipped all files (no manifest left).
+        print("No manifest found; falling back to recent files under Output/ only.")
+        max_age_s = 24 * 3600
+        now = time.time()
+        for root, _, files in os.walk("Output"):
             for f in files:
                 if f.lower().endswith("-output.mkv") or f.lower().endswith("-av1.mkv"):
-                    files_to_tag.append(os.path.join(root, f))
+                    p = os.path.join(root, f)
+                    try:
+                        if now - os.path.getmtime(p) <= max_age_s:
+                            files_to_tag.append(p)
+                        else:
+                            print(f"Skipping (older than 24h): {p}")
+                    except OSError:
+                        pass
 
     if not files_to_tag:
         print("No output MKV files found to tag.")

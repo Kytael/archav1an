@@ -140,7 +140,7 @@ def main():
                 for _ in range(6):
                     try:
                         l = next(iterator)
-                        if tool_mode in ["vs-hip", "fssimu2"]:
+                        if tool_mode == "vs-hip":
                             # Ensure UNCOMMENTED (Remove leading # and optional space)
                             if l.strip().startswith("#"):
                                 l = re.sub(r"^(\s*)#\s?(.*)", r"\1\2", l)
@@ -174,23 +174,26 @@ def main():
                         break
                 continue
 
-            # 4. Handle Binary Name Replacement (FFVship -> vship or fssimu2)
-            # Look for: command = ["FFVship", or "vship", or "fssimu2",
-            binary_match = re.search(
-                r'command\s*=\s*\[\s*"(FFVship|vship|fssimu2)"', line
+            # 4. Handle fssimu2 (external binary) configuration
+            # Flip the uncommented metric_method assignments so the external
+            # code path is actually reachable when fssimu2 is selected.
+            mm_match = re.match(
+                r'^(\s*)metric_method\s*=\s*"(vapoursynth|ffvship)"\.lower\(\)', line
             )
-            if binary_match:
-                active_binary = "FFVship"  # Default fallback
-                if tool_mode == "fssimu2":
-                    active_binary = "fssimu2"
-                elif tool_mode == "vs-hip":
-                    active_binary = "FFVship"
+            if mm_match:
+                desired = "ffvship" if tool_mode == "fssimu2" else "vapoursynth"
+                if mm_match.group(2) != desired:
+                    line = f'{mm_match.group(1)}metric_method = "{desired}".lower()\n'
+                    modified = True
 
-                # If we have a preferred binary, perform substitution
-                if active_binary != binary_match.group(1):
-                    line = line.replace(
-                        f'"{binary_match.group(1)}"', f'"{active_binary}"'
-                    )
+            # The target scripts put the binary name on its own line inside
+            # 'command = [' — match it standalone (the old same-line
+            # 'command = ["FFVship"' pattern never matched).
+            binary_match = re.match(r'^(\s*)"(FFVship|fssimu2)",\s*$', line)
+            if binary_match:
+                active_binary = "fssimu2" if tool_mode == "fssimu2" else "FFVship"
+                if binary_match.group(2) != active_binary:
+                    line = f'{binary_match.group(1)}"{active_binary}",\n'
                     modified = True
 
             output_lines.append(line)

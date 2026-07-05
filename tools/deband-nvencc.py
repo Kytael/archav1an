@@ -104,6 +104,8 @@ def run_ffmpeg_mux(video_file, audio_source, output_file):
         "1:a?",
         "-map",
         "1:s?",
+        "-map",
+        "1:t?",
         "-c",
         "copy",
         output_file,

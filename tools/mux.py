@@ -12,6 +12,10 @@ import glob
 import sys
 import json
 import shutil
+from pathlib import Path
+
+# Source extensions accepted by the pipeline (mirrors pipeline.py VIDEO_EXTENSIONS)
+VIDEO_EXTENSIONS = (".mkv", ".mp4", ".m2ts", ".mov")
 
 # Tool paths (use system binaries)
 MKVMERGE = shutil.which("mkvmerge") or "mkvmerge"
@@ -120,6 +124,23 @@ def get_video_track_count(source_file):
         return 1
 
 
+def has_audio_track(source_file):
+    """
+    Uses mkvmerge JSON output to check whether a file already contains audio.
+    Returns True on probe failure so callers err on the side of skipping.
+    """
+    cmd = [MKVMERGE, "-J", source_file]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", check=True
+        )
+        data = json.loads(result.stdout)
+        return any(t.get("type") == "audio" for t in data.get("tracks", []))
+    except Exception as e:
+        print(f"[WARN] Failed to probe audio tracks in {source_file}: {e}")
+        return True
+
+
 def check_vfr_mediainfo(source_file):
     """
     Uses MediaInfo to check if the video has a Variable frame rate mode.
@@ -154,7 +175,15 @@ def mux_files():
         output_dir = "."
         input_dir = "."
 
-    av1_files = glob.glob(os.path.join(output_dir, "*-av1.mkv"))
+    # Recurse only inside a real Output/ tree (pipeline mirrors Input subfolders
+    # into Output/<subpath>/); in the "." fallback stay flat to avoid sweeping
+    # the whole project tree.
+    if output_dir == "Output":
+        av1_files = sorted(
+            glob.glob(os.path.join(output_dir, "**", "*-av1.mkv"), recursive=True)
+        )
+    else:
+        av1_files = sorted(glob.glob(os.path.join(output_dir, "*-av1.mkv")))
 
     if not av1_files:
         print("No *-av1.mkv files found to mux.")
@@ -165,27 +194,40 @@ def mux_files():
     for av1_file in av1_files:
         filename = os.path.basename(av1_file)
         base_name = filename.replace("-av1.mkv", "")
+        av1_dir = os.path.dirname(av1_file)
 
-        # Check for matching source file in Input folder
-        possible_sources = [
-            os.path.join(input_dir, f"{base_name}.mkv"),
-            os.path.join(input_dir, f"{base_name}.mp4"),
-            os.path.join(input_dir, f"{base_name}.m2ts"),
-            os.path.join(input_dir, f"{base_name}-source.mkv"),
-        ]
+        # Finished outputs keep the -av1.mkv name but already carry audio;
+        # re-muxing them would delete the original. Only video-only
+        # intermediates need muxing.
+        if has_audio_track(av1_file):
+            print(f"[SKIP] Already contains audio (finished output): {filename}")
+            continue
+
+        # Check for matching source file in the mirrored Input subfolder
+        rel_dir = os.path.relpath(av1_dir, output_dir)
+        source_dir = input_dir if rel_dir == "." else os.path.join(input_dir, rel_dir)
+
         source_mkv = None
-        for path in possible_sources:
-            if os.path.exists(path):
-                source_mkv = path
-                break
+        if os.path.isdir(source_dir):
+            # Case-insensitive lookup (sources may be .MOV/.MKV etc.)
+            entries = {}
+            for f in sorted(os.listdir(source_dir)):
+                entries.setdefault(f.lower(), f)
+            candidates = [f"{base_name}{ext}" for ext in VIDEO_EXTENSIONS]
+            candidates.append(f"{base_name}-source.mkv")
+            for cand in candidates:
+                match = entries.get(cand.lower())
+                if match:
+                    source_mkv = os.path.join(source_dir, match)
+                    break
 
         if not source_mkv:
             print(f"[SKIP] Source file not found for: {filename}")
             continue
 
-        temp_mkv = os.path.join(output_dir, f"{base_name}_temp_no_video.mkv")
-        final_output = os.path.join(output_dir, f"{base_name}-output.mkv")
-        timestamp_file = os.path.join(output_dir, f"{base_name}_timestamps.txt")
+        temp_mkv = os.path.join(av1_dir, f"{base_name}_temp_no_video.mkv")
+        final_output = os.path.join(av1_dir, f"{base_name}-output.mkv")
+        timestamp_file = os.path.join(av1_dir, f"{base_name}_timestamps.txt")
 
         try:
             # Step 0: Detect VFR using MediaInfo
@@ -329,8 +371,6 @@ def mux_single(source, av1, output):
 
 
 if __name__ == "__main__":
-    from pathlib import Path
-
     parser = argparse.ArgumentParser(description="Mux AV1 video with audio/subs from source")
     parser.add_argument("--source", help="Source file with audio/subs")
     parser.add_argument("--av1", help="AV1 video-only file")

@@ -107,17 +107,31 @@ src.set_output()
 
 
 # --- WORKER CALCULATION ---
-def calculate_optimal_count(fps, rss_per_worker):
+def calculate_optimal_count(fps, rss_per_worker, cpu_cap=None):
+    """rss_per_worker must be the MARGINAL cost of one worker (RSS delta over
+    the process baseline, children included), not whole-process RSS."""
     if fps <= 0:
         return 1
     total_ram = psutil.virtual_memory().total
-    cpu_threads = os.cpu_count()
+    if cpu_cap is None:
+        cpu_cap = os.cpu_count()
     safe_ram = total_ram * 0.85
     if rss_per_worker <= 0:
         rss_per_worker = 100 * 1024 * 1024
     max_workers_ram = int(safe_ram / rss_per_worker)
-    max_workers = min(max_workers_ram, cpu_threads)
+    max_workers = min(max_workers_ram, cpu_cap)
     return max(1, max_workers)
+
+
+def _rss_with_children(proc):
+    """Total RSS of a process and its live children (e.g. fssimu2 workers)."""
+    rss = proc.memory_info().rss
+    for child in proc.children(recursive=True):
+        try:
+            rss += child.memory_info().rss
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    return rss
 
 
 # --- BENCHMARK FUNCTIONS ---
@@ -203,7 +217,11 @@ def benchmark_cpu_fssimu2(encoded_file):
     if fps_1 <= 0:
         return 0, 1
 
-    opt_workers = calculate_optimal_count(fps_1, rss)
+    # Each fssimu2 worker runs multi-threaded VS decode plus a subprocess, so
+    # cap at physical cores rather than logical threads.
+    opt_workers = calculate_optimal_count(
+        fps_1, rss, cpu_cap=psutil.cpu_count(logical=False) or os.cpu_count()
+    )
 
     print(f"   Benchmarking CPU (fssimu2 - {opt_workers} Workers)...", file=sys.stderr)
     fps_opt, _ = _run_fssimu2_internal(
@@ -215,6 +233,12 @@ def benchmark_cpu_fssimu2(encoded_file):
 
 def _run_fssimu2_internal(workers, encoded_file, duration, exe_path):
     import numpy as np
+
+    # Baseline before loading clips: the returned RSS is the marginal cost of
+    # the run (delta over baseline, fssimu2 children included), so the RAM
+    # bound isn't computed from whole-process RSS.
+    self_proc = psutil.Process(os.getpid())
+    baseline_rss = self_proc.memory_info().rss
 
     src_full = core.ffms2.Source(source=str(SAMPLE_FILE))
     enc_full = core.ffms2.Source(source=str(encoded_file))
@@ -275,9 +299,7 @@ def _run_fssimu2_internal(workers, encoded_file, duration, exe_path):
 
                 if frames % 5 == 0:
                     try:
-                        max_rss = max(
-                            max_rss, psutil.Process(os.getpid()).memory_info().rss
-                        )
+                        max_rss = max(max_rss, _rss_with_children(self_proc))
                     except:
                         pass
 
@@ -292,7 +314,7 @@ def _run_fssimu2_internal(workers, encoded_file, duration, exe_path):
     elapsed = time.time() - start
     fps = frames / elapsed if elapsed > 0 else 0
     del ref, dist, src_full, enc_full
-    return fps, max_rss
+    return fps, max(0, max_rss - baseline_rss)
 
 
 def benchmark_cpu_vszip(encoded_file):
@@ -312,6 +334,11 @@ def _run_vszip_internal(workers, encoded_file, duration):
     if not hasattr(core, "vszip"):
         return 0, 0
     core.num_threads = workers
+
+    # Baseline before loading clips: return the marginal RSS of the run, not
+    # whole-process RSS (see calculate_optimal_count).
+    self_proc = psutil.Process(os.getpid())
+    baseline_rss = self_proc.memory_info().rss
 
     src = core.ffms2.Source(source=str(SAMPLE_FILE)).resize.Bicubic(
         format=vs.RGB24, matrix_in_s="709"
@@ -337,9 +364,7 @@ def _run_vszip_internal(workers, encoded_file, duration):
 
         if n % 10 == 0:
             try:
-                max_rss[0] = max(
-                    max_rss[0], psutil.Process(os.getpid()).memory_info().rss
-                )
+                max_rss[0] = max(max_rss[0], self_proc.memory_info().rss)
             except:
                 pass
         if elapsed > duration:
@@ -354,7 +379,7 @@ def _run_vszip_internal(workers, encoded_file, duration):
     elapsed = time.time() - start
     fps = frames[0] / elapsed if elapsed > 0 else 0
     del res, src, enc
-    return fps, max_rss[0]
+    return fps, max(0, max_rss[0] - baseline_rss)
 
 
 if __name__ == "__main__":

@@ -114,9 +114,23 @@ def get_optimal_workers():
             
             time.sleep(0.5)
     finally:
-        # Ensure process is killed if it's still running after timeout
+        # Ensure process is killed if it's still running after timeout.
+        # Kill the whole tree: SIGKILL on the av1an parent alone orphans the
+        # SvtAv1EncApp/ffmpeg/bestsource children, which keep encoding while
+        # cleanup_temp_folders() tries to delete their temp dirs.
         if process.poll() is None:
+            children = []
+            try:
+                children = psutil.Process(process.pid).children(recursive=True)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
             process.kill()
+            for child in children:
+                try:
+                    child.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            process.wait()
 
     # 3. Perform Calculations
     if max_total_rss == 0:

@@ -29,15 +29,23 @@ def get_binary(name):
 MKVPROPEDIT = get_binary("mkvpropedit")
 
 
-def get_5fish_folder():
-    """Finds the 5fish folder name in tools/av1an."""
-    base_path = os.path.join("tools", "av1an")
-    # Search for folder starting with 5fish-svt-av1-psy
-    pattern = os.path.join(base_path, "5fish-svt-av1-psy*")
-    folders = glob.glob(pattern)
-    if folders:
-        return os.path.basename(folders[0])
-    return "5fish-svt-av1-psy_Unknown"
+def get_5fish_version():
+    """Gets the SVT-AV1-PSY version from the installed binary (same as tag.py)."""
+    svt_exe = shutil.which("SvtAv1EncApp")
+    if not svt_exe:
+        return "SvtAv1EncApp_NotFound"
+
+    try:
+        # Expected output: "SVT-AV1-PSY v2.3.0-..."
+        res = subprocess.run([svt_exe, "--version"], capture_output=True, text=True)
+        if res.returncode == 0:
+            for line in res.stdout.splitlines():
+                if "SVT-AV1" in line:
+                    return line.strip()
+    except Exception:
+        pass
+
+    return "SvtAv1EncApp_Unknown"
 
 
 def get_active_batch_info():
@@ -224,7 +232,7 @@ def main():
     if not dynamic_params:
         print("Warning: Could not extract dynamic parameters.")
 
-    fish_ver = get_5fish_folder()
+    fish_ver = get_5fish_version()
 
     full_tag = (
         f"{batch_name} "

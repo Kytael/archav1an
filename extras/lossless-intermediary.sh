@@ -7,6 +7,7 @@
 source "$(dirname "$(realpath "$0")")/../activate-venv.sh"
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$SCRIPT_DIR"
 TOOL_SCRIPT="$ROOT_DIR/tools/lossless-intermediary.py"
 
 if [ ! -f "$TOOL_SCRIPT" ]; then

@@ -111,6 +111,12 @@ OPUSENC_EXE = get_binary("opusenc")
 MKVMERGE_EXE = get_binary("mkvmerge")
 MKVEXTRACT_EXE = get_binary("mkvextract")
 
+# get_binary returns the bare name when the binary isn't installed, so decide
+# the ffmpeg-libopus fallback once here by checking for a real binary/path.
+USE_FFMPEG_FOR_OPUS = (
+    shutil.which(OPUSENC_EXE) is None and not Path(OPUSENC_EXE).exists()
+)
+
 # --- TEMP DIR ---
 TEMP_WORK_DIR = OUTPUT_DIR / ".opus_temp"
 if not TEMP_WORK_DIR.exists():
@@ -433,10 +439,8 @@ def worker_opus(slot_id):
 
         slot_status[slot_id] = f"{slot_id + 1}: [OPUS] {fname}.. Init"
 
-        # Check if opusenc exists, else use ffmpeg
-        use_ffmpeg = False
-        if "opusenc" not in OPUSENC_EXE and not Path(OPUSENC_EXE).exists():
-            use_ffmpeg = True
+        # opusenc missing -> ffmpeg libopus fallback (decided at startup)
+        use_ffmpeg = USE_FFMPEG_FOR_OPUS
 
         if use_ffmpeg:
             cmd = [

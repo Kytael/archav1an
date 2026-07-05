@@ -201,25 +201,6 @@ final.set_output(0)
 
 def run_x265(vpy_file, output_hevc, color_args):
     """Runs x265 lossless encoding."""
-    cmd = [
-        X265_EXE,
-        "--input",
-        vpy_file,
-        "--y4m",
-        "--preset",
-        "superfast",
-        "--output-depth",
-        "10",
-        "--lossless",
-        "--level-idc",
-        "0",
-    ]
-
-    if color_args:
-        cmd.extend(color_args)
-
-    cmd.extend(["--output", output_hevc])
-
     # We need to pipe from vspipe to x265
     vspipe_cmd = ["vspipe", "-c", "y4m", vpy_file, "-"]
 
@@ -248,7 +229,11 @@ def run_x265(vpy_file, output_hevc, color_args):
         x265_proc = subprocess.Popen(x265_cmd, stdin=vspipe_proc.stdout)
         vspipe_proc.stdout.close()
         x265_proc.communicate()
+        vspipe_proc.wait()
 
+        if vspipe_proc.returncode != 0:
+            print(f"[x265] Error: vspipe failed with code {vspipe_proc.returncode}")
+            return False
         return x265_proc.returncode == 0
     except Exception as e:
         print(f"[x265] Error: {e}")
@@ -272,6 +257,8 @@ def run_ffmpeg_mux(video_file, audio_source, output_file):
         "1:a?",
         "-map",
         "1:s?",
+        "-map",
+        "1:t?",
         "-c",
         "copy",
         output_file,

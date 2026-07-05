@@ -84,11 +84,23 @@ def cleanup_workspace():
 
     # 2b. Recursive cleanup of Temp/ directory (pipeline temp files)
     temp_root = "Temp"
+    # Resume state for failed encodes lives under Temp/ (pipeline.py only
+    # clears a Temp subdir on success): scene-detection JSONs, VPYs and
+    # metric logs let a re-run skip scene detection and resume the encode.
+    preserve_suffixes = (
+        "_scenedetect.json",
+        "_scenes.json",
+        ".vpy",
+        "_ssimu2.log",
+        "_xpsnr.log",
+    )
     if os.path.exists(temp_root):
         # Walk Temp/ and remove empty directories bottom-up
         # Also remove stale temp files (ffindex, lwi, json, log, etc.)
         for root, dirs, files in os.walk(temp_root, topdown=False):
             for f in files:
+                if f.lower().endswith(preserve_suffixes):
+                    continue
                 fpath = os.path.join(root, f)
                 for ext in extensions:
                     if f.lower().endswith(ext):
