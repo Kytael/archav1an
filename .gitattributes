@@ -9,3 +9,7 @@
 *.mkv   binary
 *.mp4   binary
 *.opus  binary
+*.onnx  binary
+*.data  binary
+*.pth   binary
+*.engine binary

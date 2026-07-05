@@ -11,27 +11,50 @@ Pick based on your content type and desired quality:
 ### 🎌 ANIME
 | Script | Quality | Description |
 |--------|---------|-------------|
-| `run_linux_anime_crf30.sh` | **Standard** | ✅ Recommended starting point |
+| `run_linux_anime_crf32.sh` | **Standard** | ✅ Recommended starting point |
 | `run_linux_anime_crf25.sh` | High | Higher quality, larger files |
 | `run_linux_anime_crf18.sh` | Archival | Maximum quality, largest files |
+| `run_linux_anime_crf15.sh` | Archival+ | Aggressive settings, largest files |
 
 ### 🎬 LIVE ACTION / MOVIES / TV SHOWS
 | Script | Quality | Description |
 |--------|---------|-------------|
-| `run_linux_live_crf30.sh` | **Standard** | ✅ Recommended starting point |
+| `run_linux_live_crf32.sh` | **Standard** | ✅ Recommended starting point |
 | `run_linux_live_crf25.sh` | High | Higher quality, larger files |
 | `run_linux_live_crf18.sh` | Archival | Maximum quality, largest files |
+| `run_linux_live_crf15.sh` | Archival+ | Maximum fidelity, largest files |
 
 ### ⚽ SPORTS / FAST MOTION
 | Script | Quality | Description |
 |--------|---------|-------------|
-| `run_linux_sports_crf33.sh` | Optimized | ✅ Best for high-motion content |
+| `run_linux_sports_crf27.sh` | Optimized | ✅ Best for high-motion content |
+
+### 💃 DANCE / PERFORMANCE
+| Script | Quality | Description |
+|--------|---------|-------------|
+| `run_linux_dance_crf27.sh` | Standard | Dance/performance footage |
+| `run_linux_dance_HQ_crf27.sh` | High | Single-pass whole-clip encode via `svtav1-dispatch.py`; forwards extra args (e.g. `--denoise-bsvd`) |
 
 ### 🎞️ DIRECT ENCODE (SINGLE PASS, NO BOOST)
 | Script | Quality | Description |
 |--------|---------|-------------|
-| `av1an-batch-anime-crf30.sh` | Standard | Single-pass anime encode, no Auto-Boost |
-| `av1an-batch-liveaction-crf30.sh` | Standard | Single-pass live action encode, no Auto-Boost |
+| `av1an-batch-anime-crf32.sh` | Standard | Single-pass anime encode, no Auto-Boost |
+| `av1an-batch-liveaction-crf32.sh` | Standard | Single-pass live action encode, no Auto-Boost |
+| `av1an-batch-dance-crf27.sh` | Standard | Single-pass dance encode, no Auto-Boost |
+
+### 🧹 DENOISERS (single-pass path)
+
+`tools/svtav1-dispatch.py` — used by `run_linux_dance_HQ_crf27.sh` and reachable from the single-pass wrappers — can GPU-denoise ahead of the encoder:
+
+| Flag | Backend |
+|------|---------|
+| `--denoise-bsvd` | BSVD V2 stateful streaming via ONNX Runtime (TensorRT/CUDA on NVIDIA, MIGraphX on AMD). Default `--bsvd-sigma auto` picks σ per clip |
+| `--denoise-bsvd-smdegrain` | BSVD as SMDegrain prefilter (hybrid; helps dark clips) |
+| `--denoise-scunet` | SCUNet via vs-mlrt (TRT/MIGX backend) |
+| `--denoise-stasunet` | STA-SUNet TensorRT engine (fixed 512/768 tiles; see `--denoise-stasunet-engine`) |
+| `--denoise-smdegrain` | Classical mvtools SMDegrain |
+
+Model assets and Python deps are staged by `./setup.sh --install denoiser`.
 
 ### 🚀 PROGRESSION BOOST (PER-SCENE OPTIMIZATION)
 | Script | Quality | Description |
@@ -67,7 +90,7 @@ Or selectively:
 ```bash
 ./setup.sh --install python_libs   # uv venv at /opt/archav1an/venv
 ./setup.sh --install ffmpeg        # source-built ffmpeg w/ NVENC into prefix
-./setup.sh --install vapoursynth   # VS R73 + FFMS2 + BestSource
+./setup.sh --install vapoursynth   # VS R76 + FFMS2 + BestSource
 ./setup.sh --install denoiser      # SCUNet/SMDegrain/RVRT/STA-SUNet plugins
 ./setup.sh --install wwxd vszip subtext  # core VS plugins
 ```
@@ -79,7 +102,7 @@ The setup runs `pacman -Q <pkg>` before any `pacman -S` so already-installed sys
 source activate-venv.sh
 ```
 
-`activate-venv.sh` sources the venv, prepends `/opt/archav1an/bin` to PATH, sets `LD_LIBRARY_PATH=/opt/archav1an/lib` (the source-built R73 VapourSynth library deliberately has no SONAME so it's only visible inside this activated env — pacman's system v75 remains the global default outside it), and sets `VAPOURSYNTH_PLUGIN_PATH=/opt/archav1an/lib/vapoursynth`.
+`activate-venv.sh` sources the venv, prepends `/opt/archav1an/bin` to PATH, sets `LD_LIBRARY_PATH=/opt/archav1an/lib` (the source-built R76 VapourSynth shares pacman v75's SONAME `libvapoursynth.so.4`, so LD_LIBRARY_PATH precedence makes R76 win only inside this activated env — pacman's v75 remains the global default outside it), and sets `VAPOURSYNTH_EXTRA_PLUGIN_PATH=/opt/archav1an/lib/vapoursynth`.
 
 **Choosing the Python version:**
 ```bash
@@ -97,7 +120,7 @@ After `source activate-venv.sh`:
 ```bash
 # Core tools (should resolve to /opt/archav1an/bin)
 which vspipe ffmpeg av1an SvtAv1EncApp
-vspipe --version    # should report "Core R73"
+vspipe --version    # should report "Core R76"
 ffmpeg -version | head -n 1
 SvtAv1EncApp --help | grep -i "SVT-AV1"
 
@@ -132,17 +155,19 @@ pacman -Qo /opt/archav1an/bin/vspipe   # must say "No package owns ..."
 We provide variants based on content type (Anime vs Live Action) and quality. All scripts support **Auto-BT.709 Detection**.
 
 **Anime Variants:**
-*   **Standard (CRF 30)**: `./run_linux_anime_crf30.sh` - Balanced speed/quality (Tune 3).
+*   **Standard (CRF 32)**: `./run_linux_anime_crf32.sh` - Balanced speed/quality.
 *   **High (CRF 25)**: `./run_linux_anime_crf25.sh` - Slower, Tune 0.
 *   **Highest (CRF 18)**: `./run_linux_anime_crf18.sh` - Aggressive boosting.
+*   **Archival (CRF 15)**: `./run_linux_anime_crf15.sh` - Maximum quality.
 
 **Live Action Variants (Auto-Crop Enabled):**
-*   **Standard (CRF 30)**: `./run_linux_live_crf30.sh` - Auto-crop, Tune 3.
+*   **Standard (CRF 32)**: `./run_linux_live_crf32.sh` - Auto-crop, Tune 3.
 *   **High (CRF 25)**: `./run_linux_live_crf25.sh` - Tune 3, Variance Boost 2.
 *   **Highest (CRF 18)**: `./run_linux_live_crf18.sh` - Maximum fidelity.
+*   **Archival (CRF 15)**: `./run_linux_live_crf15.sh` - Maximum fidelity.
 
 **Sports / High-Motion Content:**
-*   **Low Quality (CRF 33)**: `./run_linux_sports_crf33.sh` - Optimized for high-motion content with extra temporal filtering.
+*   **Standard (CRF 27)**: `./run_linux_sports_crf27.sh` - Optimized for high-motion content with extra temporal filtering.
 
 The script will:
 1.  Detect Scene Changes.
@@ -183,7 +208,6 @@ We include an `extras/` folder with helper scripts for advanced workflows:
 
 | Script | Description |
 |--------|-------------|
-| `encode-opus-audio.sh` | Legacy audio encoding (use `audio-encoding/` instead) |
 | `lossless-intermediary.sh` | Converts video to lossless 10-bit x265 intermediates |
 | `compare.sh` | Generates comparison screenshots via `comp.py` |
 | `light-denoise.sh` | Applies DFTTest denoise + x265 lossless encoding |

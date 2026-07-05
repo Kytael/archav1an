@@ -7,9 +7,9 @@ The `setup.sh` script builds and installs everything into a single isolated pref
 | Path | Contents |
 | :--- | :--- |
 | `bin/` | `vspipe`, `ffmpeg`, `ffprobe`, `ffplay`, `SvtAv1EncApp`, `av1an`, `oxipng`, `FFVship`, `dav1d`, `ffmsindex` |
-| `lib/libvapoursynth.so`, `libvapoursynth-script.so` | R73 core (no SONAME — discovered via `LD_LIBRARY_PATH` set by `activate-venv.sh`) |
+| `lib/libvapoursynth.so.4`, `libvapoursynth-script.so` | R76 core (SONAME `libvapoursynth.so.4`; wins over pacman's v75 via `LD_LIBRARY_PATH` set by `activate-venv.sh`) |
 | `lib/vapoursynth/*.so` | VS plugins (see table below) |
-| `lib/python3.13/site-packages/vapoursynth/` | R73 Python module, wired into the venv via `_vapoursynth_native.pth` |
+| `lib/python3.X/site-packages/vapoursynth/` | R76 Python module (versioned per interpreter, currently 3.14), wired into the venv via `_vapoursynth_native.pth` |
 | `lib/python3/site-packages/` (deprecated) | (Empty placeholder; the actual site-packages is versioned per-Python.) |
 | `include/{vapoursynth,ffms2,libav*,libsw*,dav1d,svt-av1}/` | Headers for downstream plugin builds |
 | `lib/pkgconfig/*.pc` | pkg-config metadata for the prefix |
@@ -91,7 +91,7 @@ The venv at `$VS_PREFIX/venv` is created and managed by **uv** (not pip + `pytho
 - Default Python: whatever `python3` resolves to on PATH (typically the latest pacman version).
 - Override: `PYTHON_VERSION=3.13 ./setup.sh --install python_libs` — uv downloads the specified interpreter if missing. Useful when a newer Python breaks a binary dep (e.g. PyO3-based packages typically lag a release behind).
 - Upgrade detection: if you set `PYTHON_VERSION` to something different from what's already in the venv, `install_python_libs` warns and rebuilds the venv; you must rerun `--install vapoursynth` after because the source-built VS module is binary-linked to the venv's interpreter.
-- The pip-published `vapoursynth` stub package is removed from the venv on every install, otherwise it would shadow the source-built R73 module.
+- The pip-published `vapoursynth` stub package is removed from the venv on every install, otherwise it would shadow the source-built R76 module.
 
 ### Python packages
 
