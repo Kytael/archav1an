@@ -733,7 +733,7 @@ class DefaultZone:
                                          crf: float,
                                          luma_average: np.ndarray[np.float32], luma_min: np.ndarray[np.float32], luma_max: np.ndarray[np.float32], luma_diff: np.ndarray[np.float32]) -> list[str]:
         return """--lp 3 --keyint 305 --input-depth 10 --scm 0
-                  --tune 3 --variance-boost-strength 1 --balancing-q-bias 1
+                  --tune 3 --variance-boost-strength 1
                   --luminance-qp-bias 10
                   --ac-bias 1.0 --tx-bias 3 --complex-hvs 0
                   --color-primaries 1 --transfer-characteristics 1 --matrix-coefficients 1 --color-range 0""".split()
@@ -741,7 +741,7 @@ class DefaultZone:
                                        crf: float,
                                        luma_average: np.ndarray[np.float32], luma_min: np.ndarray[np.float32], luma_max: np.ndarray[np.float32], luma_diff: np.ndarray[np.float32]) -> list[str]:
         return """--lp 3 --keyint 305 --input-depth 10 --scm 0
-                  --tune 3 --variance-boost-strength 1 --balancing-q-bias 1
+                  --tune 3 --variance-boost-strength 1
                   --luminance-qp-bias 10
                   --ac-bias 1.0 --tx-bias 3 --complex-hvs 1
                   --color-primaries 1 --transfer-characteristics 1 --matrix-coefficients 1 --color-range 0""".split()

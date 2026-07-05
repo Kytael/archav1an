@@ -733,16 +733,16 @@ class DefaultZone:
                                          crf: float,
                                          luma_average: np.ndarray[np.float32], luma_min: np.ndarray[np.float32], luma_max: np.ndarray[np.float32], luma_diff: np.ndarray[np.float32]) -> list[str]:
         return """--lp 3 --keyint 305 --input-depth 10 --scm 0
-                  --tune 0 --variance-boost-strength 1 --noise-level-thr 16000 --variance-md-bias 1 --cdef-bias 1 --balancing-q-bias 1 --chroma-qmc-bias 2
-                  --filtering-noise-detection 4 --balancing-r0-based-layer-offset 0 --luminance-qp-bias 20 --qm-min 8 --chroma-qm-min 10
+                  --tune 0 --variance-boost-strength 1
+                  --filtering-noise-detection 4 --luminance-qp-bias 20 --qm-min 8 --chroma-qm-min 10
                   --ac-bias 1.0 --tx-bias 3 --complex-hvs 0
                   --color-primaries 1 --transfer-characteristics 1 --matrix-coefficients 1 --color-range 0""".split()
     def final_dynamic_parameters(self, start_frame: int, end_frame: int,
                                        crf: float,
                                        luma_average: np.ndarray[np.float32], luma_min: np.ndarray[np.float32], luma_max: np.ndarray[np.float32], luma_diff: np.ndarray[np.float32]) -> list[str]:
         return """--lp 3 --keyint 305 --input-depth 10 --scm 0
-                  --tune 0 --variance-boost-strength 1 --noise-level-thr 16000 --variance-md-bias 1 --cdef-bias 1 --balancing-q-bias 1 --chroma-qmc-bias 2
-                  --filtering-noise-detection 4 --balancing-r0-based-layer-offset 0 --luminance-qp-bias 20 --qm-min 8 --chroma-qm-min 10
+                  --tune 0 --variance-boost-strength 1
+                  --filtering-noise-detection 4 --luminance-qp-bias 20 --qm-min 8 --chroma-qm-min 10
                   --ac-bias 1.0 --tx-bias 3 --complex-hvs -1
                   --color-primaries 1 --transfer-characteristics 1 --matrix-coefficients 1 --color-range 0""".split()
 

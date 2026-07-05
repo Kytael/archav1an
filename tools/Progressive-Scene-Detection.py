@@ -736,14 +736,14 @@ class DefaultZone:
                                          luma_average: np.ndarray[np.float32], luma_min: np.ndarray[np.float32], luma_max: np.ndarray[np.float32], luma_diff: np.ndarray[np.float32]) -> list[str]:
         return """--lp 3 --keyint -1 --input-depth 10 --scm 0
                   --tune 3 --qp-scale-compress-strength 3 --luminance-qp-bias 16 --qm-min 8 --chroma-qm-min 10
-                  --psy-rd 2.0 --spy-rd 2 --complex-hvs 0
+                  --complex-hvs 0
                   --color-primaries 1 --transfer-characteristics 1 --matrix-coefficients 1 --color-range 0""".split()
     def final_dynamic_parameters(self, start_frame: int, end_frame: int,
                                        crf: float,
                                        luma_average: np.ndarray[np.float32], luma_min: np.ndarray[np.float32], luma_max: np.ndarray[np.float32], luma_diff: np.ndarray[np.float32]) -> list[str]:
         return """--lp 3 --keyint -1 --input-depth 10 --scm 0
                   --tune 3 --qp-scale-compress-strength 3 --luminance-qp-bias 16 --qm-min 8 --chroma-qm-min 10
-                  --psy-rd 2.0 --spy-rd 2 --complex-hvs 1
+                  --complex-hvs 1
                   --color-primaries 1 --transfer-characteristics 1 --matrix-coefficients 1 --color-range 0""".split()
 
 # A trick in this whole chain of dynamic `--crf`, dynamic `--preset`,
@@ -1334,7 +1334,7 @@ class BuiltinExampleZone(DefaultZone):
                                        float, luma_average: np.ndarray[np.float32], luma_min: np.ndarray[np.float32], luma_max: np.ndarray[np.float32], luma_diff: np.ndarray[np.float32]) -> list[str]:
         return """--lp 3 --keyint -1 --input-depth 10 --scm 0
                   --tune 3 --luminance-qp-bias 12 --qp-min 8 --chroma-qp-min 10
-                  --film-grain 12 --complex-hvs 1 --psy-rd 1.0 --spy-rd 0
+                  --film-grain 12 --complex-hvs 1
                   --color-primaries 1 --transfer-characteristics 1 --matrix-coefficients 1 --color-range 0""".split()
 # Let's use a different `--preset` for final encode:
     def metric_dynamic_preset(self, start_frame: int, end_frame: int,

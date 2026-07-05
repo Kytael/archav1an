@@ -55,7 +55,7 @@ for f in Input/*.[Mm][Kk][Vv] Input/*.[Mm][Pp]4 Input/*.[Mm]2[Tt][Ss]; do
         --photon-noise 2 \
         --workers "$WORKER_COUNT" \
         --final-speed 4 \
-        --final-params "--lp 3 --tune 0 --hbd-mds 1 --keyint 305 --noise-level-thr 16000 --lineart-psy-bias 4 --texture-psy-bias 2 --filtering-noise-detection 4"
+        --final-params "--lp 3 --tune 0 --hbd-mds 1 --keyint 305 --filtering-noise-detection 4"
 
 done
 
