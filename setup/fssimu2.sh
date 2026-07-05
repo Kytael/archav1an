@@ -6,7 +6,8 @@ if [ -z "$COMMON_SOURCED" ]; then
 fi
 
 install_fssimu2() {
-    if command -v fssimu2 &> /dev/null && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
+    if { [ -x "$VS_PREFIX/bin/fssimu2" ] || command -v fssimu2 &> /dev/null; } \
+        && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         log_info "fssimu2 is already installed."
         return 0
     fi
@@ -24,11 +25,15 @@ install_fssimu2() {
     local ZIG_URL="https://ziglang.org/download/${ZIG_VERSION}/${ZIG_TARBALL}"
     local ZIG_DIR="zig-${ZIG_ARCH}-linux-${ZIG_VERSION}"
 
-    if [ ! -f "$VS_PREFIX/bin/zig" ] || ! zig version 2>/dev/null | grep -q "${ZIG_VERSION}"; then
+    # Version-test the zig we actually install/use ($VS_PREFIX/bin/zig), not
+    # whatever PATH resolves — nothing in setup ever puts $VS_PREFIX/bin on PATH.
+    if ! "$VS_PREFIX/bin/zig" version 2>/dev/null | grep -q "${ZIG_VERSION}"; then
         log_info "Downloading Zig ${ZIG_VERSION}..."
         wget -q "$ZIG_URL" -O "/tmp/${ZIG_TARBALL}" || { log_error "Failed to download Zig"; return 1; }
         tar -xf "/tmp/${ZIG_TARBALL}" -C /tmp || { log_error "Failed to extract Zig"; return 1; }
         cp "/tmp/${ZIG_DIR}/zig" "$VS_PREFIX/bin/" || { log_error "Failed to copy Zig binary"; return 1; }
+        # rm first: re-running cp -r into an existing dir nests lib/ inside it
+        rm -rf "$VS_PREFIX/lib/zig"
         cp -r "/tmp/${ZIG_DIR}/lib" "$VS_PREFIX/lib/zig" || { log_error "Failed to copy Zig lib"; return 1; }
         rm -rf "/tmp/${ZIG_TARBALL}" "/tmp/${ZIG_DIR}"
     fi
@@ -43,14 +48,14 @@ install_fssimu2() {
     cd fssimu2 || { cd "$ORIG_DIR"; log_error "Failed to cd into fssimu2"; return 1; }
 
     log_info "Building fssimu2..."
-    zig build --release=fast --prefix "$VS_PREFIX" || { cd "$ORIG_DIR"; log_error "fssimu2 build failed"; return 1; }
+    "$VS_PREFIX/bin/zig" build --release=fast --prefix "$VS_PREFIX" || { cd "$ORIG_DIR"; log_error "fssimu2 build failed"; return 1; }
 
     cd "$ORIG_DIR"
 
-    if command -v fssimu2 &> /dev/null; then
-        log_success "fssimu2 installed."
+    if [ -x "$VS_PREFIX/bin/fssimu2" ]; then
+        log_success "fssimu2 installed to $VS_PREFIX/bin."
     else
-        log_warn "fssimu2 build may have failed — binary not found in PATH."
+        log_warn "fssimu2 build may have failed — $VS_PREFIX/bin/fssimu2 not found."
     fi
 }
 

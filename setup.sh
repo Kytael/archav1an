@@ -209,11 +209,16 @@ install_tool() {
         status=$?
         if [ $status -ne 0 ]; then
             log_error "Failed to install $item (Exit code: $status). Stopping."
+            # Restore to the entry value on failure too: don't leak the
+            # 'reinstall anyway' =1, don't clobber an env FORCE_REINSTALL=1.
+            FORCE_REINSTALL="$_env_force"
             return 1
         fi
     done
-    
-    FORCE_REINSTALL=0
+
+    # Restore to the entry value (not 0): env FORCE_REINSTALL=1 must survive
+    # for the remaining components of an install_all_tools / multi-pick batch.
+    FORCE_REINSTALL="$_env_force"
     log_success "Operation completed."
 }
 
@@ -244,7 +249,7 @@ uninstall_tool() {
 }
 
 install_all_tools() {
-    local all_tools=("system_deps" "python_libs" "svt_av1" "ffmpeg" "vapoursynth" "av1an" "ffvship" "oxipng" "fssimu2" "wwxd" "vszip" "subtext")
+    local all_tools=("system_deps" "python_libs" "svt_av1" "ffmpeg" "vapoursynth" "av1an" "ffvship" "oxipng" "fssimu2" "wwxd" "vszip" "subtext" "denoiser")
     log_info "Starting Full Installation..."
     setup_build_tmpfs "$(pwd)/build_tmp"
     for t in "${all_tools[@]}"; do
@@ -397,7 +402,11 @@ if [ "$1" == "--install" ] && [ -n "$2" ]; then
     if [[ "$2" =~ ^[Aa]$ ]]; then
         install_all_tools
     else
-        install_tool "$2"
+        # Accept multiple components: ./setup.sh --install ffmpeg av1an denoiser
+        shift
+        for _component in "$@"; do
+            install_tool "$_component" || exit 1
+        done
     fi
 elif [ "$1" == "--uninstall" ] && [ -n "$2" ]; then
     if [[ "$2" =~ ^[Aa]$ ]]; then

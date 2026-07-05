@@ -349,8 +349,12 @@ detect_gpu() {
         if [ -d "/opt/cuda/bin" ]; then
             export PATH="/opt/cuda/bin:$PATH"
             if [ ! -f /etc/profile.d/cuda.sh ]; then
-                echo 'export PATH="/opt/cuda/bin:$PATH"' > /etc/profile.d/cuda.sh
-                log_info "Added /opt/cuda/bin to system PATH via /etc/profile.d/cuda.sh"
+                if [ "$EUID" -eq 0 ]; then
+                    echo 'export PATH="/opt/cuda/bin:$PATH"' > /etc/profile.d/cuda.sh
+                    log_info "Added /opt/cuda/bin to system PATH via /etc/profile.d/cuda.sh"
+                else
+                    log_warn "Not root — skipped writing /etc/profile.d/cuda.sh (PATH exported for this session only)."
+                fi
             fi
         fi
     fi
@@ -378,6 +382,12 @@ is_wsl2() {
 # Disables WSL's auto-ldconfig and creates clean symlinks at /usr/local/lib/wsl-cuda.
 setup_wsl2_cuda() {
     if ! is_wsl2; then
+        return 0
+    fi
+    # Everything below writes /etc or /usr/local — as non-root the redirects
+    # fail but the function still logged success. Skip loudly instead.
+    if [ "$EUID" -ne 0 ]; then
+        log_warn "setup_wsl2_cuda: not root — skipping /etc ldconfig + CUDA symlink fixes (re-run under sudo if CUDA init fails)."
         return 0
     fi
     if [ -f /etc/ld.so.conf.d/ld.wsl.conf ]; then
@@ -428,6 +438,12 @@ ask_yes_no() {
     stty sane 2>/dev/null
 
     if [ "$AUTO_YES" = true ]; then
+        # Default-N prompts are safety gates (full rebuilds, destructive
+        # removals) — -y takes the safe default there instead of forcing yes.
+        if [ "$default" == "N" ]; then
+            echo "$prompt [auto: taking default N]"
+            return 1
+        fi
         echo "$prompt [auto-yes]"
         return 0
     fi

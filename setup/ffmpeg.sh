@@ -124,11 +124,12 @@ install_ffmpeg() {
         return 0
     fi
 
-    # Build dav1d from source first
-    install_dav1d
+    # Build dav1d from source first — a failure would silently produce an
+    # FFmpeg without (or with system) dav1d, so treat it as fatal.
+    install_dav1d || { log_error "dav1d install failed; aborting FFmpeg build."; return 1; }
 
     # Install ffnvcodec headers so --enable-cuda-llvm can see them
-    install_nv_codec_headers
+    install_nv_codec_headers || { log_error "nv-codec-headers install failed; aborting FFmpeg build."; return 1; }
 
     log_info "Compiling FFmpeg from source with PGO + LTO + native optimizations..."
     set_native_build_flags
@@ -161,8 +162,10 @@ install_ffmpeg() {
     make install || { cd "$ORIG_DIR"; log_error "FFmpeg PGO pass 1 install failed"; return 1; }
     ldconfig
 
-    # Generate a synthetic test source and exercise common decode/encode paths
-    ffmpeg -y -f lavfi -i "testsrc2=duration=10:size=1920x1080:rate=24" \
+    # Generate a synthetic test source and exercise common decode/encode paths.
+    # Must run the just-installed instrumented binary, not whatever PATH's
+    # ffmpeg is — otherwise no profile data is written and PGO never applies.
+    "$VS_PREFIX/bin/ffmpeg" -y -f lavfi -i "testsrc2=duration=10:size=1920x1080:rate=24" \
         -f lavfi -i "sine=frequency=440:duration=10" \
         -c:v libx264 -preset ultrafast -crf 23 \
         -c:a aac -b:a 128k \
@@ -175,7 +178,7 @@ install_ffmpeg() {
     # The h264 encode + filter workloads still profile the decode/demux/filter hot paths.
 
     # Transcode with filters (exercises zimg, scaling, pixel format conversion)
-    ffmpeg -y -i "$BUILD_DIR/pgo_test_h264.mkv" \
+    "$VS_PREFIX/bin/ffmpeg" -y -i "$BUILD_DIR/pgo_test_h264.mkv" \
         -vf "scale=1280:720,format=yuv420p10le" \
         -c:v libx264 -preset ultrafast -crf 28 \
         -f null - 2>/dev/null || log_warn "PGO filter workload failed"
