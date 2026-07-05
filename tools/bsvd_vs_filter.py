@@ -226,6 +226,10 @@ class BSVDOrtStreamingV2:
 
         frame_4ch = torch.cat([noisy_rgb.to(self.torch_dtype), sigma_plane], dim=1)
         self.frame_in.copy_(frame_4ch)
+        # ORT's TRT/CUDA EPs run on their own non-blocking stream and input
+        # sync is the caller's responsibility — flush torch's stream so the
+        # engine can't read frame_in before the copy above lands.
+        torch.cuda.current_stream(self.device).synchronize()
         self._bind()
         self.sess.run_with_iobinding(self.io)
 
@@ -259,7 +263,7 @@ def build_bsvd_streaming(source_clip: vs.VideoNode, *,
                          device_id: int = 0, fp16: bool = True,
                          variant: str = 'bsvd-64',
                          shift_num: int = 16,
-                         cache_size: int = 128) -> vs.VideoNode:
+                         cache_size: int = 64) -> vs.VideoNode:
     """Wrap BSVDOrtStreamingV2 as a VS clip via ModifyFrame.
 
     `source_clip` must be RGBS. Output has same format / dimensions / num_frames.
@@ -267,7 +271,9 @@ def build_bsvd_streaming(source_clip: vs.VideoNode, *,
     Sequential access is the fast path. Non-sequential access (e.g., when this
     clip feeds SMDegrain's `prefilter=` and motion search requests frames
     [n-tr, n+tr]) is served from an LRU output cache of size `cache_size`
-    frames (~3 MB/frame at 1080p, so ~400 MB at default 128). A cache miss
+    frames. Entries are stored in the engine's dtype (float16 when fp16=True,
+    lossless): ~11.9 MiB/frame at 1080p, so ~760 MiB at the default 64
+    (float32 doubles that; 4K is ~4x). A cache miss
     that would require seeking BACKWARD past the cache window triggers a full
     streamer reset and replay from frame 0 — correct but slow; log to stderr.
     """
@@ -283,13 +289,17 @@ def build_bsvd_streaming(source_clip: vs.VideoNode, *,
     torch_dtype = streamer.torch_dtype
     device = streamer.device
 
-    cache: 'OrderedDict[int, np.ndarray]' = OrderedDict()  # output_idx -> (3,H,W) float32 numpy on CPU
+    cache: 'OrderedDict[int, np.ndarray]' = OrderedDict()  # output_idx -> (3,H,W) numpy on CPU
     state = {'next_in_idx': 0}
     lock = threading.Lock()
     zero_input = torch.zeros(1, 3, H, W, device=device, dtype=torch_dtype)
+    # Cache in the engine's dtype — fp16 entries are lossless for an fp16
+    # engine and halve the footprint; the float32 upcast happens at plane
+    # write time in selector().
+    cache_dtype = np.float16 if torch_dtype == torch.float16 else np.float32
 
     def _store_output(out_tensor, output_idx):
-        arr = out_tensor.float().clamp(0, 1).squeeze(0).cpu().numpy().astype(np.float32, copy=False)
+        arr = out_tensor.clamp(0, 1).squeeze(0).cpu().numpy().astype(cache_dtype, copy=False)
         cache[output_idx] = arr
         cache.move_to_end(output_idx)
         while len(cache) > cache_size:
