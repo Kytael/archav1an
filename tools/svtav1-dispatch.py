@@ -198,45 +198,60 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
 # Encode helpers
 # ---------------------------------------------------------------------------
 
+def _print_log_tail(log_path, label, max_lines=40):
+    """Print the last max_lines of a captured stderr log, for post-mortem."""
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+            tail = f.readlines()[-max_lines:]
+    except OSError:
+        return
+    if not tail:
+        return
+    print(f"[svtav1-dispatch] --- last {len(tail)} line(s) of {label} ---")
+    for line in tail:
+        print("    " + line.rstrip("\n"))
+    print(f"[svtav1-dispatch] --- end {label} ---")
+
+
 def run_piped(source_cmd, sink_cmd, source_label="source",
               source_stderr_log=None, suppress_sink_stderr=False):
     """Run source_cmd | sink_cmd, forwarding Ctrl+C to both processes.
 
-    A nonzero exit from either process is fatal (prevents muxing a truncated
-    encode as success). source_stderr_log, if given, captures the source's
-    stderr to that file; its tail is printed when the source fails.
+    A nonzero exit from the *source* is fatal, not a warning: when vspipe dies
+    mid-stream (denoiser OOM, TRT/import failure) the sink sees a clean EOF at a
+    frame boundary, finalizes a truncated output and exits 0 -- so without this
+    check a short encode ships as success. When source_stderr_log is given,
+    vspipe's stderr is captured there (keeping the console clean) and its tail is
+    printed on failure so the root cause is diagnosable.
     """
-    log_fh = open(source_stderr_log, "w") if source_stderr_log else None
-    source_proc = subprocess.Popen(source_cmd, stdout=subprocess.PIPE,
-                                   stderr=log_fh)
-    sink_proc   = subprocess.Popen(sink_cmd,   stdin=source_proc.stdout,
-                                   stderr=subprocess.DEVNULL if suppress_sink_stderr else None)
-    source_proc.stdout.close()
+    log_fh = open(source_stderr_log, "w", encoding="utf-8") if source_stderr_log else None
     try:
-        sink_proc.wait()
-        source_proc.wait()
-    except KeyboardInterrupt:
-        source_proc.terminate(); sink_proc.terminate()
-        source_proc.wait();      sink_proc.wait()
-        sys.exit(130)
+        source_proc = subprocess.Popen(source_cmd, stdout=subprocess.PIPE,
+                                       stderr=log_fh)
+        sink_proc   = subprocess.Popen(sink_cmd,   stdin=source_proc.stdout,
+                                       stderr=subprocess.DEVNULL if suppress_sink_stderr else None)
+        source_proc.stdout.close()
+        try:
+            sink_proc.wait()
+            source_proc.wait()
+        except KeyboardInterrupt:
+            source_proc.terminate(); sink_proc.terminate()
+            source_proc.wait();      sink_proc.wait()
+            sys.exit(130)
     finally:
         if log_fh:
             log_fh.close()
-    if source_proc.returncode not in (0, None):
-        print(f"[svtav1-dispatch] Error: {source_label} exited with {source_proc.returncode}; aborting before mux.")
-        if source_stderr_log:
-            try:
-                with open(source_stderr_log) as lf:
-                    tail = lf.readlines()[-30:]
-                if tail:
-                    print(f"[svtav1-dispatch] --- {source_label} stderr tail ({source_stderr_log}) ---")
-                    sys.stdout.write("".join(tail))
-            except OSError:
-                pass
-        sys.exit(source_proc.returncode)
     if sink_proc.returncode != 0:
         print(f"[svtav1-dispatch] Error: SvtAv1EncApp exited with {sink_proc.returncode}")
+        if source_stderr_log:
+            _print_log_tail(source_stderr_log, f"{source_label} stderr")
         sys.exit(sink_proc.returncode)
+    if source_proc.returncode not in (0, None):
+        print(f"[svtav1-dispatch] Error: {source_label} exited with {source_proc.returncode}; "
+              f"output is truncated -- aborting before mux.")
+        if source_stderr_log:
+            _print_log_tail(source_stderr_log, f"{source_label} stderr")
+        sys.exit(source_proc.returncode or 1)
 
 
 # ---------------------------------------------------------------------------
@@ -837,7 +852,8 @@ def main():
     # --- Cleanup temp files ---
     for tmp in (ivf_path,
                 os.path.join(temp_dir, f"{stem}_denoise.vpy"),
-                os.path.join(temp_dir, f"{stem}_src.vpy")):
+                os.path.join(temp_dir, f"{stem}_src.vpy"),
+                os.path.join(temp_dir, f"{stem}_vspipe.log")):
         try:
             os.remove(tmp)
         except OSError:
