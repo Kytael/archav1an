@@ -25,6 +25,7 @@ IGNORE_EXTS = set()
 slot_status = ["Idle"] * PARALLELISM
 files_queue = queue.Queue()
 stop_display = threading.Event()
+failed_conversions = []  # (filename, reason) — partial outputs are deleted so mux falls back to originals
 
 # Regex for FFMPEG progress parsing
 re_ffmpeg = re.compile(r"time=\s*(\S+).*bitrate=\s*(\S+).*speed=\s*(\S+)")
@@ -255,16 +256,16 @@ def extract_tracks(mode):
             if ext in IGNORE_EXTS:
                 continue
 
-            # Filter based on mode
-            if mode == 1:
-                # Lossless only mode: Skip if NOT in LOSSLESS_EXTS
-                if ext not in LOSSLESS_EXTS:
-                    continue
-
             out_name = vid_temp / f"{mkv.stem}_track{tid}_{lang}{ext}"
 
             if not out_name.exists():
                 extract_cmds.extend([f"{tid}:{out_name}"])
+
+            # Mode 1 (lossless only): non-lossless tracks are still extracted
+            # so the mux phase can carry them over unchanged (as the menu
+            # promises), but they are not queued for conversion.
+            if mode == 1 and ext not in LOSSLESS_EXTS:
+                continue
 
             extracted_files.append(out_name)
 
@@ -366,11 +367,19 @@ def worker_flac(slot_id):
                         slot_status[slot_id] = (
                             f"{slot_id + 1}: [FLAC] {fname}.. T:{t} Spd:{s}"
                         )
+            proc.wait()
+            if proc.returncode != 0:
+                # Delete the partial intermediate; mux falls back to the original.
+                output_file.unlink(missing_ok=True)
+                failed_conversions.append((input_file.name, f"ffmpeg exit {proc.returncode}"))
+                slot_status[slot_id] = f"{slot_id + 1}: [FAIL] {fname}"
         except Exception as e:
+            failed_conversions.append((input_file.name, str(e)))
             slot_status[slot_id] = f"{slot_id + 1}: [Err] {str(e)[:20]}"
-            continue
-
-        files_queue.task_done()
+        finally:
+            # Always mark the item done — skipping this on the exception path
+            # used to deadlock files_queue.join().
+            files_queue.task_done()
     slot_status[slot_id] = f"{slot_id + 1}: Idle"
 
 
@@ -472,11 +481,19 @@ def worker_opus(slot_id):
                         t, b, s = match.groups()
                         slot_status[slot_id] = f"{slot_id + 1}: [OPUS-FF] {fname}.. {t}"
 
+            proc.wait()
+            if proc.returncode != 0:
+                # Delete the partial .opus so mux falls back to the original track.
+                output_file.unlink(missing_ok=True)
+                failed_conversions.append((input_file.name, f"encoder exit {proc.returncode}"))
+                slot_status[slot_id] = f"{slot_id + 1}: [FAIL] {fname}"
         except Exception as e:
+            failed_conversions.append((input_file.name, str(e)))
             slot_status[slot_id] = f"{slot_id + 1}: [Err] {str(e)[:20]}"
-            continue
-
-        files_queue.task_done()
+        finally:
+            # Always mark the item done — skipping this on the exception path
+            # used to deadlock files_queue.join().
+            files_queue.task_done()
     slot_status[slot_id] = f"{slot_id + 1}: Idle"
 
 
@@ -509,6 +526,10 @@ def run_phase(files, worker_func, name):
     if sys.stdout.isatty():
         sys.stdout.write(f"\033[{PARALLELISM}B")
     print(f"{name} Complete.")
+    if failed_conversions:
+        print(f"WARNING: {len(failed_conversions)} conversion(s) failed (original tracks will be muxed instead):")
+        for _fname, _reason in failed_conversions:
+            print(f"  - {_fname}: {_reason}")
 
 
 # --- PHASE 4: MUXING ---
@@ -536,23 +557,39 @@ def mux_final_files():
         if not vid_temp.exists():
             continue
 
-        audio_files = list(vid_temp.glob("*.opus"))
+        audio_files = [f for f in vid_temp.iterdir() if f.is_file()]
         if not audio_files:
             continue
 
-        # Sort tracks by ID (filename pattern: name_trackID_lang.opus)
-        # re pattern: .*_track(\d+)_([a-zA-Z0-9]+)\.opus
-        tracks_to_mux = []
-        pattern = re.compile(r".*_track(\d+)_([a-zA-Z0-9]+)\.opus$")
-
+        # Group every extracted/converted file by track ID
+        # (filename pattern: name_trackID_lang.EXT)
+        pattern = re.compile(r".*_track(\d+)_([a-zA-Z0-9]+)\.[A-Za-z0-9]+$")
+        by_track = {}
         for af in audio_files:
             match = pattern.match(af.name)
-            if match:
-                tracks_to_mux.append(
-                    {"path": af, "id": int(match.group(1)), "lang": match.group(2)}
-                )
+            if not match:
+                continue
+            tid = int(match.group(1))
+            entry = by_track.setdefault(tid, {"lang": match.group(2), "files": {}})
+            entry["files"][af.suffix.lower()] = af
 
-        tracks_to_mux.sort(key=lambda x: x["id"])
+        # Per track: prefer the converted .opus; otherwise carry the extracted
+        # original over unchanged (mode 1 used to silently drop these). When
+        # falling back, prefer the non-.flac file — for non-FLAC sources the
+        # .flac is only the intermediate of a failed conversion.
+        tracks_to_mux = []
+        for tid in sorted(by_track):
+            entry = by_track[tid]
+            exts = entry["files"]
+            if ".opus" in exts:
+                tracks_to_mux.append({"path": exts[".opus"], "id": tid,
+                                      "lang": entry["lang"], "converted": True})
+                continue
+            orig = next((f for e, f in sorted(exts.items()) if e != ".flac"),
+                        exts.get(".flac"))
+            if orig is not None:
+                tracks_to_mux.append({"path": orig, "id": tid,
+                                      "lang": entry["lang"], "converted": False})
 
         # Decide output path
         # If input was in Input/, put in Output/
@@ -571,12 +608,13 @@ def mux_final_files():
 
         for t in tracks_to_mux:
             title = get_track_title_string(t["lang"])
+            track_name = f"0:{title} (Opus)" if t["converted"] else f"0:{title}"
             cmd.extend(
                 [
                     "--language",
                     f"0:{t['lang']}",
                     "--track-name",
-                    f"0:{title} (Opus)",
+                    track_name,
                     str(t["path"]),
                 ]
             )

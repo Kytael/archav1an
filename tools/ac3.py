@@ -22,6 +22,7 @@ LOSSLESS_EXTS = {".flac", ".wav", ".thd", ".dtshd", ".pcm"}
 slot_status = ["Idle"] * PARALLELISM
 files_queue = queue.Queue()
 stop_display = threading.Event()
+failed_conversions = []  # (filename, reason) — partial outputs are deleted so mux falls back to originals
 
 # Regex for FFMPEG progress parsing
 re_ffmpeg = re.compile(r"time=\s*(\S+).*bitrate=\s*(\S+).*speed=\s*(\S+)")
@@ -354,11 +355,19 @@ def worker_ac3(slot_id):
                         slot_status[slot_id] = (
                             f"{slot_id + 1}: [AC3] {fname}.. T:{t} Spd:{s} ({channels}ch)"
                         )
+            proc.wait()
+            if proc.returncode != 0:
+                # Delete the partial .ac3 so mux falls back to the original track.
+                output_file.unlink(missing_ok=True)
+                failed_conversions.append((input_file.name, f"ffmpeg exit {proc.returncode}"))
+                slot_status[slot_id] = f"{slot_id + 1}: [FAIL] {fname}"
         except Exception as e:
+            failed_conversions.append((input_file.name, str(e)))
             slot_status[slot_id] = f"{slot_id + 1}: [Err] {str(e)[:20]}"
-            continue
-
-        files_queue.task_done()
+        finally:
+            # Always mark the item done — skipping this on the exception path
+            # used to deadlock files_queue.join().
+            files_queue.task_done()
     slot_status[slot_id] = "Idle"
 
 
@@ -389,6 +398,10 @@ def run_phase(files, worker_func, name):
         t.join()
 
     print(f"{name} Complete.")
+    if failed_conversions:
+        print(f"WARNING: {len(failed_conversions)} conversion(s) failed (original tracks will be used):")
+        for _fname, _reason in failed_conversions:
+            print(f"  - {_fname}: {_reason}")
 
 
 # --- PHASE 4: MUXING ---
