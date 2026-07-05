@@ -193,7 +193,6 @@ parser.add_argument("--denoise-model", default="color_real_psnr",
 parser.add_argument("--denoise-smdegrain", action="store_true", help="SMDegrain with SCUNet as prefilter (temporal+spatial hybrid; mutually exclusive with --denoise-scunet direct output)")
 parser.add_argument("--denoise-tr", type=int, default=3, help="SMDegrain temporal radius (--denoise-smdegrain) | Default: 3 (havsfunc_legacy.SMDegrain caps tr at 3 — values 4/6/8/12 silently dispatch to identical MDegrain3, see memory havsfunc_legacy_smdegrain_tr_capped_at_3.md)")
 parser.add_argument("--denoise-thsad", type=int, default=350, help="SMDegrain luma SAD threshold (--denoise-smdegrain) | Default: 350")
-parser.add_argument("--denoise-thsadc", type=int, default=450, help="SMDegrain chroma SAD threshold (--denoise-smdegrain) | Default: 450")
 parser.add_argument("--denoise-rvrt", action="store_true", help="RVRT temporal denoising (natively multi-frame; alternative to SCUNet+SMDegrain)")
 parser.add_argument("--denoise-rvrt-sigma", type=float, default=12.0, help="RVRT noise level (0-50, higher = stronger) | Default: 12.0")
 parser.add_argument("--denoise-stasunet", action="store_true", help="STA-SUNet spatial denoising via pre-built TensorRT engine (vs-mlrt vstrt plugin)")
@@ -728,7 +727,6 @@ final.set_output(0)
                 denoise_stasunet_engine=_denoise_stasunet_engine,
                 denoise_tr=getattr(args, "denoise_tr", 4),
                 denoise_thsad=getattr(args, "denoise_thsad", 350),
-                denoise_thsadc=getattr(args, "denoise_thsadc", 450),
                 denoise_device=getattr(args, "denoise_device", 0),
                 denoise_knlm=str(args.denoise_knlm),
                 denoise_tile=getattr(args, "denoise_tile", 256),

@@ -70,8 +70,6 @@ if [ -f "tools/workercount-ssimu2.txt" ]; then
     # tool=vs-hip
     # workercount=4
     source "tools/workercount-ssimu2.txt"
-    SSIMU2_TOOL=$tool
-    SSIMU2_WORKERS=$workercount
 else
     echo ""
     echo "-------------------------------------------------------------------------------"
@@ -82,8 +80,6 @@ else
     
     # Read config after generation
     source "tools/workercount-ssimu2.txt"
-    SSIMU2_TOOL=$tool
-    SSIMU2_WORKERS=$workercount
     
     echo ""
     echo "av1an worker count and SSIMU2 benchmark complete."

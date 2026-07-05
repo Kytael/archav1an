@@ -56,7 +56,7 @@ def _mlrt_backend_lines(streams):
     return f'_backend = _Backend.MIGX(device_id=0, fp16=True, exhaustive_tune=False, num_streams={streams}, custom_env={{"MIGRAPHX_GPU_COMPILE_PARALLEL": "8"}})'
 
 def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
-                      use_smdegrain=False, tr=3, thsad=350, thsadc=450,
+                      use_smdegrain=False, tr=3, thsad=350,
                       use_rvrt=False, rvrt_sigma=12.0,
                       use_stasunet=False, stasunet_engine="", stasunet_pre_darken_ev=0.0,
                       use_bsvd=False, use_bsvd_smdegrain=False,
@@ -454,7 +454,6 @@ def main():
     denoise_stasunet_pre_darken_ev = 0.0
     denoise_tr = 3
     denoise_thsad = 350
-    denoise_thsadc = 450
     denoise_bsvd = False
     denoise_bsvd_smdegrain = False
     _default_bsvd_onnx = os.path.join(
@@ -516,8 +515,6 @@ def main():
             denoise_tr = int(nextval() or 4); i += 2
         elif arg == "--denoise-thsad":
             denoise_thsad = int(nextval() or 350); i += 2
-        elif arg == "--denoise-thsadc":
-            denoise_thsadc = int(nextval() or 450); i += 2
         elif arg == "--denoise-bsvd":
             denoise_bsvd = True; i += 1
         elif arg == "--denoise-bsvd-smdegrain":
@@ -681,7 +678,7 @@ def main():
         write_denoise_vpy(vpy_path, input_file, cachefile,
                           denoise_model, denoise_tile, denoise_streams,
                           use_smdegrain=denoise_smdegrain,
-                          tr=denoise_tr, thsad=denoise_thsad, thsadc=denoise_thsadc,
+                          tr=denoise_tr, thsad=denoise_thsad,
                           use_rvrt=denoise_rvrt, rvrt_sigma=denoise_rvrt_sigma,
                           use_stasunet=denoise_stasunet, stasunet_engine=denoise_stasunet_engine,
                           stasunet_pre_darken_ev=denoise_stasunet_pre_darken_ev,
