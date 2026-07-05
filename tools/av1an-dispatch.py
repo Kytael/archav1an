@@ -175,6 +175,15 @@ def main():
             skip_next = True
         elif arg == "--no-opus":
             no_opus = True
+        else:
+            # Unknown flags used to fall through silently (e.g. --autocrop,
+            # --denoise-scunet from the av1an-batch scripts) — the encode then
+            # "succeeded" without cropping/denoising. Fail loudly instead.
+            print(f"[av1an-dispatch] Error: unrecognized argument: {arg}")
+            print("[av1an-dispatch] This dispatcher supports: -i/--input, -o/--output, "
+                  "--quality, --workers, --final-speed, --photon-noise, --final-params, --no-opus.")
+            print("[av1an-dispatch] For --autocrop/--denoise-* use the pipeline.py / run_linux_* path.")
+            sys.exit(2)
 
     # Append color flags to encoder params
     if current_flags:

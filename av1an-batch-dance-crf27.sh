@@ -54,9 +54,10 @@ for f in Input/*.[Mm][Kk][Vv] Input/*.[Mm][Pp]4 Input/*.[Mm]2[Tt][Ss]; do
         --photon-noise 6 \
         --workers "$WORKER_COUNT" \
         --final-speed 4 \
-        --autocrop \
-        --denoise-scunet \
         --final-params "--lp 3 --tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2"
+    # NOTE: av1an-dispatch.py does not implement --autocrop/--denoise-scunet
+    # (they were silently ignored here for months). Use the run_linux_* /
+    # pipeline.py path if cropping or SCUNet denoising is needed.
 
 done
 

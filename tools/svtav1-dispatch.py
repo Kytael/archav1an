@@ -111,9 +111,9 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
             f'# Mirrors prepare_dataset.py: alpha=0.10 (~-3.32 EV, _10 variant), alpha=0.05 (~-4.32 EV, _20).\n'
             f'_alpha = {2.0 ** stasunet_pre_darken_ev}\n'
             f'if _alpha != 1.0:\n'
-            f'    _rgb = core.std.Expr(_rgb, "x 12.92 / x 0.055 + 1.055 / 2.4 pow x 0.04045 <= ?")\n'
+            f'    _rgb = core.std.Expr(_rgb, "x 0.04045 <= x 12.92 / x 0.055 + 1.055 / 2.4 pow ?")\n'
             f'    _rgb = core.std.Expr(_rgb, f"x {{_alpha}} *")\n'
-            f'    _rgb = core.std.Expr(_rgb, "x 12.92 * 1.055 x 0.4166666667 pow * 0.055 - x 0.0031308 <= ?")\n'
+            f'    _rgb = core.std.Expr(_rgb, "x 0.0031308 <= x 12.92 * 1.055 x 0.4166666667 pow * 0.055 - ?")\n'
             f'{_norm_in}'
             f'_nf = _rgb.num_frames\n'
             f'_m2 = _rgb.std.DuplicateFrames([0, 0]).std.Trim(first=0, last=_nf - 1)\n'
@@ -196,10 +196,16 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
 # ---------------------------------------------------------------------------
 
 def run_piped(source_cmd, sink_cmd, source_label="source",
-              suppress_source_stderr=False, suppress_sink_stderr=False):
-    """Run source_cmd | sink_cmd, forwarding Ctrl+C to both processes."""
+              source_stderr_log=None, suppress_sink_stderr=False):
+    """Run source_cmd | sink_cmd, forwarding Ctrl+C to both processes.
+
+    A nonzero exit from either process is fatal (prevents muxing a truncated
+    encode as success). source_stderr_log, if given, captures the source's
+    stderr to that file; its tail is printed when the source fails.
+    """
+    log_fh = open(source_stderr_log, "w") if source_stderr_log else None
     source_proc = subprocess.Popen(source_cmd, stdout=subprocess.PIPE,
-                                   stderr=subprocess.DEVNULL if suppress_source_stderr else None)
+                                   stderr=log_fh)
     sink_proc   = subprocess.Popen(sink_cmd,   stdin=source_proc.stdout,
                                    stderr=subprocess.DEVNULL if suppress_sink_stderr else None)
     source_proc.stdout.close()
@@ -210,11 +216,24 @@ def run_piped(source_cmd, sink_cmd, source_label="source",
         source_proc.terminate(); sink_proc.terminate()
         source_proc.wait();      sink_proc.wait()
         sys.exit(130)
+    finally:
+        if log_fh:
+            log_fh.close()
+    if source_proc.returncode not in (0, None):
+        print(f"[svtav1-dispatch] Error: {source_label} exited with {source_proc.returncode}; aborting before mux.")
+        if source_stderr_log:
+            try:
+                with open(source_stderr_log) as lf:
+                    tail = lf.readlines()[-30:]
+                if tail:
+                    print(f"[svtav1-dispatch] --- {source_label} stderr tail ({source_stderr_log}) ---")
+                    sys.stdout.write("".join(tail))
+            except OSError:
+                pass
+        sys.exit(source_proc.returncode)
     if sink_proc.returncode != 0:
         print(f"[svtav1-dispatch] Error: SvtAv1EncApp exited with {sink_proc.returncode}")
         sys.exit(sink_proc.returncode)
-    if source_proc.returncode not in (0, None):
-        print(f"[svtav1-dispatch] Warning: {source_label} exited with {source_proc.returncode}")
 
 
 # ---------------------------------------------------------------------------
@@ -657,7 +676,8 @@ def main():
         print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
         sys.stdout.flush()
         run_piped([vspipe_exe, "-c", "y4m", vpy_path, "-"], svt_cmd,
-                  source_label="vspipe", suppress_source_stderr=True)
+                  source_label="vspipe",
+                  source_stderr_log=os.path.join(temp_dir, f"{stem}_vspipe.log"))
     else:
         src_vpy_path = os.path.join(temp_dir, f"{stem}_src.vpy")
         src_cachefile = os.path.join(temp_dir, f"{stem}.ffindex")

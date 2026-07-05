@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import psutil
 import subprocess
@@ -17,11 +18,13 @@ def cleanup_temp_folders():
     """Deletes temp folders and the test output file."""
     print("Cleaning up temporary test files...", file=sys.stderr)
 
-    # 1. Clean up folders starting with a period
+    # 1. Clean up av1an temp folders (hex-named, e.g. .df97856)
+    # IMPORTANT: only delete short all-hex dotdirs to avoid nuking .git, .claude, etc.
+    av1an_tmp_pattern = re.compile(r"^\.[0-9a-f]{6,16}$")
     try:
         for item in os.listdir(BASE_DIR):
             item_path = os.path.join(BASE_DIR, item)
-            if os.path.isdir(item_path) and item.startswith("."):
+            if os.path.isdir(item_path) and av1an_tmp_pattern.match(item):
                 try:
                     shutil.rmtree(item_path)
                 except OSError:
