@@ -239,11 +239,16 @@ set_native_build_flags() {
     export CXX="clang++"
     export CFLAGS="-march=native -O3 -flto"
     export CXXFLAGS="-march=native -O3 -flto"
-    export LDFLAGS="-flto -fuse-ld=lld"
+    # Prefix lib dir goes in LDFLAGS as an explicit -L, NOT in LIBRARY_PATH:
+    # pkgconf treats LIBRARY_PATH entries as system dirs and elides their -L
+    # from --libs output, while clang searches LIBRARY_PATH only after
+    # /usr/lib — the combination silently links system libs (e.g. ffms2
+    # picking system libavcodec over the prefix build).
+    export LDFLAGS="-L$VS_PREFIX/lib -flto -fuse-ld=lld"
     export RUSTFLAGS="-C target-cpu=native -C opt-level=3"
     export PKG_CONFIG_PATH="$VS_PREFIX/lib/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
     export LD_LIBRARY_PATH="$VS_PREFIX/lib:${LD_LIBRARY_PATH:-}"
-    export LIBRARY_PATH="$VS_PREFIX/lib:${LIBRARY_PATH:-}"
+    unset LIBRARY_PATH
 }
 
 # Set up build_tmp on tmpfs (RAM) for faster compilation

@@ -216,6 +216,13 @@ install_ffmpeg() {
         make -j"$(nproc)" || { cd "$ORIG_DIR"; log_error "FFmpeg PGO pass 2 build failed"; return 1; }
     fi
 
+    # Prune previous-build sonames first (upstream major bumps leave e.g. an
+    # old libavcodec.so.62 next to the new .63; stale copies shadow the system
+    # libs via LD_LIBRARY_PATH and poison dependents' link closures).
+    find "$VS_PREFIX/lib" -maxdepth 1 \
+        \( -name 'libav*.so*' -o -name 'libav*.a' \
+           -o -name 'libsw*.so*' -o -name 'libsw*.a' \
+           -o -name 'libpostproc*' \) -delete
     make install || { cd "$ORIG_DIR"; log_error "FFmpeg make install failed"; return 1; }
     ldconfig
     rm -rf "$PROFILE_DIR"
