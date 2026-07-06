@@ -180,6 +180,7 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
         f'import sys as _sys; _sys.path.insert(0, {venv_site_pkgs!r})\n'
         f'from vstools import vs, core, initialize_clip, finalize_clip\n'
         f'core.max_cache_size = {_cache_mb}\n'
+        f'# VS R77+ autoloads only site-packages/vapoursynth/plugins; the legacy dirs\n# (ffms2/vszip/vship live there) must be loaded explicitly.\nimport glob as _glob, os as _os\nfor _d in ("/usr/lib/vapoursynth", "/usr/local/lib/vapoursynth"):\n    for _p in sorted(_glob.glob(_os.path.join(_d, "*.so"))):\n        try:\n            core.std.LoadPlugin(_p)\n        except vs.Error:\n            pass  # already loaded\n\n'
         f'\n'
         f'src = core.ffms2.Source(source=r{source!r}, cachefile=r{cachefile!r})\n'
         f'if src.format.color_family == vs.RGB:\n'
@@ -393,6 +394,15 @@ def measure_ssimu2(source_file, encoded_file, tool, temp_dir=None):
 import vapoursynth as vs
 from vstools import clip_async_render
 core = vs.core
+# VS R77+ autoloads only site-packages/vapoursynth/plugins; the legacy dirs
+# (ffms2/vszip/vship live there) must be loaded explicitly.
+import glob as _glob, os as _os
+for _d in ("/usr/lib/vapoursynth", "/usr/local/lib/vapoursynth"):
+    for _p in sorted(_glob.glob(_os.path.join(_d, "*.so"))):
+        try:
+            core.std.LoadPlugin(_p)
+        except vs.Error:
+            pass  # already loaded
 src = core.ffms2.Source(source=r"{source_file}", cachefile=r"{_src_idx}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
 enc = core.ffms2.Source(source=r"{encoded_file}", cachefile=r"{_enc_idx}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
 res = core.vship.SSIMULACRA2(src, enc, numStream=4)
@@ -405,6 +415,15 @@ for s in scores:
 import vapoursynth as vs
 from vstools import clip_async_render
 core = vs.core
+# VS R77+ autoloads only site-packages/vapoursynth/plugins; the legacy dirs
+# (ffms2/vszip/vship live there) must be loaded explicitly.
+import glob as _glob, os as _os
+for _d in ("/usr/lib/vapoursynth", "/usr/local/lib/vapoursynth"):
+    for _p in sorted(_glob.glob(_os.path.join(_d, "*.so"))):
+        try:
+            core.std.LoadPlugin(_p)
+        except vs.Error:
+            pass  # already loaded
 src = core.ffms2.Source(source=r"{source_file}", cachefile=r"{_src_idx}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
 enc = core.ffms2.Source(source=r"{encoded_file}", cachefile=r"{_enc_idx}").resize.Bicubic(format=vs.RGB24, matrix_in_s="709")
 res = core.vszip.SSIMULACRA2(src, enc)

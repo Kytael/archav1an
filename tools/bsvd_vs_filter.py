@@ -10,10 +10,13 @@ extension: `ep` parameter selects 'TRT' (NVIDIA, the upstream default) or
 'MIGRAPHX' (AMD, new). The TRT and CUDA EP paths are unchanged from upstream.
 
 Output offset: BSVDOrtStreamingV2.step(input[k]) returns denoised(input[k-16])
-for shift_num=16. This filter compensates by feeding inputs k..n+shift_num
-internally so VS sees an output clip of the same length as the input, with
-the last `shift_num` outputs produced by zero-fed flush (matching the
-upstream wrapper's flush behavior).
+for shift_num=16. This filter compensates by feeding ahead internally so VS
+sees an output clip of the same length as the input.
+
+Edge handling (2026-07-06): both ends are mirror-padded with reflected real
+frames. Previously the head ran against zero-initialized state tensors and the
+tail was flushed with zero frames, so the first/last shift_num outputs were
+denoised against black — visibly under-denoised at the very last frame.
 """
 from __future__ import annotations
 
@@ -290,9 +293,20 @@ def build_bsvd_streaming(source_clip: vs.VideoNode, *,
     device = streamer.device
 
     cache: 'OrderedDict[int, np.ndarray]' = OrderedDict()  # output_idx -> (3,H,W) numpy on CPU
+    # next_in_idx counts positions in the mirror-padded feed sequence:
+    # positions 0..shift_num-1 are the reflected head (f_shift..f_1), then the
+    # N real frames, then shift_num reflected tail frames. Output for real
+    # frame i emerges at feed position i + 2*shift_num.
     state = {'next_in_idx': 0}
     lock = threading.Lock()
-    zero_input = torch.zeros(1, 3, H, W, device=device, dtype=torch_dtype)
+
+    def _reflect_idx(i, n):
+        """numpy-style 'reflect' (no edge repeat): ...f2 f1 | f0..f(n-1) | f(n-2)..."""
+        if n == 1:
+            return 0
+        period = 2 * n - 2
+        i %= period
+        return i if i < n else period - i
     # Cache in the engine's dtype — fp16 entries are lossless for an fp16
     # engine and halve the footprint; the float32 upcast happens at plane
     # write time in selector().
@@ -306,37 +320,35 @@ def build_bsvd_streaming(source_clip: vs.VideoNode, *,
             cache.popitem(last=False)
 
     def _feed_one():
-        k = state['next_in_idx']
-        if k < num_frames:
-            input_frame = source_clip.get_frame(k)
-            noisy = _vsframe_rgbs_to_torch(input_frame, device, torch_dtype)
-        else:
-            noisy = zero_input
+        j = state['next_in_idx']
+        src_idx = _reflect_idx(j - shift_num, num_frames)
+        input_frame = source_clip.get_frame(src_idx)
+        noisy = _vsframe_rgbs_to_torch(input_frame, device, torch_dtype)
         out = streamer.step(noisy, sigma)
-        output_idx = k - shift_num
+        output_idx = j - 2 * shift_num
         if 0 <= output_idx < num_frames:
             _store_output(out, output_idx)
-        state['next_in_idx'] = k + 1
+        state['next_in_idx'] = j + 1
 
     def _reset_and_replay_to(target_output):
         import sys
-        print(f"[bsvd-vs] cache-miss reset, replaying 0..{target_output + shift_num}",
+        print(f"[bsvd-vs] cache-miss reset, replaying 0..{target_output + 2 * shift_num}",
               file=sys.stderr)
         streamer.reset()
         cache.clear()
         state['next_in_idx'] = 0
-        while state['next_in_idx'] <= target_output + shift_num:
+        while state['next_in_idx'] <= target_output + 2 * shift_num:
             _feed_one()
 
     def selector(n, f):
         with lock:
             if n not in cache:
-                if n < state['next_in_idx'] - shift_num:
+                if n < state['next_in_idx'] - 2 * shift_num:
                     # Backward miss past produced range — need to replay.
                     _reset_and_replay_to(n)
                 else:
                     # Forward: feed until output n exists.
-                    while state['next_in_idx'] <= n + shift_num:
+                    while state['next_in_idx'] <= n + 2 * shift_num:
                         _feed_one()
             arr = cache[n]
             cache.move_to_end(n)  # LRU bump
