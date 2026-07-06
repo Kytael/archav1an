@@ -182,6 +182,11 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
         f'core.max_cache_size = {_cache_mb}\n'
         f'\n'
         f'src = core.ffms2.Source(source=r{source!r}, cachefile=r{cachefile!r})\n'
+        f'if src.format.color_family == vs.RGB:\n'
+        f'    # RGB sources (Lagarith/FFV1 eval intermediates): normalize once to\n'
+        f'    # YUV420P10 so every denoise builder below can assume YUV input and\n'
+        f'    # the y4m pipe to SvtAv1EncApp stays 4:2:0.\n'
+        f'    src = core.resize.Bicubic(src, format=vs.YUV420P10, matrix_s="709", chromaloc_s="left")\n'
         f'src = initialize_clip(src)\n'
         f'\n'
         f'{vsmlrt_import}'
@@ -479,7 +484,7 @@ Denoisers (mutually exclusive):
   --denoise-smdegrain     [--denoise-tr N --denoise-thsad N]
   --denoise-rvrt          [--denoise-rvrt-sigma F]
   --denoise-stasunet      [--denoise-stasunet-engine PATH --denoise-stasunet-pre-darken-ev F]
-  --denoise-bsvd          [--bsvd-onnx PATH --bsvd-sigma auto|F --bsvd-device N --bsvd-warmup N]
+  --denoise-bsvd          [--bsvd-onnx PATH --bsvd-sigma F|auto --bsvd-device N --bsvd-warmup N]
   --denoise-bsvd-smdegrain  (BSVD as SMDegrain prefilter; same --bsvd-* options)
 """
 
@@ -515,12 +520,15 @@ def main():
     denoise_bsvd_smdegrain = False
     _default_bsvd_onnx = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "models", "bsvd_ft_ep5_stateful_v2_dyn_fp16.onnx")
+        "models", "bsvd_realpair_ep14_stateful_v2_dyn_fp16.onnx")
     _default_bsvd_sigma_estimator = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "models", "bsvd_sigma_estimator_v3.pth")
     denoise_bsvd_onnx = _default_bsvd_onnx
-    denoise_bsvd_sigma = "auto"
+    # realpair ep14 sweep (2026-07-06): constant 0.07 beats the optsig
+    # predictor (83.58 vs 83.04 SSIMU2) and the curve is flat 0.06-0.08 —
+    # "auto" remains available for the legacy ft_ep5 model.
+    denoise_bsvd_sigma = "0.07"
     denoise_bsvd_device = 0
     denoise_bsvd_warmup = 30
 

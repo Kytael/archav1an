@@ -22,6 +22,8 @@ trap 'trap "" INT TERM; echo "Interrupted."; kill 0; exit 130' INT TERM
 rm -f "tools/tag-manifest.txt"
 mkdir -p Input Output
 
+FAILED_FILES=()
+
 while IFS= read -r -d '' f <&3; do
     filename=$(basename -- "$f")
     stem="${filename%.*}"
@@ -46,7 +48,7 @@ while IFS= read -r -d '' f <&3; do
     echo "-------------------------------------------------------------------------------"
 
     # Dance / Performance HQ (CRF 27) — single-pass SvtAv1EncApp
-    python3 tools/svtav1-dispatch.py \
+    if ! python3 tools/svtav1-dispatch.py \
         -i "$f" \
         -o "$OUTPUT_FILE" \
         --quality 27 \
@@ -54,7 +56,10 @@ while IFS= read -r -d '' f <&3; do
         --lp "$LP" \
         --speed 4 \
         --encoder-params "--tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2" \
-        "${EXTRA_ARGS[@]}"
+        "${EXTRA_ARGS[@]}"; then
+        echo "FAILED: \"$f\""
+        FAILED_FILES+=("$f")
+    fi
 
 done 3< <(find Input -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.mov" -o -iname "*.m2ts" \) -print0 | sort -z)
 
@@ -62,4 +67,9 @@ done 3< <(find Input -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.mo
 echo "Cleaning up temporary files and folders..."
 python3 tools/cleanup.py
 
+if [ ${#FAILED_FILES[@]} -gt 0 ]; then
+    echo "WARNING: ${#FAILED_FILES[@]} file(s) FAILED:"
+    printf '  %s\n' "${FAILED_FILES[@]}"
+    exit 1
+fi
 echo "All tasks finished."

@@ -30,6 +30,7 @@ echo "Starting Av1an Batch (Live Action CRF 32) with $WORKER_COUNT workers..."
 rm -f "tools/tag-manifest.txt"
 mkdir -p Input Output
 
+FAILED_FILES=()
 while IFS= read -r -d '' f <&3; do
     filename=$(basename -- "$f")
     stem="${filename%.*}"
@@ -54,14 +55,17 @@ while IFS= read -r -d '' f <&3; do
     echo "-------------------------------------------------------------------------------"
 
     # Live Action Standard (CRF 32) — v1.66 5fish svt-av1-psy, single pass
-    python3 tools/av1an-dispatch.py \
+    if ! python3 tools/av1an-dispatch.py \
         -i "$f" \
         -o "$OUTPUT_FILE" \
         --quality 32 \
         --photon-noise 4 \
         --workers "$WORKER_COUNT" \
         --final-speed 4 \
-        --final-params "--lp 3 --tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --filtering-noise-detection 4"
+        --final-params "--lp 3 --tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --filtering-noise-detection 4" ; then
+        echo "FAILED: \"$f\""
+        FAILED_FILES+=("$f")
+    fi
     # NOTE: av1an-dispatch.py does not implement --autocrop (it was silently
     # ignored here for months). Use the run_linux_* / pipeline.py path if
     # cropping is needed.
@@ -75,4 +79,9 @@ python3 tools/tag.py
 echo "Cleaning up temporary files and folders..."
 python3 tools/cleanup.py
 
+if [ ${#FAILED_FILES[@]} -gt 0 ]; then
+    echo "WARNING: ${#FAILED_FILES[@]} file(s) FAILED:"
+    printf '  %s\n' "${FAILED_FILES[@]}"
+    exit 1
+fi
 echo "All tasks finished."
