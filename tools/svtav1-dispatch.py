@@ -714,7 +714,14 @@ def main():
                       "(pip install onnxruntime-gpu, or setup.sh --install denoiser).")
                 sys.exit(1)
             _ort_providers = _ort.get_available_providers()
+            # onnxruntime-gpu always LISTS the TRT provider; session creation
+            # still fails if libnvinfer isn't installed (e.g. encoder-host 2070S).
+            # Only pick TRT when the library actually resolves.
+            _has_nvinfer = False
             if "TensorrtExecutionProvider" in _ort_providers:
+                import ctypes.util
+                _has_nvinfer = ctypes.util.find_library("nvinfer") is not None
+            if _has_nvinfer:
                 bsvd_ep = "TRT"
             elif "CUDAExecutionProvider" in _ort_providers:
                 bsvd_ep = "CUDA"
