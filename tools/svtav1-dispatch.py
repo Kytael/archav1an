@@ -259,7 +259,9 @@ def run_piped(source_cmd, sink_cmd, source_label="source",
 # ---------------------------------------------------------------------------
 
 def get_audio_channels(input_file):
-    """Detect audio channel count via ffprobe. Returns int (default 2)."""
+    """Detect audio channel count via ffprobe.
+    Returns 0 when the file verifiably has no audio stream, the channel count
+    when it does, and 2 when the probe itself is unavailable/unreadable."""
     ffprobe_exe = shutil.which("ffprobe")
     if not ffprobe_exe:
         return 2
@@ -269,6 +271,8 @@ def get_audio_channels(input_file):
              "-show_entries", "stream=channels", "-of", "csv=p=0", input_file],
             capture_output=True, text=True,
         )
+        if result.returncode == 0 and not result.stdout.strip():
+            return 0
         return int(result.stdout.strip())
     except (ValueError, subprocess.SubprocessError):
         return 2
@@ -638,7 +642,10 @@ def main():
 
 
     # Audio
-    if no_opus:
+    has_audio = get_audio_channels(input_file) != 0
+    if not has_audio:
+        print("[svtav1-dispatch] Audio: none in source — video-only mux")
+    elif no_opus:
         print("[svtav1-dispatch] Audio: passthrough (--no-opus)")
     else:
         channels = get_audio_channels(input_file)
@@ -773,7 +780,12 @@ def main():
                 f"import vapoursynth as vs\n"
                 f"core = vs.core\n"
                 f"src = core.ffms2.Source(r'{input_file_fwd}', cachefile=r'{src_cachefile}')\n"
-                f"src = src.resize.Bicubic(format=vs.YUV420P10, chromaloc_in_s='left', chromaloc_s='left')\n"
+                f"if src.format.color_family == vs.RGB:\n"
+                f"    # RGB sources (e.g. Lagarith/FFV1 eval intermediates) need an explicit\n"
+                f"    # matrix for the YUV conversion; no chroma siting on RGB input.\n"
+                f"    src = src.resize.Bicubic(format=vs.YUV420P10, matrix_s='709', chromaloc_s='left')\n"
+                f"else:\n"
+                f"    src = src.resize.Bicubic(format=vs.YUV420P10, chromaloc_in_s='left', chromaloc_s='left')\n"
                 f"src.set_output()\n"
             )
         print(f"[svtav1-dispatch] vspipe (bicubic 422→420) | SvtAv1EncApp{svt_params}")
@@ -798,12 +810,16 @@ def main():
 
     # --- Mux ---
     print("[svtav1-dispatch] Muxing...")
-    audio_codec = ["-c:a", "copy"] if no_opus else ["-c:a", "libopus", "-b:a", opus_bitrate]
+    if has_audio:
+        audio_codec = ["-c:a", "copy"] if no_opus else ["-c:a", "libopus", "-b:a", opus_bitrate]
+        audio_args = ["-map", "1:a", *audio_codec]
+    else:
+        audio_args = []
     mux_cmd = [
         ffmpeg_exe, "-y",
         "-i", ivf_path, "-i", input_file,
-        "-map", "0:v", "-map", "1:a",
-        "-c:v", "copy", *audio_codec,
+        "-map", "0:v", *audio_args,
+        "-c:v", "copy",
         output_file,
     ]
 
