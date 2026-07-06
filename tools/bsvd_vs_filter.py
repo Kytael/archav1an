@@ -20,6 +20,7 @@ denoised against black — visibly under-denoised at the very last frame.
 """
 from __future__ import annotations
 
+import os
 import threading
 from collections import OrderedDict
 from pathlib import Path
@@ -102,9 +103,20 @@ class BSVDOrtStreamingV2:
                 {'device_id': device_id}, {}]
             self._io_device_type = 'cuda'
         elif self.ep == 'MIGRAPHX':
-            providers = ['MIGraphXExecutionProvider', 'CPUExecutionProvider']
+            # Compiled-model cache: the graph compile is ~163 s per session on
+            # Strix at 1080p — cache it next to the ONNX like the TRT engines.
+            # Cache is shape-specific, so key the filename on HxW.
+            cache = trt_cache_dir or str(Path(self.onnx_path).parent / 'migx_cache')
+            Path(cache).mkdir(exist_ok=True, parents=True)
+            mxr = str(Path(cache) / (Path(self.onnx_path).stem
+                                     + f'_{H}x{W}{"_fp16" if fp16 else ""}.mxr'))
             provider_options = [
-                {'device_id': device_id, 'migraphx_fp16_enable': fp16}, {}]
+                {'device_id': device_id, 'migraphx_fp16_enable': fp16,
+                 'migraphx_save_compiled_model': not os.path.exists(mxr),
+                 'migraphx_save_model_path': mxr,
+                 'migraphx_load_compiled_model': os.path.exists(mxr),
+                 'migraphx_load_model_path': mxr}, {}]
+            providers = ['MIGraphXExecutionProvider', 'CPUExecutionProvider']
             self._io_device_type = 'cuda'
         elif self.ep == 'CUDA':
             providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
