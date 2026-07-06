@@ -139,18 +139,25 @@ install_denoiser() {
             log_warn "trtexec not found in PATH — vsmlrt TRT engine caching may not work"
         fi
 
-    elif [ "$GPU_VENDOR" = "amd" ]; then
-        log_info "AMD GPU detected — installing MIGraphX backend..."
+    fi
 
-        # 2a. PyTorch ROCm
-        local rocm_ver
-        rocm_ver=$(cat /opt/rocm/.info/version 2>/dev/null | grep -oP '^\d+\.\d+' || echo "")
-        if [ -z "$rocm_ver" ]; then
-            log_warn "Could not detect ROCm version, defaulting to rocm6.2 index"
-            rocm_ver="6.2"
+    if [ "$GPU_VENDOR" = "amd" ] || [ "$GPU_VENDOR" = "both" ]; then
+        log_info "AMD GPU detected — installing MIGraphX backend (best-effort)..."
+
+        # 2a. PyTorch ROCm — pure-AMD hosts only. On a dual-GPU "both" host the
+        # CUDA torch installed by the NVIDIA block above runs the shared SCUNet
+        # ONNX export; a rocm wheel would clobber it and break export on the
+        # NVIDIA card, so we keep cu128 there.
+        if [ "$GPU_VENDOR" = "amd" ]; then
+            local rocm_ver
+            rocm_ver=$(cat /opt/rocm/.info/version 2>/dev/null | grep -oP '^\d+\.\d+' || echo "")
+            if [ -z "$rocm_ver" ]; then
+                log_warn "Could not detect ROCm version, defaulting to rocm6.2 index"
+                rocm_ver="6.2"
+            fi
+            log_info "ROCm $rocm_ver detected — installing PyTorch ROCm build..."
+            "$VENV_DIR/bin/pip" install torch torchvision --index-url "https://download.pytorch.org/whl/rocm${rocm_ver}" || { log_error "Failed to install PyTorch ROCm ${rocm_ver}"; return 1; }
         fi
-        log_info "ROCm $rocm_ver detected — installing PyTorch ROCm build..."
-        "$VENV_DIR/bin/pip" install torch torchvision --index-url "https://download.pytorch.org/whl/rocm${rocm_ver}" || { log_error "Failed to install PyTorch ROCm ${rocm_ver}"; return 1; }
 
         # 2b. MIGraphX package
         log_info "Installing MIGraphX..."
@@ -160,7 +167,7 @@ install_denoiser() {
             else
                 pacman -S --needed --noconfirm rocm-migraphx 2>/dev/null \
                     || pacman -S --needed --noconfirm migraphx \
-                    || { log_error "Failed to install migraphx (tried rocm-migraphx and migraphx). Run: sudo pacman -S migraphx"; return 1; }
+                    || log_warn "Failed to install migraphx (tried rocm-migraphx and migraphx). libvsmigx.so may fail to build/load. Run: sudo pacman -S migraphx"
             fi
         else
             log_warn "Debian/Ubuntu: install rocm-migraphx manually from your ROCm repo"
@@ -174,26 +181,37 @@ install_denoiser() {
             log_success "Symlinked existing libvsmigx.so to $VS_PLUGIN_PATH/"
         else
             log_info "Building libvsmigx.so from vs-mlrt source..."
-            local ORIG_DIR="$(pwd)"
-            mkdir -p build_tmp && cd build_tmp || return 1
-
-            clone_src denoiser vs-mlrt vs-mlrt || { cd "$ORIG_DIR"; return 1; }
-
-            cd vs-mlrt/vsmigx
-            mkdir -p build && cd build
-            cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja -DVAPOURSYNTH_INCLUDE_DIRS="$VS_INCLUDE_DIR" \
-                || { log_error "vsmigx cmake failed"; cd "$ORIG_DIR"; return 1; }
-            ninja || { log_error "vsmigx build failed"; cd "$ORIG_DIR"; return 1; }
-            cp libvsmigx.so "$VS_PLUGIN_PATH/"
-            log_success "libvsmigx.so installed to $VS_PLUGIN_PATH/"
-            cd "$ORIG_DIR"
+            # Best-effort: a failure warns and continues so the NVIDIA/TRT side
+            # and the shared components (KNLMeansCL, SMDegrain plugins) still
+            # install on a dual-GPU host with a half-broken system migraphx.
+            local ORIG_DIR_MIGX="$(pwd)"
+            if mkdir -p build_tmp && cd build_tmp \
+               && clone_src denoiser vs-mlrt vs-mlrt \
+               && cd vs-mlrt/vsmigx \
+               && mkdir -p build && cd build \
+               && cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja -DVAPOURSYNTH_INCLUDE_DIRS="$VS_INCLUDE_DIR" \
+               && ninja \
+               && [ -f libvsmigx.so ]; then
+                cp libvsmigx.so "$VS_PLUGIN_PATH/"
+                log_success "libvsmigx.so installed to $VS_PLUGIN_PATH/"
+            else
+                log_warn "libvsmigx.so build failed — MIGraphX native plugin unavailable on this host (SCUNet-via-migx won't work; BSVD uses the ORT shim path instead)."
+            fi
+            cd "$ORIG_DIR_MIGX"
         fi
 
-        # 2d. Symlink migraphx-driver for vsmlrt.py
+        # 2d. Symlink migraphx-driver for vsmlrt.py (guard: absent if migraphx pkg failed)
         mkdir -p "$VS_PLUGIN_PATH/vsmlrt-hip"
-        ln -sf "$(command -v migraphx-driver)" "$VS_PLUGIN_PATH/vsmlrt-hip/migraphx-driver"
+        local _migx_driver
+        _migx_driver="$(command -v migraphx-driver 2>/dev/null || true)"
+        if [ -n "$_migx_driver" ]; then
+            ln -sf "$_migx_driver" "$VS_PLUGIN_PATH/vsmlrt-hip/migraphx-driver"
+        else
+            log_warn "migraphx-driver not found — vsmlrt.py MIGraphX engine caching may not work."
+        fi
+    fi
 
-    else
+    if [ "$GPU_VENDOR" != "nvidia" ] && [ "$GPU_VENDOR" != "both" ] && [ "$GPU_VENDOR" != "amd" ]; then
         log_info "No AMD/NVIDIA GPU detected — installing PyTorch CPU build (needed for ONNX export)..."
         "$VENV_DIR/bin/pip" install torch torchvision --index-url https://download.pytorch.org/whl/cpu || { log_error "Failed to install PyTorch CPU"; return 1; }
     fi
@@ -502,15 +520,30 @@ for sigma in [15, 25, 50]:
         else
             log_warn "onnxruntime installed but TensorrtExecutionProvider not registered. Check TensorRT install."
         fi
-    elif [ "$GPU_VENDOR" = "amd" ]; then
-        # ROCm/MIGraphX EP requires a from-source ORT build — see memory
-        # encoder-host_ort_rocm_build.md. We don't rebuild from this script (long,
-        # ROCm-version-coupled). Probe for MIGraphX EP via whatever onnxruntime
-        # is already in the venv or system path.
-        if "$VENV_DIR/bin/python" -c "import onnxruntime as o; assert 'MIGraphXExecutionProvider' in o.get_available_providers()" 2>/dev/null; then
-            log_success "onnxruntime + MIGraphXExecutionProvider available"
+    fi
+
+    if [ "$GPU_VENDOR" = "amd" ] || [ "$GPU_VENDOR" = "both" ]; then
+        # MIGraphX ORT (BSVD V2 stateful streaming on the AMD GPU) lives in an
+        # EXTERNAL py3.12 venv shim, NOT the managed py3.14 venv: onnxruntime_migraphx
+        # ships cp312-only wheels, and python_libs.sh rebuilds $VS_PREFIX/venv on any
+        # python-version drift (which would nuke a 3.12 venv placed there). setup.sh
+        # therefore neither builds nor rebuilds the shim — it only DETECTS it and
+        # prints the dispatch wiring, so normal --install/--update never touch it.
+        # See memory encoder-host-migraphx-env-restored.md for how to (re)build the shim.
+        local _migx_venv="" _cand
+        for _cand in "${MIGX_VENV:-}" \
+                     "/home/${SUDO_USER:-$USER}/reposetc/bsvd/migraphx-venv" \
+                     "$VS_PREFIX/venv-migx"; do
+            [ -n "$_cand" ] && [ -x "$_cand/bin/python" ] && { _migx_venv="$_cand"; break; }
+        done
+        if [ -n "$_migx_venv" ] \
+           && "$_migx_venv/bin/python" -c "import onnxruntime as o; assert 'MIGraphXExecutionProvider' in o.get_available_providers()" 2>/dev/null; then
+            log_success "MIGraphX ORT shim found: $_migx_venv (MIGraphXExecutionProvider available)"
+            log_info    "  Run BSVD dispatch on the AMD GPU with:"
+            log_info    "    VSPIPE=$_migx_venv/bin/vspipe $_migx_venv/bin/python tools/svtav1-dispatch.py -i IN -o OUT.mkv --denoise-bsvd ..."
         else
-            log_warn "MIGraphXExecutionProvider not registered. Build ORT-ROCm from source per memory encoder-host_ort_rocm_build.md; --denoise-bsvd will not work until then."
+            log_warn "No working MIGraphX ORT venv (checked \$MIGX_VENV, ~/reposetc/bsvd/migraphx-venv, $VS_PREFIX/venv-migx)."
+            log_warn "  --denoise-bsvd on the AMD GPU needs a py3.12 venv with onnxruntime_migraphx; set MIGX_VENV=<path> or rebuild per memory encoder-host-migraphx-env-restored.md."
         fi
     fi
 
@@ -542,11 +575,12 @@ for sigma in [15, 25, 50]:
         fi
     done
 
-    if [ "$GPU_VENDOR" = "nvidia" ] || [ "$GPU_VENDOR" = "both" ]; then
-        log_success "Denoiser installed (PyTorch CUDA, vsscunet, TensorRT, libvstrt.so, vsmlrt.py, onnxruntime-gpu, KNLMeansCL, BSVD assets staged)."
-    else
-        log_success "Denoiser installed (PyTorch ROCm, vsscunet, MIGraphX, libvsmigx.so, vsmlrt.py, KNLMeansCL, BSVD assets staged)."
-    fi
+    case "$GPU_VENDOR" in
+        both)   log_success "Denoiser installed (CUDA+TensorRT libvstrt.so AND MIGraphX libvsmigx.so [best-effort], vsscunet, vsmlrt.py, onnxruntime-gpu, KNLMeansCL, BSVD assets staged)." ;;
+        nvidia) log_success "Denoiser installed (PyTorch CUDA, vsscunet, TensorRT, libvstrt.so, vsmlrt.py, onnxruntime-gpu, KNLMeansCL, BSVD assets staged)." ;;
+        amd)    log_success "Denoiser installed (PyTorch ROCm, vsscunet, MIGraphX, libvsmigx.so, vsmlrt.py, KNLMeansCL, BSVD assets staged)." ;;
+        *)      log_success "Denoiser installed (PyTorch CPU, vsscunet, vsmlrt.py, KNLMeansCL, BSVD assets staged)." ;;
+    esac
 }
 
 uninstall_denoiser() {
