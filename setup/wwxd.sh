@@ -5,6 +5,9 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
+SOURCES["wwxd:vapoursynth-wwxd"]="https://github.com/dubhater/vapoursynth-wwxd.git|v1.0"
+ARTIFACTS["wwxd"]="lib/vapoursynth/libwwxd.so"
+
 install_wwxd() {
     local VS_PLUGIN_PATH
     VS_PLUGIN_PATH="$(get_vs_plugin_path)"
@@ -18,8 +21,7 @@ install_wwxd() {
     cd "$BUILD_DIR" || exit 1
 
     log_info "Compiling VapourSynth-WWXD..."
-    if [ -d "vapoursynth-wwxd" ]; then rm -rf vapoursynth-wwxd; fi
-    git clone --branch v1.0 --depth 1 https://github.com/dubhater/vapoursynth-wwxd.git || { cd "$ORIG_DIR"; log_error "Failed to clone WWXD"; return 1; }
+    clone_src wwxd vapoursynth-wwxd vapoursynth-wwxd || { cd "$ORIG_DIR"; return 1; }
     cd vapoursynth-wwxd || { cd "$ORIG_DIR"; log_error "Failed to cd into vapoursynth-wwxd"; return 1; }
 
     # Find VapourSynth headers dynamically
@@ -48,5 +50,6 @@ uninstall_wwxd() {
     local VS_PLUGIN_PATH
     VS_PLUGIN_PATH="$(get_vs_plugin_path)"
     find "$VS_PLUGIN_PATH" "$VS_PREFIX/lib/vapoursynth" -name "libwwxd.so" -delete 2>/dev/null
+    rm -f "$MANIFEST_DIR/wwxd.src"
     log_success "WWXD uninstalled."
 }

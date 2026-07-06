@@ -5,6 +5,9 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
+SOURCES["fssimu2:fssimu2"]="https://github.com/gianni-rosato/fssimu2.git|0.1.3"
+ARTIFACTS["fssimu2"]="bin/fssimu2"
+
 install_fssimu2() {
     if { [ -x "$VS_PREFIX/bin/fssimu2" ] || command -v fssimu2 &> /dev/null; } \
         && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
@@ -43,8 +46,7 @@ install_fssimu2() {
     mkdir -p "$BUILD_DIR"
     cd "$BUILD_DIR" || exit 1
 
-    if [ -d "fssimu2" ]; then rm -rf fssimu2; fi
-    git clone --branch 0.1.3 --depth 1 https://github.com/gianni-rosato/fssimu2.git || { cd "$ORIG_DIR"; log_error "Failed to clone fssimu2"; return 1; }
+    clone_src fssimu2 fssimu2 fssimu2 || { cd "$ORIG_DIR"; return 1; }
     cd fssimu2 || { cd "$ORIG_DIR"; log_error "Failed to cd into fssimu2"; return 1; }
 
     log_info "Building fssimu2..."
@@ -64,5 +66,6 @@ uninstall_fssimu2() {
     rm -vf "$VS_PREFIX/bin/fssimu2"
     rm -vf "$VS_PREFIX/lib/libssimu2"*
     rm -rf "$VS_PREFIX/include/ssimu2.h"
+    rm -f "$MANIFEST_DIR/fssimu2.src"
     log_success "fssimu2 uninstalled."
 }

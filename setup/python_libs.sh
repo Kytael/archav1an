@@ -81,6 +81,19 @@ install_python_libs() {
     log_success "Python libraries installed in venv (Python $INSTALLED_PY)."
 }
 
+# pip is its own update resolver — "update" here is just install -U over the
+# same package set (used by ./setup.sh --update; a no-op when all current).
+update_python_libs() {
+    [ -d "$VENV_DIR" ] || { log_warn "venv missing — run --install python_libs instead."; return 1; }
+    log_info "Upgrading python_libs packages in venv..."
+    VIRTUAL_ENV="$VENV_DIR" uv pip install -U \
+            vsjetpack numpy scipy rich vstools psutil anitopy pyperclip requests \
+            requests_toolbelt natsort colorama Cython \
+        || { log_error "uv pip install -U failed."; return 1; }
+    VIRTUAL_ENV="$VENV_DIR" uv pip uninstall vapoursynth || true
+    log_success "python_libs packages upgraded."
+}
+
 uninstall_python_libs() {
     log_info "Uninstalling Python Libraries..."
 

@@ -5,6 +5,11 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
+SOURCES["ffmpeg:dav1d"]="https://code.videolan.org/videolan/dav1d.git|1.5.3"
+SOURCES["ffmpeg:nv-codec-headers"]="https://github.com/FFmpeg/nv-codec-headers.git|master"
+SOURCES["ffmpeg:ffmpeg"]="https://github.com/FFmpeg/FFmpeg.git|master"
+ARTIFACTS["ffmpeg"]="bin/ffmpeg bin/ffprobe lib/libdav1d.so"
+
 install_dav1d() {
     if [ -f "$VS_PREFIX/lib/libdav1d.so" ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         log_info "dav1d (source-built) is already installed."
@@ -19,8 +24,7 @@ install_dav1d() {
     mkdir -p "$BUILD_DIR"
     cd "$BUILD_DIR" || exit 1
 
-    if [ -d "dav1d" ]; then rm -rf dav1d; fi
-    git clone --branch 1.5.3 --depth 1 https://code.videolan.org/videolan/dav1d.git || { cd "$ORIG_DIR"; log_error "Failed to clone dav1d"; return 1; }
+    clone_src ffmpeg dav1d dav1d || { cd "$ORIG_DIR"; return 1; }
     cd dav1d || { cd "$ORIG_DIR"; log_error "Failed to cd into dav1d"; return 1; }
 
     CC=clang CXX=clang++ meson setup build --buildtype=release \
@@ -110,8 +114,7 @@ install_nv_codec_headers() {
     local ORIG_DIR="$(pwd)"
     local BUILD_DIR="$ORIG_DIR/build_tmp"
     mkdir -p "$BUILD_DIR" && cd "$BUILD_DIR" || return 1
-    if [ -d "nv-codec-headers" ]; then rm -rf nv-codec-headers; fi
-    git clone --depth 1 https://github.com/FFmpeg/nv-codec-headers.git || { cd "$ORIG_DIR"; log_error "nv-codec-headers clone failed"; return 1; }
+    clone_src ffmpeg nv-codec-headers nv-codec-headers || { cd "$ORIG_DIR"; return 1; }
     cd nv-codec-headers || { cd "$ORIG_DIR"; return 1; }
     make install PREFIX="$VS_PREFIX" || { cd "$ORIG_DIR"; log_error "nv-codec-headers install failed"; return 1; }
     cd "$ORIG_DIR"
@@ -139,8 +142,7 @@ install_ffmpeg() {
     mkdir -p "$BUILD_DIR"
     cd "$BUILD_DIR" || exit 1
 
-    if [ -d "ffmpeg" ]; then rm -rf ffmpeg; fi
-    git clone --depth 1 https://github.com/FFmpeg/FFmpeg.git ffmpeg || { cd "$ORIG_DIR"; log_error "Failed to clone FFmpeg"; return 1; }
+    clone_src ffmpeg ffmpeg ffmpeg || { cd "$ORIG_DIR"; return 1; }
     cd ffmpeg || { cd "$ORIG_DIR"; log_error "Failed to cd into ffmpeg"; return 1; }
 
     # --- PGO Pass 1: Build with profiling instrumentation ---
@@ -238,5 +240,6 @@ uninstall_ffmpeg() {
     rm -vf "${VS_PREFIX}/lib/pkgconfig/libpostproc.pc"
     rm -vf "${VS_PREFIX}/lib/pkgconfig/dav1d.pc"
     ldconfig
+    rm -f "$MANIFEST_DIR/ffmpeg.src"
     log_success "FFmpeg and dav1d uninstalled."
 }

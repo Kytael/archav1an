@@ -5,6 +5,9 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
+SOURCES["vszip:vapoursynth-zip"]="https://github.com/dnjulek/vapoursynth-zip.git|R13"
+ARTIFACTS["vszip"]="lib/vapoursynth/libvszip.so"
+
 install_vszip() {
     local VS_PLUGIN_PATH
     VS_PLUGIN_PATH="$(get_vs_plugin_path)"
@@ -16,8 +19,7 @@ install_vszip() {
     cd "$BUILD_DIR" || exit 1
 
     log_info "Compiling VSZIP..."
-    if [ -d "vszip" ]; then rm -rf vszip; fi
-    git clone --branch R13 --depth 1 https://github.com/dnjulek/vapoursynth-zip.git vszip || { cd "$ORIG_DIR"; log_error "Failed to clone VSZIP"; return 1; }
+    clone_src vszip vapoursynth-zip vszip || { cd "$ORIG_DIR"; return 1; }
     cd vszip || { cd "$ORIG_DIR"; log_error "Failed to cd into vszip"; return 1; }
 
     # Build with our own zig at $VS_PREFIX/bin (same pattern as fssimu2.sh)
@@ -62,5 +64,6 @@ uninstall_vszip() {
     local VS_PLUGIN_PATH
     VS_PLUGIN_PATH="$(get_vs_plugin_path)"
     find "$VS_PLUGIN_PATH" "$VS_PREFIX/lib/vapoursynth" -name "libvszip.so" -delete 2>/dev/null
+    rm -f "$MANIFEST_DIR/vszip.src"
     log_success "VSZIP uninstalled."
 }

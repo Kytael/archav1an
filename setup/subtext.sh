@@ -5,6 +5,9 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
+SOURCES["subtext:subtext"]="https://github.com/vapoursynth/subtext.git|R6"
+ARTIFACTS["subtext"]="lib/vapoursynth/libsubtext.so"
+
 install_subtext() {
     local VS_PLUGIN_PATH
     VS_PLUGIN_PATH="$(get_vs_plugin_path)"
@@ -18,8 +21,7 @@ install_subtext() {
     cd "$BUILD_DIR" || exit 1
 
     log_info "Compiling SubText..."
-    if [ -d "subtext" ]; then rm -rf subtext; fi
-    git clone --branch R6 --depth 1 https://github.com/vapoursynth/subtext.git || { cd "$ORIG_DIR"; log_error "Failed to clone SubText"; return 1; }
+    clone_src subtext subtext subtext || { cd "$ORIG_DIR"; return 1; }
     cd subtext || { cd "$ORIG_DIR"; log_error "Failed to cd into subtext"; return 1; }
 
     # avcodec_close() was removed in FFmpeg 6.0; rewrite to avcodec_free_context().
@@ -63,5 +65,6 @@ uninstall_subtext() {
     local VS_PLUGIN_PATH
     VS_PLUGIN_PATH="$(get_vs_plugin_path)"
     find "$VS_PLUGIN_PATH" "$VS_PREFIX/lib/vapoursynth" -name "libsubtext.so" -delete 2>/dev/null
+    rm -f "$MANIFEST_DIR/subtext.src"
     log_success "SubText uninstalled."
 }

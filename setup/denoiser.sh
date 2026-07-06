@@ -5,6 +5,14 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
+SOURCES["denoiser:vs-mlrt"]="https://github.com/AmusementClub/vs-mlrt.git|master"
+SOURCES["denoiser:knlmeanscl"]="https://github.com/Khanattila/KNLMeansCL.git|master"
+SOURCES["denoiser:vsmlrt-py"]="https://github.com/AmusementClub/vs-mlrt.git|master"
+SOURCES["denoiser:mvsfunc"]="https://github.com/HomeOfVapourSynthEvolution/mvsfunc.git|master"
+SOURCES["denoiser:havsfunc-legacy"]="https://github.com/HomeOfVapourSynthEvolution/havsfunc.git|r33"
+SOURCES["denoiser:scunet-weights"]="https://github.com/cszn/SCUNet/releases/download/v1.0|pinned"
+ARTIFACTS["denoiser"]="lib/vapoursynth/libvstrt.so lib/vapoursynth/libvsmigx.so lib/vapoursynth/libknlmeanscl.so lib/vapoursynth/libmvtools.so lib/vapoursynth/libremovegrain.so lib/vapoursynth/libctmf.so"
+
 install_denoiser() {
     local VS_PLUGIN_PATH
     VS_PLUGIN_PATH="$(get_vs_plugin_path)"
@@ -96,8 +104,7 @@ install_denoiser() {
         local ORIG_DIR="$(pwd)"
         mkdir -p build_tmp && cd build_tmp || return 1
 
-        if [ -d "vs-mlrt" ]; then rm -rf vs-mlrt; fi
-        git clone --depth 1 https://github.com/AmusementClub/vs-mlrt.git || { log_error "Failed to clone vs-mlrt"; cd "$ORIG_DIR"; return 1; }
+        clone_src denoiser vs-mlrt vs-mlrt || { cd "$ORIG_DIR"; return 1; }
 
         cd vs-mlrt/vstrt
         mkdir -p build && cd build
@@ -170,8 +177,7 @@ install_denoiser() {
             local ORIG_DIR="$(pwd)"
             mkdir -p build_tmp && cd build_tmp || return 1
 
-            if [ -d "vs-mlrt" ]; then rm -rf vs-mlrt; fi
-            git clone --depth 1 https://github.com/AmusementClub/vs-mlrt.git || { log_error "Failed to clone vs-mlrt"; cd "$ORIG_DIR"; return 1; }
+            clone_src denoiser vs-mlrt vs-mlrt || { cd "$ORIG_DIR"; return 1; }
 
             cd vs-mlrt/vsmigx
             mkdir -p build && cd build
@@ -216,6 +222,7 @@ install_denoiser() {
         # Remove relative _metadata import that breaks standalone use
         sed -i '/^from \._metadata import/d' "$_site/mvsfunc_pkg/mvsfunc.py"
         printf 'from .mvsfunc import *\n' > "$_site/mvsfunc_pkg/__init__.py"
+        record_src denoiser mvsfunc "https://github.com/HomeOfVapourSynthEvolution/mvsfunc.git" master "$(git ls-remote https://github.com/HomeOfVapourSynthEvolution/mvsfunc.git refs/heads/master 2>/dev/null | cut -f1)"
         log_success "mvsfunc_pkg installed to $_site/mvsfunc_pkg/"
     else
         log_info "mvsfunc_pkg already installed."
@@ -232,6 +239,7 @@ install_denoiser() {
         # VS R73+ no longer strips leading underscores from reserved-word kwargs;
         # havsfunc r33 uses _global= but MVTools expects global_ (trailing underscore).
         sed -i 's/_global=/global_=/g' "$_site/havsfunc_legacy.py"
+        record_src denoiser havsfunc-legacy "https://github.com/HomeOfVapourSynthEvolution/havsfunc.git" r33 r33
         log_success "havsfunc_legacy installed to $_site/"
     else
         log_info "havsfunc_legacy already installed."
@@ -368,6 +376,7 @@ for name in ['scunet_color_15', 'scunet_color_25', 'scunet_color_50',
             rm -f "$GRAY_PTH_DIR/$_fname"
         fi
     done
+    record_src denoiser scunet-weights "https://github.com/cszn/SCUNet/releases/download/v1.0" pinned v1.0
 
     "$VENV_DIR/bin/python3" -c "
 import torch, sys
@@ -434,6 +443,7 @@ for sigma in [15, 25, 50]:
     curl -fsSL "https://raw.githubusercontent.com/AmusementClub/vs-mlrt/master/scripts/vsmlrt.py" -o "$VSMLRT_PY" || { log_error "Failed to download vsmlrt.py"; return 1; }
     # Patch bug: alter_mxr_path cache check used wrong variable name
     sed -i 's/os.access(alter_mxr_path, mode=os.R_OK) and os.path.getsize(mxr_path)/os.access(alter_mxr_path, mode=os.R_OK) and os.path.getsize(alter_mxr_path)/' "$VSMLRT_PY"
+    record_src denoiser vsmlrt-py "https://github.com/AmusementClub/vs-mlrt.git" master "$(git ls-remote https://github.com/AmusementClub/vs-mlrt.git refs/heads/master 2>/dev/null | cut -f1)"
     log_success "vsmlrt.py installed to $VSMLRT_PY"
 
     # =========================================================================
@@ -457,8 +467,7 @@ for sigma in [15, 25, 50]:
     local ORIG_DIR2="$(pwd)"
     mkdir -p build_tmp && cd build_tmp || return 1
 
-    if [ -d "KNLMeansCL" ]; then rm -rf KNLMeansCL; fi
-    git clone --depth 1 https://github.com/Khanattila/KNLMeansCL.git || { log_error "Failed to clone KNLMeansCL"; cd "$ORIG_DIR2"; return 1; }
+    clone_src denoiser knlmeanscl KNLMeansCL || { cd "$ORIG_DIR2"; return 1; }
     cd KNLMeansCL
     meson setup build --buildtype=release || { log_error "KNLMeansCL meson setup failed"; cd "$ORIG_DIR2"; return 1; }
     ninja -C build || { log_error "KNLMeansCL build failed"; cd "$ORIG_DIR2"; return 1; }
@@ -583,5 +592,6 @@ uninstall_denoiser() {
 
     # Staged BSVD model assets in models/ are git-tracked repo content — left in place.
 
+    rm -f "$MANIFEST_DIR/denoiser.src"
     log_success "Denoiser dependencies removed."
 }

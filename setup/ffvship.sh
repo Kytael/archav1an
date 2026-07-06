@@ -5,6 +5,9 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
+SOURCES["ffvship:vship"]="https://codeberg.org/Line-fr/Vship.git|v5.0.1"
+ARTIFACTS["ffvship"]="bin/FFVship lib/vapoursynth/libvship.so"
+
 install_ffvship() {
     if command -v FFVship &> /dev/null && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         log_info "FFVship is already installed."
@@ -33,8 +36,7 @@ install_ffvship() {
     mkdir -p "$BUILD_DIR"
     cd "$BUILD_DIR" || exit 1
 
-    if [ -d "Vship" ]; then rm -rf Vship; fi
-    git clone --branch v5.0.1 --depth 1 https://codeberg.org/Line-fr/Vship.git || { cd "$ORIG_DIR"; log_error "Failed to clone Vship"; return 1; }
+    clone_src ffvship vship Vship || { cd "$ORIG_DIR"; return 1; }
     cd Vship || { cd "$ORIG_DIR"; log_error "Failed to cd into Vship"; return 1; }
 
     # WSL2: nvcc -arch=native can't query the GPU, so detect via Windows nvidia-smi
@@ -93,5 +95,6 @@ install_ffvship() {
 uninstall_ffvship() {
     log_info "Uninstalling FFVship..."
     rm -vf "$VS_PREFIX/bin/FFVship"
+    rm -f "$MANIFEST_DIR/ffvship.src"
     log_success "FFVship uninstalled."
 }

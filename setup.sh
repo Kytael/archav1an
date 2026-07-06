@@ -120,10 +120,47 @@ is_installed() {
 
 get_status_icon() {
     if is_installed "$1"; then
-        echo -e "${GREEN}[INSTALLED]${NC}"
+        # ldd-only health check (local + fast; the vspipe load probe and the
+        # network update check run in --update, not on every menu render).
+        if check_linkage "$1" >/dev/null; then
+            echo -e "${GREEN}[INSTALLED]${NC}"
+        else
+            echo -e "${RED}[BROKEN]${NC}"
+        fi
     else
         echo -e "${RED}[MISSING]${NC}"
     fi
+}
+
+# update_check <component> [network:0|1]
+# One line on stdout: "component|OK/UPDATE/BROKEN/UNKNOWN/MISSING|detail".
+# BROKEN (health) takes precedence over staleness; UPDATE over UNKNOWN.
+update_check() {
+    local component=$1 network=${2:-1}
+    if ! is_installed "$component"; then
+        echo "$component|MISSING|not installed"
+        return 0
+    fi
+    local out reasons
+    if ! out=$(component_health "$component"); then
+        reasons=$(echo "$out" | awk -F'|' '$2=="BROKEN"{printf "%s (%s); ", $1, $3}')
+        echo "$component|BROKEN|${reasons%; }"
+        return 0
+    fi
+    if [ "$network" != "1" ]; then
+        echo "$component|OK|healthy (update check skipped)"
+        return 0
+    fi
+    out=$(src_update_status "$component")
+    if echo "$out" | grep -q "|UPDATE|"; then
+        reasons=$(echo "$out" | awk -F'|' '$2=="UPDATE"{printf "%s: %s; ", $1, $3}')
+        echo "$component|UPDATE|${reasons%; }"
+    elif echo "$out" | grep -q "|UNKNOWN|"; then
+        echo "$component|UNKNOWN|no install record (pre-manifest install)"
+    else
+        echo "$component|OK|up to date"
+    fi
+    return 0
 }
 
 # Global variables for dependency resolution
@@ -139,6 +176,25 @@ resolve_deps_recursive() {
         resolve_deps_recursive "$dep"
     done
     RESOLVE_PLAN+=("$tool")
+}
+
+run_installer() {
+    case "$1" in
+        "system_deps") install_system_deps ;;
+        "python_libs") install_python_libs ;;
+        "ffmpeg") install_ffmpeg ;;
+        "vapoursynth") install_vapoursynth ;;
+        "av1an") install_av1an ;;
+        "svt_av1") install_svt_av1 ;;
+        "ffvship") install_ffvship ;;
+        "oxipng") install_oxipng ;;
+        "fssimu2") install_fssimu2 ;;
+        "wwxd") install_wwxd ;;
+        "vszip") install_vszip ;;
+        "subtext") install_subtext ;;
+        "denoiser") install_denoiser ;;
+        *) log_error "Unknown module: $1"; exit 1 ;;
+    esac
 }
 
 # Wrapper to install a tool with deps
@@ -166,7 +222,29 @@ install_tool() {
             echo -e "  - $item: ${RED}To be reinstalled (FORCE_REINSTALL=1)${NC}"
             install_queue+=("$item")
         elif is_installed "$item"; then
-            echo -e "  - $item: ${GREEN}Already Installed${NC}"
+            # Not a blind skip: check staleness (network) + linkage/load health.
+            local _chk _verdict _detail
+            _chk=$(update_check "$item" 1)
+            IFS='|' read -r _ _verdict _detail <<< "$_chk"
+            case "$_verdict" in
+                UPDATE)
+                    echo -e "  - $item: ${YELLOW}Update available${NC} ($_detail)"
+                    install_queue+=("$item")
+                    ;;
+                BROKEN)
+                    echo -e "  - $item: ${RED}Broken${NC} ($_detail)"
+                    install_queue+=("$item")
+                    ;;
+                UNKNOWN)
+                    echo -e "  - $item: ${YELLOW}Installed, no install record${NC}"
+                    if ask_yes_no "    Rebuild $item to establish an update baseline?" "N"; then
+                        install_queue+=("$item")
+                    fi
+                    ;;
+                *)
+                    echo -e "  - $item: ${GREEN}Already Installed (up to date)${NC}"
+                    ;;
+            esac
         else
             echo -e "  - $item: ${RED}To be installed${NC}"
             install_queue+=("$item")
@@ -191,24 +269,16 @@ install_tool() {
     
     for item in "${install_queue[@]}"; do
         log_info "Installing: $item"
-        local status=0
-        case "$item" in
-            "system_deps") install_system_deps ;;
-            "python_libs") install_python_libs ;;
-            "ffmpeg") install_ffmpeg ;;
-            "vapoursynth") install_vapoursynth ;;
-            "av1an") install_av1an ;;
-            "svt_av1") install_svt_av1 ;;
-            "ffvship") install_ffvship ;;
-            "oxipng") install_oxipng ;;
-            "fssimu2") install_fssimu2 ;;
-            "wwxd") install_wwxd ;;
-            "vszip") install_vszip ;;
-            "subtext") install_subtext ;;
-            "denoiser") install_denoiser ;;
-            *) log_error "Unknown module: $item"; exit 1 ;;
-        esac
+        local status=0 _item_force="$_env_force"
+        # Items queued while still installed (update/broken/baseline rebuilds)
+        # need the module-level "already installed" guard bypassed.
+        if [ "$_item_force" != "1" ] && is_installed "$item"; then
+            _item_force=1
+        fi
+        FORCE_REINSTALL="$_item_force"
+        run_installer "$item"
         status=$?
+        FORCE_REINSTALL="$_env_force"
         if [ $status -ne 0 ]; then
             log_error "Failed to install $item (Exit code: $status). Stopping."
             # Restore to the entry value on failure too: don't leak the
@@ -250,8 +320,10 @@ uninstall_tool() {
     esac
 }
 
+ALL_TOOLS=("system_deps" "python_libs" "svt_av1" "ffmpeg" "vapoursynth" "av1an" "ffvship" "oxipng" "fssimu2" "wwxd" "vszip" "subtext" "denoiser")
+
 install_all_tools() {
-    local all_tools=("system_deps" "python_libs" "svt_av1" "ffmpeg" "vapoursynth" "av1an" "ffvship" "oxipng" "fssimu2" "wwxd" "vszip" "subtext" "denoiser")
+    local all_tools=("${ALL_TOOLS[@]}")
     log_info "Starting Full Installation..."
     setup_build_tmpfs "$(pwd)/build_tmp"
     for t in "${all_tools[@]}"; do
@@ -262,6 +334,110 @@ install_all_tools() {
         umount "$(pwd)/build_tmp" 2>/dev/null
         log_info "build_tmp tmpfs unmounted."
     fi
+}
+
+# update_tool <component...>
+# pacman-style sweep: check every named component (health + upstream), print a
+# summary, confirm once, rebuild only what needs it, then cascade-recheck
+# linkage (a rebuilt dependency can newly break dependents' ABI).
+update_tool() {
+    local comps=("$@")
+    local c line verdict
+    local lines=() rebuild=() unknown_list=()
+
+    log_info "Checking ${#comps[@]} component(s) — linkage, load probes, upstream refs..."
+    for c in "${comps[@]}"; do
+        line=$(update_check "$c" 1)
+        lines+=("$line")
+        verdict=$(echo "$line" | cut -d'|' -f2)
+        case "$verdict" in
+            UPDATE|BROKEN) rebuild+=("$c") ;;
+            UNKNOWN) rebuild+=("$c"); unknown_list+=("$c") ;;
+        esac
+    done
+
+    echo ""
+    printf "%-13s %-9s %s\n" "COMPONENT" "STATUS" "DETAIL"
+    printf "%-13s %-9s %s\n" "---------" "------" "------"
+    local v d
+    for line in "${lines[@]}"; do
+        IFS='|' read -r c v d <<< "$line"
+        case "$v" in
+            OK)      printf "%-13s ${GREEN}%-9s${NC} %s\n" "$c" "$v" "$d" ;;
+            MISSING) printf "%-13s ${YELLOW}%-9s${NC} %s\n" "$c" "$v" "$d" ;;
+            *)       printf "%-13s ${RED}%-9s${NC} %s\n" "$c" "$v" "$d" ;;
+        esac
+    done
+    echo ""
+
+    # python_libs: pip is its own resolver — offer the -U pass whenever the
+    # component is installed and part of the sweep.
+    local do_pip_update=0
+    for c in "${comps[@]}"; do
+        if [ "$c" = "python_libs" ] && is_installed python_libs; then
+            do_pip_update=1
+        fi
+    done
+
+    if [ ${#rebuild[@]} -eq 0 ]; then
+        log_success "Everything is up to date and healthy."
+        if [ "$do_pip_update" = "1" ] && ask_yes_no "Upgrade python_libs pip packages anyway?" "N"; then
+            update_python_libs || return 1
+        fi
+        return 0
+    fi
+
+    if [ ${#unknown_list[@]} -gt 0 ]; then
+        log_warn "No install record for: ${unknown_list[*]} (pre-manifest installs)."
+        log_warn "Rebuilding them establishes the baseline for future update checks."
+    fi
+    if ! ask_yes_no "Rebuild ${#rebuild[@]} component(s): ${rebuild[*]} ?" "Y"; then
+        log_warn "Update cancelled."
+        return 0
+    fi
+
+    local _env_force="${FORCE_REINSTALL:-0}"
+    for c in "${rebuild[@]}"; do
+        log_info "Updating: $c"
+        FORCE_REINSTALL=1
+        if ! run_installer "$c"; then
+            FORCE_REINSTALL="$_env_force"
+            log_error "Failed to update $c. Stopping."
+            return 1
+        fi
+        FORCE_REINSTALL="$_env_force"
+    done
+
+    # Cascade: local health-only recheck (no network) over the whole sweep set.
+    local pass
+    local broken_now=()
+    for pass in 1 2 3; do
+        broken_now=()
+        for c in "${comps[@]}"; do
+            is_installed "$c" || continue
+            component_health "$c" >/dev/null || broken_now+=("$c")
+        done
+        [ ${#broken_now[@]} -eq 0 ] && break
+        log_warn "Cascade pass $pass: broken after rebuild: ${broken_now[*]} — rebuilding those too."
+        for c in "${broken_now[@]}"; do
+            FORCE_REINSTALL=1
+            if ! run_installer "$c"; then
+                FORCE_REINSTALL="$_env_force"
+                log_error "Failed cascade rebuild of $c. Stopping."
+                return 1
+            fi
+            FORCE_REINSTALL="$_env_force"
+        done
+    done
+    if [ ${#broken_now[@]} -gt 0 ]; then
+        log_error "Still broken after 3 cascade passes: ${broken_now[*]}"
+        return 1
+    fi
+
+    if [ "$do_pip_update" = "1" ]; then
+        update_python_libs || return 1
+    fi
+    log_success "Update complete."
 }
 
 uninstall_all_tools() {
@@ -400,7 +576,43 @@ for arg in "$@"; do
 done
 set -- "${ARGS[@]}"
 
-if [ "$1" == "--install" ] && [ -n "$2" ]; then
+usage() {
+    cat <<EOF
+Usage: ./setup.sh [-y|--yes] [command]
+
+Commands:
+  (no command)                interactive menu
+  --install <component...|A>  install components (A = everything);
+                              already-installed components are checked for
+                              upstream updates and broken linkage first
+  --update [component...|A]   pacman-style sweep (default: all): rebuild only
+                              components with upstream changes, broken linkage,
+                              or plugins that fail to load
+  --uninstall <component|A>   uninstall a component (A = everything)
+  -h, --help                  this text
+
+Components: ${ALL_TOOLS[*]}
+Env: FORCE_REINSTALL=1 forces rebuilds; PYTHON_VERSION pins the venv Python.
+EOF
+}
+
+if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
+    usage
+    exit 0
+elif [ "$1" == "--update" ]; then
+    shift
+    if [ $# -eq 0 ] || [[ "$1" =~ ^[Aa]$ ]]; then
+        update_tool "${ALL_TOOLS[@]}"
+    else
+        for _component in "$@"; do
+            case " ${ALL_TOOLS[*]} " in
+                *" $_component "*) ;;
+                *) log_error "Unknown component: $_component"; usage; exit 2 ;;
+            esac
+        done
+        update_tool "$@"
+    fi
+elif [ "$1" == "--install" ] && [ -n "$2" ]; then
     if [[ "$2" =~ ^[Aa]$ ]]; then
         install_all_tools
     else
@@ -418,6 +630,10 @@ elif [ "$1" == "--uninstall" ] && [ -n "$2" ]; then
     else
         uninstall_tool "$2"
     fi
+elif [ -n "$1" ]; then
+    log_error "Unknown argument: $1"
+    usage
+    exit 2
 else
     show_menu "INSTALL"
 fi

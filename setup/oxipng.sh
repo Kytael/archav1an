@@ -5,6 +5,9 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
+SOURCES["oxipng:oxipng"]="crates.io:oxipng|latest"
+ARTIFACTS["oxipng"]="bin/oxipng"
+
 install_oxipng() {
     if [ -f "$VS_PREFIX/bin/oxipng" ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         log_info "oxipng (source-built) is already installed."
@@ -31,6 +34,11 @@ install_oxipng() {
     if [ -f "$HOME/.cargo/bin/oxipng" ]; then
         cp "$HOME/.cargo/bin/oxipng" "$VS_PREFIX/bin/oxipng"
         chmod +x "$VS_PREFIX/bin/oxipng"
+
+        local _oxipng_ver
+        _oxipng_ver=$("$VS_PREFIX/bin/oxipng" --version 2>/dev/null | awk 'NR==1{print $2}')
+        record_src oxipng oxipng "crates.io:oxipng" latest "${_oxipng_ver:-unknown}"
+
         log_success "oxipng installed with LTO and -march=native."
     else
         log_warn "oxipng binary not found in cargo bin after install?"
@@ -43,5 +51,6 @@ uninstall_oxipng() {
     rm -vf "$VS_PREFIX/bin/oxipng"
     [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
     cargo uninstall oxipng 2>/dev/null || true
+    rm -f "$MANIFEST_DIR/oxipng.src"
     log_success "oxipng uninstalled."
 }

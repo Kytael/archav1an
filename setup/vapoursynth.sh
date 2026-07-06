@@ -5,6 +5,11 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
+SOURCES["vapoursynth:vapoursynth"]="https://github.com/vapoursynth/vapoursynth.git|R76"
+SOURCES["vapoursynth:ffms2"]="https://github.com/FFMS/ffms2.git|5.0"
+SOURCES["vapoursynth:bestsource"]="https://github.com/vapoursynth/bestsource.git|master"
+ARTIFACTS["vapoursynth"]="bin/vspipe lib/libvapoursynth.so.4 lib/vapoursynth/libffms2.so lib/vapoursynth/libbestsource.so"
+
 install_vapoursynth() {
     if [ -f "$VS_PREFIX/bin/vspipe" ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
         log_info "VapourSynth (source-built) is already installed at $VS_PREFIX."
@@ -32,9 +37,7 @@ install_vapoursynth() {
     # puts $VS_PREFIX/lib on LD_LIBRARY_PATH, and ld.so checks LD_LIBRARY_PATH
     # before the ldconfig cache. Outside the activated env, the system v75
     # remains the default.
-    if [ -d "vapoursynth" ]; then rm -rf vapoursynth; fi
-    git clone --branch R76 --depth 1 https://github.com/vapoursynth/vapoursynth.git \
-        || { cd "$ORIG_DIR"; log_error "Failed to clone VapourSynth"; return 1; }
+    clone_src vapoursynth vapoursynth vapoursynth || { cd "$ORIG_DIR"; return 1; }
     cd vapoursynth || { cd "$ORIG_DIR"; log_error "Failed to cd into vapoursynth"; return 1; }
 
     # Install meson + ninja INTO the venv so that meson runs on the
@@ -164,9 +167,7 @@ EOF
 
     # 2. FFMS2
     log_info "Compiling FFMS2 with native optimizations..."
-    if [ -d "ffms2" ]; then rm -rf ffms2; fi
-    git clone --branch 5.0 --depth 1 https://github.com/FFMS/ffms2.git \
-        || { cd "$ORIG_DIR"; log_error "Failed to clone FFMS2"; return 1; }
+    clone_src vapoursynth ffms2 ffms2 || { cd "$ORIG_DIR"; return 1; }
     cd ffms2 || { cd "$ORIG_DIR"; log_error "Failed to cd into ffms2"; return 1; }
     ./autogen.sh || { cd "$ORIG_DIR"; log_error "FFMS2 autogen failed"; return 1; }
     ./configure --prefix="$VS_PREFIX" --enable-shared \
@@ -186,9 +187,7 @@ EOF
 
     # 3. BestSource (meson uses --prefix via meson setup --prefix)
     log_info "Compiling BestSource with native optimizations..."
-    if [ -d "bestsource" ]; then rm -rf bestsource; fi
-    git clone --depth 1 --recurse-submodules https://github.com/vapoursynth/bestsource.git \
-        || { cd "$ORIG_DIR"; log_error "Failed to clone BestSource"; return 1; }
+    clone_src vapoursynth bestsource bestsource --recurse-submodules || { cd "$ORIG_DIR"; return 1; }
     cd bestsource || { cd "$ORIG_DIR"; log_error "Failed to cd into bestsource"; return 1; }
 
     # Prefer system meson/ninja; fall back to venv-installed copies (which land
@@ -265,5 +264,6 @@ uninstall_vapoursynth() {
     # any leftover cache entry from a prior /usr/local install).
     ldconfig 2>/dev/null || true
 
+    rm -f "$MANIFEST_DIR/vapoursynth.src"
     log_success "VapourSynth, FFMS2, and BestSource removed from $VS_PREFIX."
 }

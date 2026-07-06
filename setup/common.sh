@@ -430,6 +430,204 @@ setup_wsl2_cuda() {
     fi
 }
 
+# ---------------------------------------------------------------------------
+# Update / health machinery
+#
+# SOURCES["component:name"]="url|ref" — declared by each setup/ module at file
+# top-level (single source of truth for pins; clone_src and the update checker
+# both read it). ref is a tag/branch, or the literal "pinned" for immutable
+# non-git artifacts (release downloads, local staging).
+# ARTIFACTS["component"]="rel/path ..." — $VS_PREFIX-relative artifacts to
+# health-check. Entries under lib/vapoursynth/ additionally get a VS load probe.
+# Manifest: $MANIFEST_DIR/<component>.src, lines "name|url|ref|commit".
+# ---------------------------------------------------------------------------
+MANIFEST_DIR="${MANIFEST_DIR:-$VS_PREFIX/share/archav1an/manifest}"
+declare -gA SOURCES
+declare -gA ARTIFACTS
+
+# record_src <component> <name> <url> <ref> <commit>
+# Replaces any existing manifest line for <name>, keeps the rest.
+record_src() {
+    local component=$1 name=$2 url=$3 ref=$4 commit=$5
+    local mf="$MANIFEST_DIR/$component.src"
+    mkdir -p "$MANIFEST_DIR"
+    if [ -f "$mf" ]; then
+        grep -v "^${name}|" "$mf" > "$mf.tmp" || true
+        mv "$mf.tmp" "$mf"
+    fi
+    echo "${name}|${url}|${ref}|${commit}" >> "$mf"
+}
+
+# clone_src <component> <name> <destdir> [extra git-clone args...]
+# Fresh shallow clone of SOURCES[component:name] into destdir + manifest record.
+clone_src() {
+    local component=$1 name=$2 dest=$3
+    shift 3
+    local spec="${SOURCES[$component:$name]:-}"
+    if [ -z "$spec" ]; then
+        log_error "clone_src: no SOURCES entry for $component:$name"
+        return 1
+    fi
+    local url="${spec%%|*}" ref="${spec##*|}"
+    rm -rf "$dest"
+    if ! git clone --branch "$ref" --depth 1 "$@" "$url" "$dest"; then
+        log_error "Failed to clone $name ($url @ $ref)"
+        return 1
+    fi
+    local commit
+    commit=$(git -C "$dest" rev-parse HEAD 2>/dev/null || echo unknown)
+    record_src "$component" "$name" "$url" "$ref" "$commit"
+}
+
+# src_update_status <component>
+# Prints one line per SOURCES entry: "name|OK/UPDATE/UNKNOWN/WARN|detail".
+# Returns 0 when everything is OK/WARN, 1 when any source needs a rebuild
+# (UPDATE or UNKNOWN). Tags are treated as immutable; branches are compared
+# against the remote head (strict pacman-style).
+src_update_status() {
+    local component=$1
+    local mf="$MANIFEST_DIR/$component.src"
+    local rc=0 key name spec url ref line rec_url rec_ref rec_commit
+    local ls_out remote_sha
+    for key in "${!SOURCES[@]}"; do
+        [[ "$key" == "$component:"* ]] || continue
+        name="${key#*:}"
+        spec="${SOURCES[$key]}"
+        url="${spec%%|*}"; ref="${spec##*|}"
+        if [ "$ref" = "pinned" ]; then
+            echo "$name|OK|pinned artifact"
+            continue
+        fi
+        line=$(grep "^${name}|" "$mf" 2>/dev/null | head -n 1)
+        if [ -z "$line" ]; then
+            echo "$name|UNKNOWN|no install record"
+            rc=1
+            continue
+        fi
+        IFS='|' read -r _ rec_url rec_ref rec_commit <<< "$line"
+        if [ "$url" != "$rec_url" ] || [ "$ref" != "$rec_ref" ]; then
+            echo "$name|UPDATE|pin changed: $rec_ref -> $ref"
+            rc=1
+            continue
+        fi
+        case "$url" in
+            crates.io:*)
+                local crate="${url#crates.io:}" latest
+                latest=$(curl -sf -A archav1an-setup "https://crates.io/api/v1/crates/$crate" \
+                    | sed -n 's/.*"max_stable_version":"\([^"]*\)".*/\1/p')
+                if [ -z "$latest" ]; then
+                    echo "$name|WARN|crates.io unreachable"
+                elif [ "$latest" != "$rec_commit" ]; then
+                    echo "$name|UPDATE|$rec_commit -> $latest"
+                    rc=1
+                else
+                    echo "$name|OK|$rec_commit"
+                fi
+                continue
+                ;;
+        esac
+        if ls_out=$(git ls-remote "$url" "refs/heads/$ref" 2>/dev/null); then
+            remote_sha=$(echo "$ls_out" | cut -f1)
+            if [ -z "$remote_sha" ]; then
+                # No such branch: ref is a tag — immutable, matches the record.
+                echo "$name|OK|pinned $ref"
+            elif [ "$remote_sha" != "$rec_commit" ]; then
+                echo "$name|UPDATE|$ref moved: ${rec_commit:0:8} -> ${remote_sha:0:8}"
+                rc=1
+            else
+                echo "$name|OK|$ref @ ${rec_commit:0:8}"
+            fi
+        else
+            echo "$name|WARN|remote unreachable: $url"
+        fi
+    done
+    return $rc
+}
+
+# check_linkage <component>
+# ldd over the component's present artifacts; prints "artifact|BROKEN|missing: ..."
+# per broken artifact. Returns 0 healthy, 1 broken.
+check_linkage() {
+    local component=$1 rc=0 a path missing
+    local ldpath="$VS_PREFIX/lib"
+    [ -d /usr/lib/wsl/lib ] && ldpath="$ldpath:/usr/lib/wsl/lib"
+    for a in ${ARTIFACTS[$component]:-}; do
+        path="$VS_PREFIX/$a"
+        [ -e "$path" ] || continue
+        missing=$(env LD_LIBRARY_PATH="$ldpath" ldd "$path" 2>/dev/null \
+            | awk '/not found/{print $1}' | sort -u | tr '\n' ' ')
+        if [ -n "$missing" ]; then
+            echo "$a|BROKEN|missing: ${missing% }"
+            rc=1
+        fi
+    done
+    return $rc
+}
+
+# vs_core_ok — can the prefix Python import the VapourSynth core at all?
+# Cached; load probes are meaningless (and all fail) when the core is broken.
+_VS_CORE_OK=""
+vs_core_ok() {
+    if [ -z "$_VS_CORE_OK" ]; then
+        if LD_LIBRARY_PATH="$VS_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
+           "$VENV_DIR/bin/python" -c "import vapoursynth; vapoursynth.core.std" >/dev/null 2>&1; then
+            _VS_CORE_OK=yes
+        else
+            _VS_CORE_OK=no
+        fi
+    fi
+    [ "$_VS_CORE_OK" = "yes" ]
+}
+
+# probe_plugin_load <plugin.so> — try LoadPlugin in the prefix VS core.
+# "already loaded" (autoloaded healthy plugin) counts as success.
+probe_plugin_load() {
+    local so=$1
+    LD_LIBRARY_PATH="$VS_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
+    "$VENV_DIR/bin/python" - "$so" <<'PYEOF'
+import sys
+import vapoursynth as vs
+try:
+    vs.core.std.LoadPlugin(sys.argv[1])
+except vs.Error as e:
+    if "already loaded" in str(e).lower():
+        sys.exit(0)
+    print(e, file=sys.stderr)
+    sys.exit(1)
+PYEOF
+}
+
+# component_health <component>
+# ldd + (for lib/vapoursynth/*.so) VS load probe. Prints "artifact|BROKEN|reason"
+# lines; returns 0 healthy, 1 broken. Skips load probes (with a note) when the
+# VS core itself cannot import.
+component_health() {
+    local component=$1 rc=0 a so ldd_broken=""
+    local out
+    out=$(check_linkage "$component") || rc=1
+    [ -n "$out" ] && echo "$out"
+    ldd_broken=$(echo "$out" | cut -d'|' -f1)
+    for a in ${ARTIFACTS[$component]:-}; do
+        case "$a" in
+            lib/vapoursynth/*.so) ;;
+            *) continue ;;
+        esac
+        so="$VS_PREFIX/$a"
+        [ -e "$so" ] || continue
+        # Already flagged by ldd — don't double-report.
+        echo "$ldd_broken" | grep -qx "$a" && continue
+        if ! vs_core_ok; then
+            echo "$a|SKIPPED|VS core not importable, load probe skipped"
+            continue
+        fi
+        if ! probe_plugin_load "$so" >/dev/null 2>&1; then
+            echo "$a|BROKEN|fails to load in VapourSynth"
+            rc=1
+        fi
+    done
+    return $rc
+}
+
 AUTO_YES=false
 
 ask_yes_no() {

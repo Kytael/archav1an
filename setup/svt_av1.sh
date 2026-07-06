@@ -5,6 +5,9 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
+SOURCES["svt_av1:svt-av1-psy"]="https://github.com/5fish/svt-av1-psy.git|v2.3.0-C"
+ARTIFACTS["svt_av1"]="bin/SvtAv1EncApp"
+
 install_svt_av1() {
     # Check for PSY fork specifically — the standard svt-av1 from pacman won't have PSY flags
     local need_build=true
@@ -33,8 +36,7 @@ install_svt_av1() {
         mkdir -p "$BUILD_DIR"
         cd "$BUILD_DIR" || exit 1
 
-        if [ -d "svt-av1-psy" ]; then rm -rf svt-av1-psy; fi
-        git clone --branch v2.3.0-C --depth 1 https://github.com/5fish/svt-av1-psy.git || { cd "$ORIG_DIR"; log_error "Failed to clone SVT-AV1-PSY"; return 1; }
+        clone_src svt_av1 svt-av1-psy svt-av1-psy || { cd "$ORIG_DIR"; return 1; }
         cd svt-av1-psy || { cd "$ORIG_DIR"; log_error "Failed to cd into svt-av1-psy"; return 1; }
 
         # Patch CMakeLists to fix 'target_link_libraries' PRIVATE/keyword mismatch error
@@ -65,5 +67,6 @@ uninstall_svt_av1() {
     rm -vf "$VS_PREFIX/lib/libSvtAv1Enc"*
     rm -rf "$VS_PREFIX/include/svt-av1"
     rm -vf "$VS_PREFIX/lib/pkgconfig/SvtAv1Enc.pc"
+    rm -f "$MANIFEST_DIR/svt_av1.src"
     log_success "SVT-AV1-PSY uninstalled."
 }
