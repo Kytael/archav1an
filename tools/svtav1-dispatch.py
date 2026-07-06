@@ -660,9 +660,12 @@ def main():
 
 
 
-    vspipe_exe = shutil.which("vspipe")
-    if not vspipe_exe:
-        print("[svtav1-dispatch] Error: vspipe not found in PATH.")
+    # VSPIPE env pins a specific vspipe binary. Needed on encoder-host, where BSVD's
+    # MIGraphX wheels stop at cp312: the migraphx-venv ships its own py3.12 vspipe
+    # (pip vapoursynth) while system vspipe stays py3.14 — see denoiser docs.
+    vspipe_exe = os.environ.get("VSPIPE") or shutil.which("vspipe")
+    if not vspipe_exe or not os.path.exists(vspipe_exe):
+        print("[svtav1-dispatch] Error: vspipe not found (PATH or $VSPIPE).")
         sys.exit(1)
 
     svt_cmd = [svt_exe, "-i", "stdin", "--progress", "2"] + shlex.split(svt_params.strip()) + ["-b", ivf_path]
