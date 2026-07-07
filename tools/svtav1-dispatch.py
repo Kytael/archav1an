@@ -193,6 +193,11 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
         f'{vsmlrt_import}'
         f'{denoise_lines}\n'
         f'\n'
+        f'# SVT-AV1 requires 4:2:0; denoise builders round-trip back to source chroma\n'
+        f'# (may be 4:2:2/4:4:4), so force 4:2:0 for the encoder like the base path does.\n'
+        f'if (src.format.subsampling_w, src.format.subsampling_h) != (1, 1):\n'
+        f'    src = core.resize.Bicubic(src, format=src.format.replace(subsampling_w=1, subsampling_h=1), chromaloc_s="left")\n'
+        f'\n'
         f'final = finalize_clip(src)\n'
         f'final.set_output(0)\n'
     )
