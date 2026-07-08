@@ -174,8 +174,12 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
         )
     venv_site_pkgs = sysconfig.get_path('purelib')
     vsmlrt_import = '' if (use_rvrt or use_stasunet or use_bsvd or use_bsvd_smdegrain) else 'from vsmlrt import SCUNet as _SCUNet, SCUNetModel as _SCUNetModel, Backend as _Backend\n'
-    # BSVD streaming + SMDegrain stacks many YUV444P16 intermediates; bump cache.
-    _cache_mb = 4096 if use_bsvd_smdegrain else 1024
+    # BSVD's mirror-pad warmup materializes ~2*shift_num frames to emit frame 0;
+    # with a 10-bit source the 16-bit decode + YUV444P16 intermediates exceed a
+    # 1024MB cache and VS deadlocks in its "flushing pipeline" throttle (0 frames
+    # out, GPU idle). 4096 fits the warmup for 8/10-bit — confirmed on encoder-host
+    # MIGraphX: 1024 hangs, 4096 encodes at full speed. (SMDegrain also needs 4096.)
+    _cache_mb = 4096
     vpy = (
         f'import sys as _sys; _sys.path.insert(0, {venv_site_pkgs!r})\n'
         f'from vstools import vs, core, initialize_clip, finalize_clip\n'
