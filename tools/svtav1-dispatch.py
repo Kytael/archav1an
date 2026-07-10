@@ -512,7 +512,8 @@ Denoisers (mutually exclusive):
   --denoise-smdegrain     [--denoise-tr N --denoise-thsad N]
   --denoise-rvrt          [--denoise-rvrt-sigma F]
   --denoise-stasunet      [--denoise-stasunet-engine PATH --denoise-stasunet-pre-darken-ev F]
-  --denoise-bsvd          [--bsvd-onnx PATH --bsvd-sigma F|auto --bsvd-device N --bsvd-warmup N]
+  --denoise-bsvd          [--bsvd-onnx PATH --bsvd-sigma F|auto (default 0.05; auto = brightness-threshold pre-pass)
+                           --bsvd-device N --bsvd-warmup N (legacy, no effect — auto window comes from the optsig model)]
   --denoise-bsvd-smdegrain  (BSVD as SMDegrain prefilter; same --bsvd-* options)
 """
 
@@ -549,14 +550,13 @@ def main():
     _default_bsvd_onnx = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "models", "bsvd_realpair_ep14_stateful_v2_dyn_fp16.onnx")
-    _default_bsvd_sigma_estimator = os.path.join(
+    _default_bsvd_optsig_model = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "models", "bsvd_sigma_estimator_v3.pth")
+        "models", "bsvd_optsig_pref_v1.json")
     denoise_bsvd_onnx = _default_bsvd_onnx
-    # realpair ep14 sweep (2026-07-06): constant 0.07 beats the optsig
-    # predictor (83.58 vs 83.04 SSIMU2) and the curve is flat 0.06-0.08 —
-    # "auto" remains available for the legacy ft_ep5 model.
-    denoise_bsvd_sigma = "0.07"
+    # 0.05 per 2026-07 preference-label study (tools/optsig_pref/loco_report.md);
+    # "auto" = brightness-threshold rule.
+    denoise_bsvd_sigma = "0.05"
     denoise_bsvd_device = 0
     denoise_bsvd_warmup = 30
 
@@ -746,25 +746,19 @@ def main():
                 sys.exit(1)
             # σ resolution
             if str(denoise_bsvd_sigma).lower() == "auto":
-                if not os.path.exists(_default_bsvd_sigma_estimator):
-                    print(f"[svtav1-dispatch] Error: --bsvd-sigma=auto needs {_default_bsvd_sigma_estimator}; "
-                          "stage via setup.sh --install denoiser or pass --bsvd-sigma <float>.")
-                    sys.exit(1)
-                sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+                if not os.path.exists(_default_bsvd_optsig_model):
+                    print(f"[svtav1-dispatch] Error: --bsvd-sigma=auto needs {_default_bsvd_optsig_model}; "
+                          "pass --bsvd-sigma <float>.")
+                    sys.exit(2)
                 try:
+                    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
                     from bsvd_optsig import compute_sigma_for_video
                     bsvd_sigma_val = compute_sigma_for_video(
-                        input_file, sigma_estimator_pth=_default_bsvd_sigma_estimator,
-                        warmup_frames=denoise_bsvd_warmup,
-                        device=f"cuda:{denoise_bsvd_device}")
-                except ImportError as _e:
-                    # bsvd_optsig imports torch at module level and PyAV inside
-                    # compute_sigma_for_video, so both paths land here.
-                    print(f"[svtav1-dispatch] Error: --bsvd-sigma=auto needs the σ-estimator "
-                          f"dependencies (missing: {getattr(_e, 'name', None) or _e}). "
-                          "pip install av torch (or setup.sh --install denoiser), "
-                          "or pass --bsvd-sigma <float>.")
-                    sys.exit(1)
+                        input_file, model_json=_default_bsvd_optsig_model)
+                except Exception as e:
+                    print(f"[svtav1-dispatch] Error: --bsvd-sigma=auto pre-pass failed ({e}); "
+                          "pass --bsvd-sigma <float>.")
+                    sys.exit(2)
             else:
                 bsvd_sigma_val = float(denoise_bsvd_sigma)
             _backend_name = f"BSVD-V2-ORT-{bsvd_ep}"
