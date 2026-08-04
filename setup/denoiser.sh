@@ -515,10 +515,34 @@ for sigma in [15, 25, 50]:
         # for BSVD V2 stateful streaming).
         "$VENV_DIR/bin/pip" install -U onnxruntime-gpu \
             || log_warn "Failed to install onnxruntime-gpu — --denoise-bsvd will fail at dispatch"
-        if "$VENV_DIR/bin/python" -c "import onnxruntime as o; assert 'TensorrtExecutionProvider' in o.get_available_providers()" 2>/dev/null; then
-            log_success "onnxruntime + TensorrtExecutionProvider available"
+
+        # TensorRT RUNTIME for the ORT TRT EP. onnxruntime-gpu's provider .so
+        # (libonnxruntime_providers_tensorrt.so) hard-links libnvinfer.so.10 and
+        # libnvonnxparser.so.10 (TensorRT *10*). The EP is LISTED by ORT regardless,
+        # so dispatch's ctypes.util.find_library("nvinfer") sees the system AUR
+        # `tensorrt` (now 11.x → soname .so.11), picks the TRT EP, then the
+        # InferenceSession dies at create with "libnvinfer.so.10 => not found".
+        # Fix: install the TRT-10 runtime libs (py-agnostic wheel — ORT needs only
+        # the .so's, not the cp-specific python bindings) INTO the managed venv and
+        # register them with the dynamic loader, so both ORT's dlopen and dispatch's
+        # find_library("nvinfer") resolve .so.10 with no manual LD_LIBRARY_PATH.
+        # Pinned <11 to match the provider soname (the system 11.x libs are left
+        # untouched for the vstrt/SCUNet + standalone-engine paths that use them).
+        log_info "Installing TensorRT 10 runtime libs for the onnxruntime TRT EP (BSVD)..."
+        local _trt_libdir=""
+        if "$VENV_DIR/bin/pip" install -U 'tensorrt-cu12-libs<11'; then
+            _trt_libdir="$("$VENV_DIR/bin/python" -c "import tensorrt_libs,os;print(os.path.dirname(tensorrt_libs.__file__))" 2>/dev/null)"
+        fi
+        if [ -n "$_trt_libdir" ] && [ -f "$_trt_libdir/libnvinfer.so.10" ]; then
+            if { [ "$EUID" -eq 0 ] || [ -w /etc/ld.so.conf.d ]; } \
+               && echo "$_trt_libdir" > /etc/ld.so.conf.d/archav1an-tensorrt.conf 2>/dev/null \
+               && ldconfig 2>/dev/null; then
+                log_success "BSVD TRT EP wired: libnvinfer.so.10 installed + registered on the loader path ($_trt_libdir)."
+            else
+                log_warn "BSVD TRT EP: libnvinfer.so.10 installed at $_trt_libdir but not registered globally (need root). Run --denoise-bsvd with:  LD_LIBRARY_PATH=$_trt_libdir:\$LD_LIBRARY_PATH"
+            fi
         else
-            log_warn "onnxruntime installed but TensorrtExecutionProvider not registered. Check TensorRT install."
+            log_warn "BSVD TRT EP: could not install libnvinfer.so.10 (tensorrt-cu12-libs<11). --denoise-bsvd will fall back to the slower CUDA EP."
         fi
     fi
 
