@@ -56,6 +56,27 @@ Pick based on your content type and desired quality:
 
 Model assets and Python deps are staged by `./setup.sh --install denoiser`.
 
+### 🌐 SPLIT-HOST DENOISE (REMOTE GPU)
+
+The BSVD denoise stage can run on another machine's GPU while SVT-AV1 encodes locally — useful when the fast GPU and the fast CPU are different boxes. ssh carries only control; the denoised y4m comes back over a plain TCP socket, because a single ssh stream caps around 1.3 Gbps while a socket on the same 10G LAN sustains 5+ Gbps.
+
+| Flag | Meaning |
+|------|---------|
+| `--remote-denoise SSH_TARGET` | Denoise on this ssh host (alias or `user@host`), encode here. BSVD paths only |
+| `--remote-callback IP` | Address the remote streams back to. Defaults to this host's IP toward the remote — pass the LAN IP explicitly if ssh reaches the remote over a VPN |
+| `--remote-port N` | Listening port on this host (default 5300) |
+| `--remote-root PATH` | Repo checkout on the remote (default `~/archav1an`) |
+| `--remote-python PATH` | Interpreter on the remote (default `/opt/archav1an/venv/bin/python`) |
+
+```bash
+# open the port to the denoise host once (example: ufw)
+sudo ufw allow from <remote-lan-ip> to any port 5300 proto tcp
+# then any single-pass wrapper takes the flag
+./run_linux_dance_HQ_crf27.sh --denoise-bsvd --remote-denoise gpu1 --remote-callback <this-host-lan-ip>
+```
+
+Requirements: key-based ssh plus `rsync` on both hosts, and the same repo checkout at `--remote-root` on the remote with `./setup.sh --install denoiser` already run there. The source file is staged to `<remote-root>/Temp/_remote/` per run. `--denoise-serve HOST:PORT` is the remote half of the protocol — the dispatcher invokes it over ssh; you never pass it by hand.
+
 ### 🚀 PROGRESSION BOOST (PER-SCENE OPTIMIZATION)
 | Script | Quality | Description |
 |--------|---------|-------------|

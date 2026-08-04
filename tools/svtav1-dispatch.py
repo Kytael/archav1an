@@ -7,6 +7,7 @@ Pipes ffmpeg → SvtAv1EncApp, muxes Opus audio, then measures SSIMU2 scores
 """
 
 import os
+import socket
 import sys
 import shlex
 import subprocess
@@ -228,7 +229,118 @@ def _print_log_tail(log_path, label, max_lines=40):
     print(f"[svtav1-dispatch] --- end {label} ---")
 
 
+def resolve_bsvd_sigma(sigma_arg, input_file, optsig_model):
+    """--bsvd-sigma as a float, running the auto pre-pass when asked."""
+    if str(sigma_arg).lower() != "auto":
+        return float(sigma_arg)
+    if not os.path.exists(optsig_model):
+        print(f"[svtav1-dispatch] Error: --bsvd-sigma=auto needs {optsig_model}; "
+              "pass --bsvd-sigma <float>.")
+        sys.exit(2)
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from bsvd_optsig import compute_sigma_for_video
+        return compute_sigma_for_video(input_file, model_json=optsig_model)
+    except Exception as e:
+        print(f"[svtav1-dispatch] Error: --bsvd-sigma=auto pre-pass failed ({e}); "
+              "pass --bsvd-sigma <float>.")
+        sys.exit(2)
+
+
+def callback_address(ssh_target):
+    """The local IP the remote denoiser should stream back to.
+
+    Resolves the ssh target the way ssh itself would (it is usually a
+    ~/.ssh/config alias, not a DNS name) and asks the routing table which
+    source address reaches it.
+    """
+    resolved = subprocess.run(["ssh", "-G", ssh_target], capture_output=True,
+                              text=True).stdout
+    host = next((l.split()[1] for l in resolved.splitlines()
+                 if l.startswith("hostname ")), ssh_target)
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect((host, 9))
+        return s.getsockname()[0]
+    finally:
+        s.close()
+
+
+def run_remote_denoise(ssh_target, remote_root, remote_python, callback, port,
+                       input_file, forward_args, sink_cmd, temp_dir, stem):
+    """Denoise on ssh_target, stream the y4m back over TCP, encode into sink_cmd.
+
+    ssh carries only control (launch, stderr, exit status): a single ssh stream
+    caps at ~1.3 Gbps between encoder-host and gpu1 even on the 10G LAN, while a
+    plain socket sustains 5+ Gbps. The encoder side listens so that the listener
+    dies with the process that owns the encoder.
+
+    A remote that dies mid-stream closes the socket cleanly, so the local
+    encoder finalizes a short IVF and exits 0 -- run_piped cannot see it. The
+    guards are this function's ssh exit-status check and, definitively, the
+    frame-count verification before the mux.
+    """
+    remote_dir = f"{remote_root}/Temp/_remote"
+    print(f"[svtav1-dispatch] staging source -> {ssh_target}:{remote_dir}/")
+    subprocess.check_call(["rsync", "-a", "--rsync-path",
+                           f"mkdir -p {remote_dir} && rsync",
+                           os.path.abspath(input_file),
+                           f"{ssh_target}:{remote_dir}/"])
+    # Paths in the remote command are relative to remote_root: the command runs
+    # after `cd`, and quoting a leading ~ would stop the remote shell expanding it.
+    remote_src = f"Temp/_remote/{os.path.basename(input_file)}"
+
+    remote_cmd = " ".join(shlex.quote(a) for a in [
+        remote_python, "tools/svtav1-dispatch.py",
+        "--denoise-serve", f"{callback}:{port}", "-i", remote_src, *forward_args])
+    remote_log = os.path.join(temp_dir, f"{stem}_remote.log")
+    print(f"[svtav1-dispatch] {ssh_target}: vspipe (BSVD) | netstream -> "
+          f"{callback}:{port} | SvtAv1EncApp (local)")
+    sys.stdout.flush()
+    with open(remote_log, "w", encoding="utf-8") as log_fh:
+        # bash -s over stdin: the remote login shell is fish, which mangles
+        # quoting in `ssh host bash -c '...'`.
+        ssh_proc = subprocess.Popen(["ssh", ssh_target, "bash", "-s"],
+                                    stdin=subprocess.PIPE,
+                                    stdout=log_fh, stderr=log_fh)
+        # PYTHONUNBUFFERED so the remote's diagnostics reach the log even when it
+        # is killed: over a pipe its stdout would otherwise be block-buffered.
+        ssh_proc.stdin.write(
+            f"cd {remote_root} && PYTHONUNBUFFERED=1 exec {remote_cmd}\n".encode())
+        ssh_proc.stdin.close()
+        local_failed = False
+        try:
+            run_piped([sys.executable,
+                       os.path.join(os.path.dirname(os.path.abspath(__file__)), "netstream.py"),
+                       "recv", "--port", str(port)],
+                      sink_cmd, source_label="netstream recv",
+                      sink_label="SvtAv1EncApp",
+                      source_stderr_log=os.path.join(temp_dir, f"{stem}_netstream.log"))
+        except SystemExit:
+            # A local failure is usually the remote's fault (it never connected,
+            # or died mid-stream), so surface its log too -- but only once the
+            # remote has exited and finished writing it.
+            local_failed = True
+            raise
+        finally:
+            # The remote is still tearing down its VS core and TRT session when
+            # the last frame lands, so wait it out; only kill one that hangs.
+            try:
+                ssh_proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                ssh_proc.terminate()
+                ssh_proc.wait()
+            if local_failed:
+                _print_log_tail(remote_log, f"{ssh_target} stderr")
+    if ssh_proc.returncode != 0:
+        print(f"[svtav1-dispatch] Error: remote denoise on {ssh_target} exited with "
+              f"{ssh_proc.returncode}; output is truncated -- aborting before mux.")
+        _print_log_tail(remote_log, f"{ssh_target} stderr")
+        sys.exit(abs(ssh_proc.returncode) or 1)
+
+
 def run_piped(source_cmd, sink_cmd, source_label="source",
+              sink_label="SvtAv1EncApp",
               source_stderr_log=None, suppress_sink_stderr=False):
     """Run source_cmd | sink_cmd, forwarding Ctrl+C to both processes.
 
@@ -257,7 +369,7 @@ def run_piped(source_cmd, sink_cmd, source_label="source",
         if log_fh:
             log_fh.close()
     if sink_proc.returncode != 0:
-        print(f"[svtav1-dispatch] Error: SvtAv1EncApp exited with {sink_proc.returncode}")
+        print(f"[svtav1-dispatch] Error: {sink_label} exited with {sink_proc.returncode}")
         if source_stderr_log:
             _print_log_tail(source_stderr_log, f"{source_label} stderr")
         sys.exit(sink_proc.returncode)
@@ -515,6 +627,13 @@ Denoisers (mutually exclusive):
   --denoise-bsvd          [--bsvd-onnx PATH --bsvd-sigma F|auto (default 0.05; auto = brightness-threshold pre-pass)
                            --bsvd-device N --bsvd-warmup N (legacy, no effect — auto window comes from the optsig model)]
   --denoise-bsvd-smdegrain  (BSVD as SMDegrain prefilter; same --bsvd-* options)
+
+Split-host denoise (BSVD only) — denoise on a remote GPU, encode here:
+  --remote-denoise SSH_TARGET   [--remote-root PATH (default ~/archav1an)
+                                 --remote-python PATH (default /opt/archav1an/venv/bin/python)
+                                 --remote-port N (default 5300)
+                                 --remote-callback IP (default: this host's IP toward the remote)]
+  --denoise-serve HOST:PORT     internal: run the denoise half and stream y4m back
 """
 
 
@@ -559,6 +678,12 @@ def main():
     denoise_bsvd_sigma = "0.05"
     denoise_bsvd_device = 0
     denoise_bsvd_warmup = 30
+    remote_denoise = None
+    remote_root = "~/archav1an"
+    remote_python = "/opt/archav1an/venv/bin/python"
+    remote_port = 5300
+    remote_callback = None
+    denoise_serve = None
 
     i = 0
     while i < len(args):
@@ -620,6 +745,18 @@ def main():
             denoise_bsvd_device = int(nextval() or 0); i += 2
         elif arg == "--bsvd-warmup":
             denoise_bsvd_warmup = int(nextval() or 30); i += 2
+        elif arg == "--remote-denoise":
+            remote_denoise = nextval(); i += 2
+        elif arg == "--remote-root":
+            remote_root = nextval() or "~/archav1an"; i += 2
+        elif arg == "--remote-python":
+            remote_python = nextval() or "/opt/archav1an/venv/bin/python"; i += 2
+        elif arg == "--remote-port":
+            remote_port = int(nextval() or 5300); i += 2
+        elif arg == "--remote-callback":
+            remote_callback = nextval(); i += 2
+        elif arg == "--denoise-serve":
+            denoise_serve = nextval(); i += 2
         elif arg in ("-h", "--help"):
             print(USAGE)
             sys.exit(0)
@@ -630,17 +767,34 @@ def main():
             print(USAGE)
             sys.exit(2)
 
+    if denoise_serve:
+        # The serve half never muxes: it streams y4m and exits.
+        output_file = output_file or os.devnull
     if not input_file or not output_file:
         print("[svtav1-dispatch] Error: -i and -o are required.")
         sys.exit(1)
+    if remote_denoise and not (denoise_bsvd or denoise_bsvd_smdegrain):
+        print("[svtav1-dispatch] Error: --remote-denoise supports the BSVD paths "
+              "(--denoise-bsvd / --denoise-bsvd-smdegrain).")
+        sys.exit(2)
+    if remote_denoise and denoise_serve:
+        print("[svtav1-dispatch] Error: --remote-denoise and --denoise-serve are exclusive.")
+        sys.exit(2)
+    if denoise_serve and not (denoise_bsvd or denoise_bsvd_smdegrain):
+        print("[svtav1-dispatch] Error: --denoise-serve needs a BSVD denoise flag.")
+        sys.exit(2)
 
     svt_exe = shutil.which("SvtAv1EncApp")
     ffmpeg_exe = shutil.which("ffmpeg")
-    if not svt_exe:
+    # The serve half only denoises: a remote GPU box needs neither encoder.
+    if not svt_exe and not denoise_serve:
         print("[svtav1-dispatch] Error: SvtAv1EncApp not found in PATH.")
         sys.exit(1)
-    if not ffmpeg_exe:
+    if not ffmpeg_exe and not denoise_serve:
         print("[svtav1-dispatch] Error: ffmpeg not found in PATH.")
+        sys.exit(1)
+    if remote_denoise and not shutil.which("rsync"):
+        print("[svtav1-dispatch] Error: --remote-denoise needs rsync in PATH.")
         sys.exit(1)
 
     # Color detection
@@ -710,7 +864,28 @@ def main():
         sys.exit(1)
 
     # --- Encode ---
-    if any(_denoise_flags):
+    if remote_denoise:
+        # Model, EP and VPY all belong to the remote half; this side only
+        # resolves sigma (it has the source) and receives y4m.
+        bsvd_sigma_val = resolve_bsvd_sigma(denoise_bsvd_sigma, input_file,
+                                            _default_bsvd_optsig_model)
+        _forward = ["--denoise-bsvd-smdegrain" if denoise_bsvd_smdegrain
+                    else "--denoise-bsvd",
+                    "--bsvd-sigma", f"{bsvd_sigma_val:.4f}",
+                    "--bsvd-device", str(denoise_bsvd_device)]
+        if denoise_bsvd_smdegrain:
+            _forward += ["--denoise-tr", str(denoise_tr),
+                         "--denoise-thsad", str(denoise_thsad)]
+        _callback = remote_callback or callback_address(remote_denoise)
+        if _callback.startswith("100.") and not remote_callback:
+            print(f"[svtav1-dispatch] Warning: streaming back over {_callback} "
+                  "(tailscale) caps at ~1.5 Gbps; pass --remote-callback with "
+                  "this host's LAN IP for the direct path.")
+        print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
+        run_remote_denoise(remote_denoise, remote_root, remote_python,
+                           _callback, remote_port, input_file, _forward,
+                           svt_cmd, temp_dir, stem)
+    elif any(_denoise_flags):
         if denoise_bsvd or denoise_bsvd_smdegrain:
             if not os.path.exists(denoise_bsvd_onnx):
                 print(f"[svtav1-dispatch] Error: BSVD ONNX not found at {denoise_bsvd_onnx}. "
@@ -744,23 +919,8 @@ def main():
                       f"(available: {_ort_providers}). Install onnxruntime-gpu (NVIDIA) "
                       "or an ORT-ROCm build (AMD).")
                 sys.exit(1)
-            # σ resolution
-            if str(denoise_bsvd_sigma).lower() == "auto":
-                if not os.path.exists(_default_bsvd_optsig_model):
-                    print(f"[svtav1-dispatch] Error: --bsvd-sigma=auto needs {_default_bsvd_optsig_model}; "
-                          "pass --bsvd-sigma <float>.")
-                    sys.exit(2)
-                try:
-                    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-                    from bsvd_optsig import compute_sigma_for_video
-                    bsvd_sigma_val = compute_sigma_for_video(
-                        input_file, model_json=_default_bsvd_optsig_model)
-                except Exception as e:
-                    print(f"[svtav1-dispatch] Error: --bsvd-sigma=auto pre-pass failed ({e}); "
-                          "pass --bsvd-sigma <float>.")
-                    sys.exit(2)
-            else:
-                bsvd_sigma_val = float(denoise_bsvd_sigma)
+            bsvd_sigma_val = resolve_bsvd_sigma(denoise_bsvd_sigma, input_file,
+                                                _default_bsvd_optsig_model)
             _backend_name = f"BSVD-V2-ORT-{bsvd_ep}"
         elif denoise_rvrt:
             _backend_name = "RVRT"
@@ -780,37 +940,53 @@ def main():
                 print("[svtav1-dispatch] Error: no vs-mlrt plugin found (libvstrt.so or libvsmigx.so). Run setup.sh --install denoiser.")
                 sys.exit(1)
             _backend_name = "TRT" if "vstrt" in mlrt_plugin else "MIGraphX"
+        if denoise_serve:
+            _serve_host, _, _serve_port = denoise_serve.rpartition(":")
+            _sink_cmd = [sys.executable,
+                         os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      "netstream.py"),
+                         "send", "--host", _serve_host, "--port", _serve_port]
+            _sink_label = f"netstream -> {denoise_serve}"
+        else:
+            _sink_cmd = svt_cmd
+            _sink_label = f"SvtAv1EncApp{svt_params}"
         vpy_path = os.path.join(temp_dir, f"{stem}_denoise.vpy")
         cachefile = os.path.join(temp_dir, f"{stem}.ffindex")
         write_denoise_vpy(vpy_path, input_file, cachefile,
-                          denoise_model, denoise_tile, denoise_streams,
-                          use_smdegrain=denoise_smdegrain,
-                          tr=denoise_tr, thsad=denoise_thsad,
-                          use_rvrt=denoise_rvrt, rvrt_sigma=denoise_rvrt_sigma,
-                          use_stasunet=denoise_stasunet, stasunet_engine=denoise_stasunet_engine,
-                          stasunet_pre_darken_ev=denoise_stasunet_pre_darken_ev,
-                          use_bsvd=denoise_bsvd, use_bsvd_smdegrain=denoise_bsvd_smdegrain,
-                          bsvd_onnx=denoise_bsvd_onnx,
-                          bsvd_sigma=(bsvd_sigma_val if (denoise_bsvd or denoise_bsvd_smdegrain) else 0.08),
-                          bsvd_ep=(bsvd_ep if (denoise_bsvd or denoise_bsvd_smdegrain) else "TRT"),
-                          bsvd_device=denoise_bsvd_device)
+                      denoise_model, denoise_tile, denoise_streams,
+                      use_smdegrain=denoise_smdegrain,
+                      tr=denoise_tr, thsad=denoise_thsad,
+                      use_rvrt=denoise_rvrt, rvrt_sigma=denoise_rvrt_sigma,
+                      use_stasunet=denoise_stasunet, stasunet_engine=denoise_stasunet_engine,
+                      stasunet_pre_darken_ev=denoise_stasunet_pre_darken_ev,
+                      use_bsvd=denoise_bsvd, use_bsvd_smdegrain=denoise_bsvd_smdegrain,
+                      bsvd_onnx=denoise_bsvd_onnx,
+                      bsvd_sigma=(bsvd_sigma_val if (denoise_bsvd or denoise_bsvd_smdegrain) else 0.08),
+                      bsvd_ep=(bsvd_ep if (denoise_bsvd or denoise_bsvd_smdegrain) else "TRT"),
+                      bsvd_device=denoise_bsvd_device)
         if denoise_bsvd_smdegrain:
-            print(f"[svtav1-dispatch] vspipe ({_backend_name} + SMDegrain tr={denoise_tr} thSAD={denoise_thsad}, σ={bsvd_sigma_val:.3f}) | SvtAv1EncApp{svt_params}")
+            print(f"[svtav1-dispatch] vspipe ({_backend_name} + SMDegrain tr={denoise_tr} thSAD={denoise_thsad}, σ={bsvd_sigma_val:.3f}) | {_sink_label}")
         elif denoise_bsvd:
-            print(f"[svtav1-dispatch] vspipe ({_backend_name} σ={bsvd_sigma_val:.3f}) | SvtAv1EncApp{svt_params}")
+            print(f"[svtav1-dispatch] vspipe ({_backend_name} σ={bsvd_sigma_val:.3f}) | {_sink_label}")
         elif denoise_rvrt:
-            print(f"[svtav1-dispatch] vspipe (RVRT sigma={denoise_rvrt_sigma}, tile={denoise_tile}) | SvtAv1EncApp{svt_params}")
+            print(f"[svtav1-dispatch] vspipe (RVRT sigma={denoise_rvrt_sigma}, tile={denoise_tile}) | {_sink_label}")
         elif denoise_stasunet:
-            print(f"[svtav1-dispatch] vspipe (STA-SUNet engine={os.path.basename(denoise_stasunet_engine)}, tile={denoise_tile}, streams={denoise_streams}) | SvtAv1EncApp{svt_params}")
+            print(f"[svtav1-dispatch] vspipe (STA-SUNet engine={os.path.basename(denoise_stasunet_engine)}, tile={denoise_tile}, streams={denoise_streams}) | {_sink_label}")
         elif denoise_smdegrain:
-            print(f"[svtav1-dispatch] vspipe ({_backend_name} SCUNet+SMDegrain tr={denoise_tr} thSAD={denoise_thsad}, tile={denoise_tile}, streams={denoise_streams}) | SvtAv1EncApp{svt_params}")
+            print(f"[svtav1-dispatch] vspipe ({_backend_name} SCUNet+SMDegrain tr={denoise_tr} thSAD={denoise_thsad}, tile={denoise_tile}, streams={denoise_streams}) | {_sink_label}")
         else:
-            print(f"[svtav1-dispatch] vspipe ({_backend_name} SCUNet-{denoise_model}, tile={denoise_tile}, streams={denoise_streams}) | SvtAv1EncApp{svt_params}")
-        print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
+            print(f"[svtav1-dispatch] vspipe ({_backend_name} SCUNet-{denoise_model}, tile={denoise_tile}, streams={denoise_streams}) | {_sink_label}")
+        if not denoise_serve:
+            print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
         sys.stdout.flush()
-        run_piped([vspipe_exe, "-c", "y4m", vpy_path, "-"], svt_cmd,
+        run_piped([vspipe_exe, "-c", "y4m", vpy_path, "-"], _sink_cmd,
                   source_label="vspipe",
+                  sink_label=("netstream send" if denoise_serve else "SvtAv1EncApp"),
                   source_stderr_log=os.path.join(temp_dir, f"{stem}_vspipe.log"))
+        if denoise_serve:
+            # The serve half's job ends with the last frame on the socket:
+            # the encode, frame-count check and mux all live on the receiver.
+            sys.exit(0)
     else:
         src_vpy_path = os.path.join(temp_dir, f"{stem}_src.vpy")
         src_cachefile = os.path.join(temp_dir, f"{stem}.ffindex")

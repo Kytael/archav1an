@@ -547,6 +547,18 @@ for sigma in [15, 25, 50]:
         fi
     fi
 
+    # Split-host denoise (--remote-denoise): report readiness only. The remote's
+    # install is this same `setup.sh --install denoiser`, run on that box, and
+    # opening the inbound port is the user's call — setup never touches firewalls.
+    if command -v ssh >/dev/null 2>&1 && command -v rsync >/dev/null 2>&1; then
+        log_success "ssh + rsync present — split-host denoise (--remote-denoise) usable"
+        log_info    "  Remote host needs this repo at --remote-root (default ~/archav1an) with --install denoiser run there."
+        log_info    "  Open the return port on THIS host, scoped to the denoise host, e.g.:"
+        log_info    "    sudo ufw allow from <remote-lan-ip> to any port 5300 proto tcp"
+    else
+        log_warn "ssh and/or rsync missing — --remote-denoise (split-host denoise) will not work."
+    fi
+
     log_info "Staging BSVD model assets (ft_ep5 ONNX + σ-estimator)..."
     local _bsvd_repo
     if [ "$EUID" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then

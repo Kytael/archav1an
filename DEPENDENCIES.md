@@ -66,6 +66,13 @@ These are installed via the host package manager. `setup.sh` runs `pacman -Q <pk
 **AMD ROCm path (alternative to TensorRT):**
 - `rocm-migraphx` or `migraphx`
 
+**Split-host denoise (`--remote-denoise` flag):**
+- `openssh` — client on the encoder host, server on the denoise host; key-based auth (the dispatcher must not hit a password prompt)
+- `rsync` — both hosts; stages the source to `<remote-root>/Temp/_remote/`
+- The denoise host needs this repo checked out at `--remote-root` with `./setup.sh --install denoiser` run there, and `models/*.onnx` present (git-tracked, so a clone is enough)
+- One inbound TCP port on the encoder host (default 5300). Setup does not touch firewalls; open it yourself, scoped to the denoise host
+- `tools/netstream.py` carries the y4m stream and is stdlib-only — no extra Python packages
+
 ## VapourSynth plugins (built into `$VS_PREFIX/lib/vapoursynth/`)
 
 | Plugin | Source | Notes |
