@@ -176,7 +176,8 @@ install_denoiser() {
         # 2c. Build libvsmigx.so from vs-mlrt source, or symlink existing install
         if [ -f "$VS_PLUGIN_PATH/libvsmigx.so" ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
             log_info "libvsmigx.so already in $VS_PLUGIN_PATH, skipping. (FORCE_REINSTALL=1 to rebuild)"
-        elif [ -f "/usr/lib/vapoursynth/libvsmigx.so" ] && [ "$VS_PLUGIN_PATH" != "/usr/lib/vapoursynth" ]; then
+        elif [ -f "/usr/lib/vapoursynth/libvsmigx.so" ] && [ "$VS_PLUGIN_PATH" != "/usr/lib/vapoursynth" ] \
+             && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
             ln -sf /usr/lib/vapoursynth/libvsmigx.so "$VS_PLUGIN_PATH/libvsmigx.so"
             log_success "Symlinked existing libvsmigx.so to $VS_PLUGIN_PATH/"
         else
@@ -189,10 +190,12 @@ install_denoiser() {
                && clone_src denoiser vs-mlrt vs-mlrt \
                && cd vs-mlrt/vsmigx \
                && mkdir -p build && cd build \
-               && cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja -DVAPOURSYNTH_INCLUDE_DIRS="$VS_INCLUDE_DIR" \
+               && cmake .. -DCMAKE_BUILD_TYPE=Release -G Ninja -DVAPOURSYNTH_INCLUDE_DIRECTORY="$VS_INCLUDE_DIR" \
                && ninja \
                && [ -f libvsmigx.so ]; then
-                cp libvsmigx.so "$VS_PLUGIN_PATH/"
+                # --remove-destination: the existing entry may be a symlink to
+                # /usr/lib/vapoursynth/, which plain cp would write through.
+                cp --remove-destination libvsmigx.so "$VS_PLUGIN_PATH/"
                 log_success "libvsmigx.so installed to $VS_PLUGIN_PATH/"
             else
                 log_warn "libvsmigx.so build failed — MIGraphX native plugin unavailable on this host (SCUNet-via-migx won't work; BSVD uses the ORT shim path instead)."
