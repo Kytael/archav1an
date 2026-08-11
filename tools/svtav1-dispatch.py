@@ -676,7 +676,31 @@ Concurrency:
 """
 
 
+def prefer_prefix_bin():
+    """Put $VS_PREFIX/bin ahead of PATH, as activate-venv.sh does.
+
+    Every binary here is found with shutil.which, and nothing on any of the
+    three hosts has the prefix on PATH. VS_PREFIX arrived in May 2026 and
+    installs moved to /opt/archav1an, so since then which() has been resolving
+    to whatever pre-existed: March /usr/local builds on encoder-host and gpu2,
+    pacman builds on gpu1. Every setup.sh --install since has produced
+    binaries that nothing ran.
+
+    Callers that already source activate-venv.sh are unaffected -- this only
+    re-adds an entry that is already first there.
+    """
+    prefix_bin = os.path.join(os.environ.get("VS_PREFIX", "/opt/archav1an"), "bin")
+    if not os.path.isdir(prefix_bin):
+        return
+    parts = os.environ.get("PATH", "").split(os.pathsep)
+    if parts and parts[0] == prefix_bin:
+        return
+    os.environ["PATH"] = os.pathsep.join(
+        [prefix_bin] + [p for p in parts if p != prefix_bin])
+
+
 def main():
+    prefer_prefix_bin()
     args = sys.argv[1:]
 
     input_file = None

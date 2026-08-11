@@ -64,3 +64,37 @@ def test_generated_ssimu2_scripts_embed_the_search_list(monkeypatch):
         assert "/opt/archav1an/lib/vapoursynth" in script
         assert "/usr/local/lib/vapoursynth" not in script
         compile(script, "<ssimu2>", "exec")
+
+
+def test_prefix_bin_goes_to_the_front_of_path(monkeypatch):
+    """which() resolved to March /usr/local builds on every host until this."""
+    import os
+    mod = _load_dispatch()
+    monkeypatch.setenv("VS_PREFIX", "/opt/archav1an")
+    monkeypatch.setenv("PATH", "/usr/local/bin:/usr/bin")
+    if not os.path.isdir("/opt/archav1an/bin"):
+        import pytest
+        pytest.skip("no prefix bin on this host")
+    mod.prefer_prefix_bin()
+    assert os.environ["PATH"].split(os.pathsep)[0] == "/opt/archav1an/bin"
+
+
+def test_prefix_bin_is_not_duplicated_when_already_first(monkeypatch):
+    import os
+    mod = _load_dispatch()
+    monkeypatch.setenv("VS_PREFIX", "/opt/archav1an")
+    monkeypatch.setenv("PATH", "/opt/archav1an/bin:/usr/bin")
+    if not os.path.isdir("/opt/archav1an/bin"):
+        import pytest
+        pytest.skip("no prefix bin on this host")
+    mod.prefer_prefix_bin()
+    assert os.environ["PATH"].count("/opt/archav1an/bin") == 1
+
+
+def test_a_missing_prefix_bin_leaves_path_alone(monkeypatch):
+    import os
+    mod = _load_dispatch()
+    monkeypatch.setenv("VS_PREFIX", "/nonexistent-prefix-xyz")
+    monkeypatch.setenv("PATH", "/usr/local/bin:/usr/bin")
+    mod.prefer_prefix_bin()
+    assert os.environ["PATH"] == "/usr/local/bin:/usr/bin"
