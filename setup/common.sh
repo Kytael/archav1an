@@ -481,7 +481,13 @@ clone_src() {
     fi
     local commit
     commit=$(git -C "$dest" rev-parse HEAD 2>/dev/null || echo unknown)
-    record_src "$component" "$name" "$url" "$ref" "$commit"
+    # Bookkeeping must not decide whether the clone succeeded. record_src ends
+    # in a write to $MANIFEST_DIR, so an unwritable prefix used to make this
+    # function return non-zero after a perfectly good clone -- and callers
+    # report that as "Failed to clone", which sends you hunting the network.
+    record_src "$component" "$name" "$url" "$ref" "$commit" \
+        || log_warn "clone_src: cloned $name but could not record it in $MANIFEST_DIR"
+    return 0
 }
 
 # src_update_status <component>
