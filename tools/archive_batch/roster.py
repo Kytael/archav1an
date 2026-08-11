@@ -88,6 +88,16 @@ def _validate(roster, core_count):
     if roster.encode.host != "local":
         raise RosterError("encode.host must be 'local': remote hosts contribute GPUs only")
 
+    # Windowed tile-sequential denoise is spec 5.5 and is not built yet. Accepting
+    # the keys silently would run BSVD full-frame on an 8 GB card, which either
+    # runs out of memory or falls back to CPU without saying so. Only enabled
+    # entries are rejected, so a roster can carry a disabled entry ready for it.
+    for d in roster.enabled():
+        if d.window or d.tiling != "none":
+            raise RosterError(
+                f"denoiser '{d.name}' sets tiling/window, which is not implemented "
+                f"yet (spec 5.5). Remove the keys or disable the entry.")
+
     ports = [d.port for d in roster.denoisers if d.is_remote]
     if any(p == 0 for p in ports):
         raise RosterError("a remote denoiser needs a port")

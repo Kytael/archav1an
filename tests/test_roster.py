@@ -118,3 +118,49 @@ def test_rejects_roster_with_no_enabled_denoiser(tmp_path):
 def test_missing_file_raises_roster_error(tmp_path):
     with pytest.raises(RosterError, match="not found"):
         load_roster(tmp_path / "absent.toml", core_count=32)
+
+
+def test_enabled_denoiser_cannot_request_unimplemented_windowing(tmp_path):
+    """The spec's own example 2070s entry would run BSVD full-frame on 8 GB."""
+    p = tmp_path / "r.toml"
+    p.write_text("""
+[[denoiser]]
+name = "2070s"
+host = "local"
+backend = "trt"
+device = 1
+tiling = "auto"
+window = 1500
+margin = 32
+
+[encode]
+slots = 1
+threads_per_slot = 16
+""")
+    with pytest.raises(RosterError, match="not implemented"):
+        load_roster(p, 32)
+
+
+def test_a_disabled_entry_may_carry_windowing_keys_for_later(tmp_path):
+    p = tmp_path / "r.toml"
+    p.write_text("""
+[[denoiser]]
+name = "igpu"
+host = "local"
+backend = "migraphx"
+
+[[denoiser]]
+name = "2070s"
+host = "local"
+backend = "trt"
+device = 1
+tiling = "auto"
+window = 1500
+enabled = false
+
+[encode]
+slots = 1
+threads_per_slot = 16
+""")
+    roster = load_roster(p, 32)
+    assert [d.name for d in roster.enabled()] == ["igpu"]

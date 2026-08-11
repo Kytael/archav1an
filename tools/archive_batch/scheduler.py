@@ -49,7 +49,12 @@ class Scheduler:
 
     def run(self):
         roster = self.roster_fn()
-        names = [d.name for d in roster.enabled()]
+        # Every rostered denoiser gets a worker, not only the enabled ones: a
+        # worker for a disabled device parks immediately and costs nothing, but
+        # without it, switching from roster B back to roster A mid-run would do
+        # nothing at all. A denoiser added to the file after the run starts
+        # still needs a restart -- the thread set is fixed here.
+        names = [d.name for d in roster.denoisers]
         threads = [threading.Thread(target=self._worker, args=(name,), daemon=True)
                    for name in names]
         for t in threads:

@@ -173,3 +173,32 @@ def test_a_raising_runner_does_not_strand_its_denoiser(tmp_path):
     st = load_state(tmp_path / "state.jsonl")
     assert len(calls) == 4                    # the one worker kept going
     assert len(st.done) == 3 and len(st.failures) == 1
+
+
+def test_a_denoiser_disabled_at_startup_can_still_be_enabled_later(tmp_path):
+    """Roster B -> roster A mid-run must actually put the device to work."""
+    seen = []
+    lock = threading.Lock()
+    enabled = threading.Event()
+    b_ran = threading.Event()
+
+    def runner(clip, denoiser):
+        with lock:
+            seen.append(denoiser.name)
+        if denoiser.name == "b":
+            b_ran.set()
+        else:
+            # a's first clip enables b, then a blocks so it cannot drain the
+            # queue on its own. b must wake from parked for this to return.
+            enabled.set()
+            b_ran.wait(2)
+        return True, 1.0, 1.0, 1
+
+    def roster_fn():
+        return _roster(D1, D2 if enabled.is_set() else D2_OFF)
+
+    s = Scheduler(_clips(8), roster_fn, runner, state_path=tmp_path / "state.jsonl")
+    s.POLL_SECONDS = 0.05
+    s.run()
+    assert len(seen) == 8
+    assert b_ran.is_set(), "b never ran, so its worker was never created"
