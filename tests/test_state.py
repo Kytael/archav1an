@@ -57,3 +57,34 @@ def test_corrupt_line_is_skipped(tmp_path):
     p = tmp_path / "state.jsonl"
     p.write_text('{"src": "a", "status": "done"}\nnot json\n')
     assert load_state(p).done == {"a"}
+
+
+def test_resume_state_cannot_be_edited_in_memory():
+    """frozen=True seals the fields; the contents must be read-only too, or the
+    promise is only half true. The file on disk is the record, not this."""
+    import pytest
+    from tools.archive_batch.state import State
+
+    s = State()
+    with pytest.raises(Exception):
+        s.done = frozenset({"x"})           # the box is sealed
+    with pytest.raises(AttributeError):
+        s.done.add("x")                     # and so is what it holds
+    with pytest.raises(TypeError):
+        s.failures["x"] = 1
+
+
+def test_loaded_state_still_compares_and_reads_like_a_set_and_dict(tmp_path):
+    """Read-only types must not change how call sites use it."""
+    import json as _json
+
+    from tools.archive_batch.state import load_state
+    p = tmp_path / "state.jsonl"
+    p.write_text("\n".join(_json.dumps(r) for r in [
+        dict(src="a", status="done", denoiser="d", wall_s=1, fps=1, out_bytes=1),
+        dict(src="b", status="failed", denoiser="d", wall_s=1, fps=0, out_bytes=0),
+    ]) + "\n")
+    st = load_state(p)
+    assert st.done == {"a"}
+    assert st.failures == {"b": 1}
+    assert "a" in st.done and st.failures.get("b", 0) == 1

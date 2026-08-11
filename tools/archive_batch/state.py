@@ -7,7 +7,9 @@ spec, 5.3.
 import json
 import os
 import threading
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
+from types import MappingProxyType
+from typing import Mapping
 
 MAX_ATTEMPTS = 2
 
@@ -29,8 +31,15 @@ class Record:
 
 @dataclass(frozen=True)
 class State:
-    done: set = field(default_factory=set)
-    failures: dict = field(default_factory=dict)
+    """What earlier runs already did, by name rather than by position.
+
+    frozen=True only seals the two fields; it does nothing about what they
+    hold. A plain set and dict could still be written into behind that seal, so
+    the contents are read-only types too and the promise is honest. Nothing
+    should ever edit resume state in memory: the file on disk is the record.
+    """
+    done: frozenset = frozenset()
+    failures: Mapping = MappingProxyType({})
 
 
 def append_record(path, record):
@@ -74,7 +83,7 @@ def load_state(path):
                     failures[src] = failures.get(src, 0) + 1
     except FileNotFoundError:
         pass
-    return State(done=done, failures=failures)
+    return State(done=frozenset(done), failures=MappingProxyType(failures))
 
 
 def pending_clips(clips, state):
