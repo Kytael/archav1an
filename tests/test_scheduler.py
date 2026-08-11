@@ -85,6 +85,32 @@ def test_a_denoiser_disabled_mid_run_stops_taking_work(tmp_path):
     assert used.count("b") <= 3, "'b' must stop taking work once disabled"
 
 
+def test_a_re_enabled_denoiser_resumes_taking_work(tmp_path):
+    """Gate 7: disabling is a pause, not a permanent exit."""
+    calls = {"n": 0}
+    calls_lock = threading.Lock()
+
+    def roster_fn():
+        with calls_lock:
+            calls["n"] += 1
+            n = calls["n"]
+        # 'b' is off in the middle of the run, then comes back.
+        return _roster(D1, D2_OFF) if 3 <= n <= 6 else _roster(D1, D2)
+
+    used = []
+    used_lock = threading.Lock()
+
+    def runner(clip, denoiser):
+        with used_lock:
+            used.append(denoiser.name)
+        return True, 1.0, 1.0, 1
+
+    s = Scheduler(_clips(12), roster_fn, runner, state_path=tmp_path / "state.jsonl")
+    s.POLL_SECONDS = 0.01
+    s.run()
+    assert len(used) == 12
+
+
 def test_slots_cap_concurrency(tmp_path):
     live = {"now": 0, "max": 0}
     lock = threading.Lock()
