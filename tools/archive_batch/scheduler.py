@@ -33,6 +33,9 @@ class Scheduler:
         self.failures = []
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        # Set when there is nothing left to take, so parked workers wake at once
+        # instead of sitting out a whole poll interval after the queue drains.
+        self._wake = threading.Event()
         roster = roster_fn()
         # Deliberate asymmetry: enablement is live and re-read per clip, but the
         # slot count is fixed for the life of the run.
@@ -41,6 +44,7 @@ class Scheduler:
     def stop(self):
         """Wind the run down: workers finish the clip they hold and take no more."""
         self._stop.set()
+        self._wake.set()
 
     def run(self):
         roster = self.roster_fn()
@@ -75,17 +79,19 @@ class Scheduler:
     def _worker(self, name):
         while True:
             if self._stop.is_set() or self.queue.empty():
+                self._wake.set()    # nothing left to take: release parked workers
                 return
             denoiser = self._current(name)
             if denoiser is None:
                 # Disabled or removed. Do not exit: the roster is live and the
                 # user may re-enable this device mid-run (spec 7.1 gate 7).
-                if self._stop.wait(self.POLL_SECONDS):
-                    return
+                # Why we woke does not matter -- re-check both conditions above.
+                self._wake.wait(self.POLL_SECONDS)
                 continue
             try:
                 clip = self.queue.get_nowait()
             except queue.Empty:
+                self._wake.set()
                 return
             self._process(clip, denoiser)
 
@@ -124,7 +130,7 @@ class Scheduler:
             # than let workers die one by one with nothing written down.
             print(f"archive-batch: cannot write state to {self.state_path}: {exc!r} "
                   f"-- stopping the run", flush=True)
-            self._stop.set()
+            self.stop()
 
         with self._lock:
             if ok:
