@@ -9,7 +9,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
-_BARE_NUMBER = re.compile(r"^[0-9]+\.?[0-9]*$")
 _YEAR = re.compile(r"^[0-9]{4}$")
 _SET_RANK = {"SetA": 0, "SetB": 1}
 _NO_YEAR = 9999
@@ -22,7 +21,6 @@ class Clip:
     stem: str       # basename without extension
     size: int       # bytes
     frames: int     # video frame count
-    duration: float # seconds
 
 
 def parse_manifest(text):
@@ -30,8 +28,8 @@ def parse_manifest(text):
 
     Row layout is path, size, then one "rate,frames" column per video stream,
     then duration. A source with an embedded thumbnail stream has two rate
-    columns, so frames comes from the first and duration from the last bare
-    numeric field.
+    columns, so frames always comes from the first. The trailing duration
+    column is not read: ordering and the fps figures both work from frames.
     """
     clips = []
     skipped = []
@@ -47,10 +45,9 @@ def parse_manifest(text):
         src = fields[0]
         size = int(fields[1])
         frames = _frames_from(fields[2])
-        duration = _duration_from(fields[3:])
         p = PurePosixPath(src)
         clips.append(Clip(src=src, rel_dir=str(p.parent), stem=p.stem,
-                          size=size, frames=frames, duration=duration))
+                          size=size, frames=frames))
     if skipped:
         print(f"[archive-batch] manifest: skipped {len(skipped)} malformed row(s), "
               f"first: {skipped[0]!r}", file=sys.stderr)
@@ -60,13 +57,6 @@ def parse_manifest(text):
 def _frames_from(field):
     parts = field.split(",")
     return int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
-
-
-def _duration_from(rest):
-    for value in reversed(rest):
-        if _BARE_NUMBER.match(value.strip()):
-            return float(value)
-    return 0.0
 
 
 def order_clips(clips):

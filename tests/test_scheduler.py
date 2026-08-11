@@ -12,7 +12,7 @@ D2_OFF = Denoiser(name="b", host="local", backend="migraphx", device=0,
 
 
 def _clips(n):
-    return tuple(Clip(f"SetA/2001/f/c{i}.MOV", "SetA/2001/f", f"c{i}", 1, 100, 1.0)
+    return tuple(Clip(f"SetA/2001/f/c{i}.MOV", "SetA/2001/f", f"c{i}", 1, 100)
                  for i in range(n))
 
 

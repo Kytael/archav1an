@@ -3,7 +3,7 @@ from tools.archive_batch.manifest import Clip
 
 
 def _clip(name, frames=100):
-    return Clip(f"SetA/2001/a/{name}.MOV", "SetA/2001/a", name, 1, frames, 1.0)
+    return Clip(f"SetA/2001/a/{name}.MOV", "SetA/2001/a", name, 1, frames)
 
 
 def test_append_then_load_roundtrip(tmp_path):

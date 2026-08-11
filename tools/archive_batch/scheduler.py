@@ -81,7 +81,6 @@ class Scheduler:
                       f"{self.queue.qsize()} clip(s) are still queued. Workers are "
                       f"parked, not stuck -- re-enable a denoiser in the roster to "
                       f"resume.", flush=True)
-        return self.failed
 
     def _any_enabled(self, names):
         try:
