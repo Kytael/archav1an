@@ -11,6 +11,7 @@ import threading
 import time
 
 from .state import Record, append_record
+from .transfer import TransferOutage
 
 
 class Scheduler:
@@ -112,6 +113,18 @@ class Scheduler:
         raised = False
         try:
             ok, wall_s, fps, out_bytes = self.runner(clip, denoiser)
+        except TransferOutage as exc:
+            # Staging and publishing both target the source host, so this stops
+            # every denoiser, not just this one. Put the clip back untouched and
+            # wind down: recording it failed would spend an attempt on a clip
+            # that was never tried (spec 6).
+            self.queue.put(clip)
+            print(f"archive-batch: {exc}\n"
+                  f"archive-batch: the source host is unreachable. Stopping with "
+                  f"{self.queue.qsize()} clip(s) queued and nothing recorded "
+                  f"failed. Re-run to resume.", flush=True)
+            self.stop()
+            return
         except Exception as exc:
             ok, wall_s, fps, out_bytes = False, time.monotonic() - started, 0.0, 0
             raised = True

@@ -135,3 +135,41 @@ def test_an_empty_queue_finishes_immediately(tmp_path):
                   state_path=tmp_path / "state.jsonl")
     s.run()
     assert s.done == 0 and s.failed == 0
+
+
+def test_a_source_host_outage_requeues_instead_of_failing_the_clip(tmp_path):
+    """Spec 6: a Windows-update reboot must not fail 3,000 clips."""
+    from tools.archive_batch.state import load_state
+    from tools.archive_batch.transfer import TransferOutage
+
+    def runner(clip, denoiser):
+        raise TransferOutage("rsync failed (10): connection refused -- gave up")
+
+    s = Scheduler(_clips(5), lambda: _roster(D1), runner,
+                  state_path=tmp_path / "state.jsonl")
+    s.run()
+    st = load_state(tmp_path / "state.jsonl")
+    # Nothing recorded at all: no clip spends an attempt on a host that was down.
+    assert st.done == set() and st.failures == {}
+    assert s.done == 0 and s.failed == 0
+    # Every clip is still queued for the next run.
+    assert s.queue.qsize() == 5
+
+
+def test_a_raising_runner_does_not_strand_its_denoiser(tmp_path):
+    """A worker that dies silently takes its GPU out of the run for good."""
+    from tools.archive_batch.state import load_state
+    calls = []
+
+    def runner(clip, denoiser):
+        calls.append(clip.src)
+        if clip.stem == "c0":
+            raise RuntimeError("engine build blew up")
+        return True, 1.0, 1.0, 1
+
+    s = Scheduler(_clips(4), lambda: _roster(D1), runner,
+                  state_path=tmp_path / "state.jsonl")
+    s.run()
+    st = load_state(tmp_path / "state.jsonl")
+    assert len(calls) == 4                    # the one worker kept going
+    assert len(st.done) == 3 and len(st.failures) == 1

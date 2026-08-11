@@ -19,8 +19,9 @@ from tools.archive_batch.manifest import order_clips, parse_manifest
 from tools.archive_batch.roster import RosterError, load_roster
 from tools.archive_batch.scheduler import Scheduler
 from tools.archive_batch.state import load_state, pending_clips
-from tools.archive_batch.transfer import (TransferError, publish_cmd, run,
-                                          stage_cmd, staged_path)
+from tools.archive_batch.transfer import (TransferError, TransferOutage,
+                                          publish_cmd, run, stage_cmd,
+                                          staged_path)
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUN_DIR = os.path.join(REPO, ".archive-run")
@@ -57,6 +58,10 @@ def make_runner(encode):
                 return False, time.monotonic() - started, 0.0, 0
             run(publish_cmd(SOURCE_HOST, out, clip.rel_dir))
             size = os.path.getsize(out)
+        except TransferOutage:
+            # The host is down, not the clip bad. Let the scheduler requeue it
+            # rather than spend one of this clip's two attempts (spec 6).
+            raise
         except TransferError as exc:
             print(f"[archive-batch] {clip.src}: {exc}", file=sys.stderr)
             return False, time.monotonic() - started, 0.0, 0
