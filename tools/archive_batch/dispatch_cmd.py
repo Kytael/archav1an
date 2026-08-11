@@ -39,6 +39,7 @@ def build_command(denoiser, encode, staged, out, remote_src, callback):
             "--denoise-bsvd",
             "--bsvd-sigma", BSVD_SIGMA,
             "--bsvd-device", str(denoiser.device),
+            "--temp-tag", denoiser.name,
             "--encoder-params", ENCODER_PARAMS]
 
     if denoiser.is_remote:

@@ -35,7 +35,10 @@ def make_runner(encode):
     def runner(clip, denoiser):
         stage_dir = os.path.join(STAGE_ROOT, denoiser.name)
         os.makedirs(stage_dir, exist_ok=True)
-        temp_dir = os.path.join(REPO, "Temp", clip.stem)
+        # Must match --temp-tag in dispatch_cmd: 185 stems repeat across the
+        # archive, so a stem-only temp dir lets one worker delete another's
+        # working files mid-encode (spec 5.1 step 2).
+        temp_dir = os.path.join(REPO, "Temp", denoiser.name, clip.stem)
         shutil.rmtree(temp_dir, ignore_errors=True)
 
         started = time.monotonic()

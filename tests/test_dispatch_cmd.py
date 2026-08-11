@@ -51,6 +51,18 @@ def test_trt_denoiser_uses_the_managed_interpreter():
     assert "VSPIPE" not in env
 
 
+def test_temp_tag_isolates_denoisers_from_each_other():
+    """185 stems repeat across the archive; a shared temp dir would let one
+    worker delete another's working files mid-encode."""
+    remote, _ = build_command(REMOTE, ENCODE, staged="/t/MVI_0090.MOV",
+                              out="/t/o.mkv", remote_src="/mnt/media/a/MVI_0090.MOV",
+                              callback="1.2.3.4")
+    local, _ = build_command(LOCAL, ENCODE, staged="/t/MVI_0090.MOV",
+                             out="/t/o.mkv", remote_src=None, callback=None)
+    assert remote[remote.index("--temp-tag") + 1] == "gpu1_4090"
+    assert local[local.index("--temp-tag") + 1] == "igpu"
+
+
 def test_preset_matches_the_dance_hq_script():
     argv, _ = build_command(REMOTE, ENCODE, staged="/t/x.MOV", out="/t/o.mkv",
                             remote_src="/mnt/media/x.MOV", callback="1.2.3.4")

@@ -651,6 +651,11 @@ Split-host denoise (BSVD only) — denoise on a remote GPU, encode here:
                                  --remote-port N (default 5300)
                                  --remote-callback IP (default: this host's IP toward the remote)]
   --denoise-serve HOST:PORT     internal: run the denoise half and stream y4m back
+
+Concurrency:
+  --temp-tag NAME               put working files in Temp/NAME/<stem> instead of
+                                Temp/<stem>, so parallel runs over same-named
+                                sources cannot delete each other's files
 """
 
 
@@ -702,6 +707,7 @@ def main():
     remote_callback = None
     remote_source = None
     denoise_serve = None
+    temp_tag = None
 
     i = 0
     while i < len(args):
@@ -777,6 +783,8 @@ def main():
             remote_source = nextval(); i += 2
         elif arg == "--denoise-serve":
             denoise_serve = nextval(); i += 2
+        elif arg == "--temp-tag":
+            temp_tag = nextval(); i += 2
         elif arg in ("-h", "--help"):
             print(USAGE)
             sys.exit(0)
@@ -837,10 +845,17 @@ def main():
     if encoder_params.strip():
         svt_params += " " + encoder_params.strip()
 
-    # Temp ivf path
+    # Temp ivf path. --temp-tag inserts one component so that concurrent runs
+    # cannot share a temp dir: 185 stems repeat across the dance archive, and
+    # the loser has its working files deleted mid-encode.
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     stem = os.path.splitext(os.path.basename(input_file))[0]
-    temp_dir = os.path.join(root_dir, "Temp", stem)
+    if temp_tag and (os.sep in temp_tag or temp_tag in (".", "..")):
+        print(f"[svtav1-dispatch] Error: --temp-tag must be one path component, "
+              f"got {temp_tag!r}.")
+        sys.exit(2)
+    temp_dir = (os.path.join(root_dir, "Temp", temp_tag, stem) if temp_tag
+                else os.path.join(root_dir, "Temp", stem))
     os.makedirs(temp_dir, exist_ok=True)
     ivf_path = os.path.join(temp_dir, f"{stem}.ivf")
 
@@ -899,6 +914,10 @@ def main():
         if denoise_bsvd_smdegrain:
             _forward += ["--denoise-tr", str(denoise_tr),
                          "--denoise-thsad", str(denoise_thsad)]
+        if temp_tag:
+            # The remote resolves this against its own root, so two remote
+            # denoisers on one host stay out of each other's Temp.
+            _forward += ["--temp-tag", temp_tag]
         _callback = remote_callback or callback_address(remote_denoise)
         if _callback.startswith("100.") and not remote_callback:
             print(f"[svtav1-dispatch] Warning: streaming back over {_callback} "
