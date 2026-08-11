@@ -46,11 +46,16 @@ enabled = true
 # windowed back-end lands, so this cannot be switched on by accident. Its value
 # is covering for the 4090 when that card is busy with other work: roster B
 # (igpu + 2070s) is 21.0 days against 38.8 days for the iGPU alone.
+#
+# device = 0, not 1. The two encoder-host GPUs do not share an ordinal space: CUDA
+# enumerates only the NVIDIA card and ROCm only the AMD one, so both are 0 and
+# the backend is what tells them apart. device = 1 fails with
+# "CUDA failure 101: invalid device ordinal".
 [[denoiser]]
 name    = "2070s"
 host    = "local"
 backend = "trt"
-device  = 1
+device  = 0
 tiling  = "auto"
 window  = 1500
 margin  = 32

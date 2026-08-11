@@ -98,3 +98,29 @@ def test_a_missing_prefix_bin_leaves_path_alone(monkeypatch):
     monkeypatch.setenv("PATH", "/usr/local/bin:/usr/bin")
     mod.prefer_prefix_bin()
     assert os.environ["PATH"] == "/usr/local/bin:/usr/bin"
+
+
+def _vpy_for(tmp_path, **kw):
+    mod = _load_dispatch()
+    vpy = tmp_path / "x.vpy"
+    mod.write_denoise_vpy(str(vpy), source="/t/x.MOV",
+                          cachefile=str(tmp_path / "x.ffindex"),
+                          model_name="bsvd", tile=0, streams=1,
+                          use_bsvd=True, bsvd_onnx="/m/b.onnx", **kw)
+    return vpy.read_text()
+
+
+def test_bsvd_without_tile_uses_the_full_frame_streamer(tmp_path):
+    text = _vpy_for(tmp_path)
+    assert "build_bsvd_streaming" in text
+    assert "build_bsvd_windowed_tiled" not in text
+    compile(text, "<vpy>", "exec")
+
+
+def test_bsvd_tile_switches_to_the_windowed_builder(tmp_path):
+    """The 2070S cannot hold the full-frame state, so it must take this path."""
+    text = _vpy_for(tmp_path, bsvd_tile=576, bsvd_window=1500, bsvd_margin=32)
+    assert "build_bsvd_windowed_tiled" in text
+    assert "build_bsvd_streaming" not in text
+    assert "tile=576" in text and "window=1500" in text and "margin=32" in text
+    compile(text, "<vpy>", "exec")

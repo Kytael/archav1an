@@ -13,6 +13,9 @@ MIGX_VENV = os.path.expanduser("~/reposetc/bsvd/migraphx-venv")
 MIGX_LIBS = os.path.expanduser("~/reposetc/bsvd/migraphx-libs/lib")
 
 BSVD_SIGMA = "0.05"
+# "auto" is the only tiling mode with a measured size: 576 is what the 2070S
+# was benchmarked at and what fits its 8 GB with windowing on.
+TILE_FOR = {"auto": 576}
 ENCODER_PARAMS = ("--tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 "
                   "--sharpness 1 --tf-strength 2 --variance-boost-strength 1 "
                   "--variance-octile 7 --enable-dlf 2")
@@ -41,6 +44,13 @@ def build_command(denoiser, encode, staged, out, remote_src, callback):
             "--bsvd-device", str(denoiser.device),
             "--temp-tag", denoiser.name,
             "--encoder-params", ENCODER_PARAMS]
+
+    if denoiser.tiling != "none":
+        # Cards that cannot hold the full-frame BSVD state run tile-sequential
+        # and windowed, so memory is one window rather than one clip (spec 5.5).
+        argv += ["--bsvd-tile", str(TILE_FOR[denoiser.tiling]),
+                 "--bsvd-window", str(denoiser.window),
+                 "--bsvd-margin", str(denoiser.margin)]
 
     if denoiser.is_remote:
         argv += ["--remote-denoise", denoiser.host,

@@ -71,3 +71,21 @@ def test_preset_matches_the_dance_hq_script():
     assert argv[argv.index("--speed") + 1] == "4"
     params = argv[argv.index("--encoder-params") + 1]
     assert "--tune 3" in params and "--variance-octile 7" in params
+
+
+TILED = Denoiser(name="2070s", host="local", backend="trt", device=0,
+                 tiling="auto", enabled=True, window=1500, margin=32)
+
+
+def test_a_tiled_denoiser_gets_the_windowed_flags():
+    argv, _ = build_command(TILED, ENCODE, staged="/t/x.MOV", out="/t/o.mkv",
+                            remote_src=None, callback=None)
+    assert argv[argv.index("--bsvd-tile") + 1] == "576"
+    assert argv[argv.index("--bsvd-window") + 1] == "1500"
+    assert argv[argv.index("--bsvd-margin") + 1] == "32"
+
+
+def test_an_untiled_denoiser_gets_no_windowing_flags():
+    argv, _ = build_command(LOCAL, ENCODE, staged="/t/x.MOV", out="/t/o.mkv",
+                            remote_src=None, callback=None)
+    assert "--bsvd-tile" not in argv and "--bsvd-window" not in argv

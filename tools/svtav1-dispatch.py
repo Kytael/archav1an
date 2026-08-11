@@ -78,7 +78,8 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
                       use_rvrt=False, rvrt_sigma=12.0,
                       use_stasunet=False, stasunet_engine="", stasunet_pre_darken_ev=0.0,
                       use_bsvd=False, use_bsvd_smdegrain=False,
-                      bsvd_onnx="", bsvd_sigma=0.08, bsvd_ep="TRT", bsvd_device=0):
+                      bsvd_onnx="", bsvd_sigma=0.08, bsvd_ep="TRT", bsvd_device=0,
+                      bsvd_tile=0, bsvd_overlap=16, bsvd_window=0, bsvd_margin=32):
     source = os.path.abspath(source)
     backend_lines = _mlrt_backend_lines(streams)
     model_line = f'_model_enum = _SCUNetModel["scunet_{model_name}"]'
@@ -86,14 +87,27 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
     if use_bsvd or use_bsvd_smdegrain:
         bsvd_onnx = os.path.abspath(bsvd_onnx)
         _tools_dir = os.path.dirname(os.path.abspath(__file__))
-        denoise_lines = (
+        _head = (
             f'import sys as _sys; _sys.path.insert(0, r{_tools_dir!r})\n'
-            f'from bsvd_vs_filter import build_bsvd_streaming\n'
             f'_src_fmt = src.format\n'
             f'_rgb = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="709", range_in_s="limited")\n'
-            f'_bsvd_rgb = build_bsvd_streaming(_rgb, onnx_path=r{bsvd_onnx!r}, '
-            f'sigma={bsvd_sigma}, ep={bsvd_ep!r}, device_id={bsvd_device}, fp16=True)\n'
         )
+        if bsvd_tile:
+            # Tile-sequential windowed path for cards that cannot hold the
+            # full-frame state (spec 5.5). Memory is one window, not one clip.
+            denoise_lines = _head + (
+                f'from bsvd_windowed import build_bsvd_windowed_tiled\n'
+                f'_bsvd_rgb = build_bsvd_windowed_tiled(_rgb, onnx_path=r{bsvd_onnx!r}, '
+                f'sigma={bsvd_sigma}, ep={bsvd_ep!r}, device_id={bsvd_device}, fp16=True, '
+                f'tile={bsvd_tile}, overlap={bsvd_overlap}, window={bsvd_window}, '
+                f'margin={bsvd_margin})\n'
+            )
+        else:
+            denoise_lines = _head + (
+                f'from bsvd_vs_filter import build_bsvd_streaming\n'
+                f'_bsvd_rgb = build_bsvd_streaming(_rgb, onnx_path=r{bsvd_onnx!r}, '
+                f'sigma={bsvd_sigma}, ep={bsvd_ep!r}, device_id={bsvd_device}, fp16=True)\n'
+            )
         if use_bsvd_smdegrain:
             denoise_lines += (
                 f'import havsfunc_legacy as _haf\n'
@@ -658,7 +672,9 @@ Denoisers (mutually exclusive):
   --denoise-rvrt          [--denoise-rvrt-sigma F]
   --denoise-stasunet      [--denoise-stasunet-engine PATH --denoise-stasunet-pre-darken-ev F]
   --denoise-bsvd          [--bsvd-onnx PATH --bsvd-sigma F|auto (default 0.05; auto = brightness-threshold pre-pass)
-                           --bsvd-device N --bsvd-warmup N (legacy, no effect — auto window comes from the optsig model)]
+                           --bsvd-device N --bsvd-warmup N (legacy, no effect — auto window comes from the optsig model)
+                           --bsvd-tile N (tile-sequential; for cards too small for the full-frame state)
+                           --bsvd-overlap N (default 16) --bsvd-window N --bsvd-margin N (default 32)]
   --denoise-bsvd-smdegrain  (BSVD as SMDegrain prefilter; same --bsvd-* options)
 
 Split-host denoise (BSVD only) — denoise on a remote GPU, encode here:
@@ -728,6 +744,10 @@ def main():
     denoise_tr = 3
     denoise_thsad = 350
     denoise_bsvd = False
+    bsvd_tile = 0
+    bsvd_overlap = 16
+    bsvd_window = 0
+    bsvd_margin = 32
     denoise_bsvd_smdegrain = False
     _default_bsvd_onnx = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -826,6 +846,14 @@ def main():
             denoise_serve = nextval(); i += 2
         elif arg == "--temp-tag":
             temp_tag = nextval(); i += 2
+        elif arg == "--bsvd-tile":
+            bsvd_tile = int(nextval() or 0); i += 2
+        elif arg == "--bsvd-overlap":
+            bsvd_overlap = int(nextval() or 16); i += 2
+        elif arg == "--bsvd-window":
+            bsvd_window = int(nextval() or 0); i += 2
+        elif arg == "--bsvd-margin":
+            bsvd_margin = int(nextval() or 32); i += 2
         elif arg in ("-h", "--help"):
             print(USAGE)
             sys.exit(0)
@@ -959,6 +987,12 @@ def main():
             # The remote resolves this against its own root, so two remote
             # denoisers on one host stay out of each other's Temp.
             _forward += ["--temp-tag", temp_tag]
+        if bsvd_tile:
+            # The denoise half runs remotely, so the tiling belongs there.
+            _forward += ["--bsvd-tile", str(bsvd_tile),
+                         "--bsvd-overlap", str(bsvd_overlap),
+                         "--bsvd-window", str(bsvd_window),
+                         "--bsvd-margin", str(bsvd_margin)]
         _callback = remote_callback or callback_address(remote_denoise)
         if _callback.startswith("100.") and not remote_callback:
             print(f"[svtav1-dispatch] Warning: streaming back over {_callback} "
@@ -1046,6 +1080,8 @@ def main():
                       bsvd_onnx=denoise_bsvd_onnx,
                       bsvd_sigma=(bsvd_sigma_val if (denoise_bsvd or denoise_bsvd_smdegrain) else 0.08),
                       bsvd_ep=(bsvd_ep if (denoise_bsvd or denoise_bsvd_smdegrain) else "TRT"),
+                      bsvd_tile=bsvd_tile, bsvd_overlap=bsvd_overlap,
+                      bsvd_window=bsvd_window, bsvd_margin=bsvd_margin,
                       bsvd_device=denoise_bsvd_device)
         if denoise_bsvd_smdegrain:
             print(f"[svtav1-dispatch] vspipe ({_backend_name} + SMDegrain tr={denoise_tr} thSAD={denoise_thsad}, σ={bsvd_sigma_val:.3f}) | {_sink_label}")
