@@ -22,6 +22,23 @@ import tag as _tag
 # Denoise helpers
 # ---------------------------------------------------------------------------
 
+def vs_plugin_dirs():
+    """Legacy plugin dirs to load explicitly, most authoritative first.
+
+    VS R77 autoloads only site-packages/vapoursynth/plugins, and LoadPlugin
+    raises on a namespace that is already claimed, so the first directory to
+    supply a plugin wins.
+
+    The prefix leads because setup.sh manages it and keeps the fleet in step:
+    gpu1's pacman vszip is still 13.0, which lacks Dither and breaks vstools
+    3.1.0. /usr/local is deliberately absent -- it was the default prefix
+    before VS_PREFIX (f5b1614) and is now an unowned four-month-old copy that
+    would shadow current pacman builds. That is the failure 6fad5c6 fixed.
+    """
+    prefix = os.environ.get("VS_PREFIX", "/opt/archav1an")
+    return (f"{prefix}/lib/vapoursynth", "/usr/lib/vapoursynth")
+
+
 def find_mlrt_plugin():
     """Return path to libvstrt.so (NVIDIA) or libvsmigx.so (AMD), or empty string."""
     _vs_prefix = os.environ.get("VS_PREFIX", "/opt/archav1an")
@@ -185,7 +202,7 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
         f'import sys as _sys; _sys.path.insert(0, {venv_site_pkgs!r})\n'
         f'from vstools import vs, core, initialize_clip, finalize_clip\n'
         f'core.max_cache_size = {_cache_mb}\n'
-        f'# VS R77+ autoloads only site-packages/vapoursynth/plugins; the legacy dirs\n# (ffms2/vszip/vship live there) must be loaded explicitly.\nimport glob as _glob, os as _os\nfor _d in ("/opt/archav1an/lib/vapoursynth", "/usr/local/lib/vapoursynth", "/usr/lib/vapoursynth"):\n    for _p in sorted(_glob.glob(_os.path.join(_d, "*.so"))):\n        try:\n            core.std.LoadPlugin(_p)\n        except vs.Error:\n            pass  # already loaded\n\n'
+        f'# VS R77+ autoloads only site-packages/vapoursynth/plugins; the legacy dirs\n# (ffms2/vszip/vship live there) must be loaded explicitly.\nimport glob as _glob, os as _os\nfor _d in {vs_plugin_dirs()!r}:\n    for _p in sorted(_glob.glob(_os.path.join(_d, "*.so"))):\n        try:\n            core.std.LoadPlugin(_p)\n        except vs.Error:\n            pass  # already loaded\n\n'
         f'\n'
         f'src = core.ffms2.Source(source=r{source!r}, cachefile=r{cachefile!r})\n'
         f'if src.format.color_family == vs.RGB:\n'
@@ -534,7 +551,7 @@ core = vs.core
 # VS R77+ autoloads only site-packages/vapoursynth/plugins; the legacy dirs
 # (ffms2/vszip/vship live there) must be loaded explicitly.
 import glob as _glob, os as _os
-for _d in ("/opt/archav1an/lib/vapoursynth", "/usr/local/lib/vapoursynth", "/usr/lib/vapoursynth"):
+for _d in {vs_plugin_dirs()!r}:
     for _p in sorted(_glob.glob(_os.path.join(_d, "*.so"))):
         try:
             core.std.LoadPlugin(_p)
@@ -555,7 +572,7 @@ core = vs.core
 # VS R77+ autoloads only site-packages/vapoursynth/plugins; the legacy dirs
 # (ffms2/vszip/vship live there) must be loaded explicitly.
 import glob as _glob, os as _os
-for _d in ("/opt/archav1an/lib/vapoursynth", "/usr/local/lib/vapoursynth", "/usr/lib/vapoursynth"):
+for _d in {vs_plugin_dirs()!r}:
     for _p in sorted(_glob.glob(_os.path.join(_d, "*.so"))):
         try:
             core.std.LoadPlugin(_p)
