@@ -5,7 +5,7 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
-SOURCES["vszip:vapoursynth-zip"]="https://github.com/dnjulek/vapoursynth-zip.git|R13"
+SOURCES["vszip:vapoursynth-zip"]="https://github.com/dnjulek/vapoursynth-zip.git|22.1.0"
 ARTIFACTS["vszip"]="lib/vapoursynth/libvszip.so"
 
 install_vszip() {
@@ -25,8 +25,9 @@ install_vszip() {
     # Build with our own zig at $VS_PREFIX/bin (same pattern as fssimu2.sh)
     # instead of upstream build-help/build.sh, which downloads its own zig into
     # the source tree and sudo-installs into the pacman-owned /usr/lib/vapoursynth.
-    # R13's build.zig hard-enforces zig >= 0.15.2.
-    local ZIG_VERSION="0.15.2"
+    # 22.1.0's build.zig.zon sets minimum_zig_version = 0.16.0 and build.zig
+    # hard-enforces it. R13 needed only 0.15.2; bumping the pin bumps this too.
+    local ZIG_VERSION="0.16.0"
     local ARCH=$(uname -m)
     local ZIG_ARCH="x86_64"
     if [ "$ARCH" = "aarch64" ]; then
