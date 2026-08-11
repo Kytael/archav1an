@@ -5,6 +5,7 @@ because probing a few thousand files across 9p is slow enough that resume must n
 repeat it.
 """
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
@@ -33,11 +34,15 @@ def parse_manifest(text):
     numeric field.
     """
     clips = []
+    skipped = []
     for line in text.splitlines():
         if not line.strip():
             continue
         fields = line.split("\t")
         if len(fields) < 4:
+            # A truncated manifest would otherwise shrink the run silently, and
+            # the missing clips would never be noticed.
+            skipped.append(line[:120])
             continue
         src = fields[0]
         size = int(fields[1])
@@ -46,6 +51,9 @@ def parse_manifest(text):
         p = PurePosixPath(src)
         clips.append(Clip(src=src, rel_dir=str(p.parent), stem=p.stem,
                           size=size, frames=frames, duration=duration))
+    if skipped:
+        print(f"[archive-batch] manifest: skipped {len(skipped)} malformed row(s), "
+              f"first: {skipped[0]!r}", file=sys.stderr)
     return tuple(clips)
 
 
