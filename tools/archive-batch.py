@@ -31,7 +31,7 @@ STAGE_ROOT = os.path.join(REPO, "Temp", "_stage")
 CALLBACK_IP = "10.0.0.10"     # encoder-host LAN address; tailscale caps at 1.5 Gbps
 
 
-def make_runner():
+def make_runner(encode):
     def runner(clip, denoiser):
         stage_dir = os.path.join(STAGE_ROOT, denoiser.name)
         os.makedirs(stage_dir, exist_ok=True)
@@ -44,7 +44,7 @@ def make_runner():
         try:
             run(stage_cmd(SOURCE_HOST, clip.src, stage_dir))
             argv, env_overlay = build_command(
-                denoiser, _roster().encode, staged=staged, out=out,
+                denoiser, encode, staged=staged, out=out,
                 remote_src=f"{ARCHIVE_ROOT}/{clip.src}" if denoiser.is_remote else None,
                 callback=CALLBACK_IP if denoiser.is_remote else None)
             env = dict(os.environ)
@@ -106,7 +106,7 @@ def main():
         return 0
 
     started = time.monotonic()
-    scheduler = Scheduler(todo, _roster, make_runner(), STATE)
+    scheduler = Scheduler(todo, _roster, make_runner(roster.encode), STATE)
     scheduler.run()
     print(format_summary(scheduler.done, scheduler.failed,
                          scheduler.failures, time.monotonic() - started))

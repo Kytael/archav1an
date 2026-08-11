@@ -28,3 +28,16 @@ def test_summary_with_no_failures_omits_the_failure_block():
     cli = _load_cli()
     text = cli.format_summary(done=5, failed=0, failures=[], elapsed_s=60.0)
     assert "failed" in text and "FAILED CLIPS" not in text
+
+
+def test_make_runner_takes_the_encode_pool_rather_than_reading_it():
+    """A clip in flight must survive the roster's last denoiser being disabled.
+
+    Re-reading the roster mid-clip made load_roster raise once the user turned
+    off the last device, failing a clip that was encoding fine.
+    """
+    import inspect
+    cli = _load_cli()
+    assert list(inspect.signature(cli.make_runner).parameters) == ["encode"]
+    src = inspect.getsource(cli.make_runner)
+    assert "_roster()" not in src, "runner must not re-read the roster per clip"
