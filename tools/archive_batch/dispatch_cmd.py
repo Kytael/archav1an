@@ -1,0 +1,49 @@
+"""Turn one clip plus one denoiser into an svtav1-dispatch invocation.
+
+Encoder settings are copied verbatim from run_linux_dance_HQ_crf27.sh:51-58.
+Sigma and Opus are fixed fleet-wide so that output never depends on which
+device took the clip (spec 5.1, 5.5(d)).
+"""
+import os
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DISPATCH = os.path.join(REPO, "tools", "svtav1-dispatch.py")
+MANAGED_PYTHON = "/opt/archav1an/venv/bin/python"
+MIGX_VENV = os.path.expanduser("~/reposetc/bsvd/migraphx-venv")
+MIGX_LIBS = os.path.expanduser("~/reposetc/bsvd/migraphx-libs/lib")
+
+BSVD_SIGMA = "0.05"
+ENCODER_PARAMS = ("--tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 "
+                  "--sharpness 1 --tf-strength 2 --variance-boost-strength 1 "
+                  "--variance-octile 7 --enable-dlf 2")
+
+
+def build_command(denoiser, encode, staged, out, remote_src, callback):
+    """Return (argv, env_overlay) for one clip on one denoiser."""
+    env = {}
+    if denoiser.backend == "migraphx":
+        # BSVD's MIGraphX wheels stop at cp312, so this lane needs its own
+        # interpreter and its own vspipe (see setup/denoiser.sh:562-570).
+        python = os.path.join(MIGX_VENV, "bin", "python")
+        env["VSPIPE"] = os.path.join(MIGX_VENV, "bin", "vspipe")
+        env["LD_LIBRARY_PATH"] = MIGX_LIBS
+    else:
+        python = MANAGED_PYTHON
+
+    argv = [python, DISPATCH,
+            "-i", staged, "-o", out,
+            "--quality", "27",
+            "--photon-noise", "6",
+            "--lp", str(encode.threads_per_slot),
+            "--speed", "4",
+            "--denoise-bsvd",
+            "--bsvd-sigma", BSVD_SIGMA,
+            "--bsvd-device", str(denoiser.device),
+            "--encoder-params", ENCODER_PARAMS]
+
+    if denoiser.is_remote:
+        argv += ["--remote-denoise", denoiser.host,
+                 "--remote-source", remote_src,
+                 "--remote-port", str(denoiser.port),
+                 "--remote-callback", callback]
+    return argv, env
