@@ -266,7 +266,7 @@ def callback_address(ssh_target):
         s.close()
 
 
-def resolve_remote_src(remote_source, remote_root, input_file):
+def resolve_remote_src(remote_source, input_file):
     """Where the remote half reads the source, and whether we must stage it.
 
     With --remote-source the file already lives on the denoise host, so nothing
@@ -274,6 +274,8 @@ def resolve_remote_src(remote_source, remote_root, input_file):
     """
     if remote_source:
         return remote_source, False
+    # Relative to remote_root: the remote command runs after `cd`, and quoting
+    # a leading ~ would stop the remote shell expanding it.
     return f"Temp/_remote/{os.path.basename(input_file)}", True
 
 
@@ -292,7 +294,7 @@ def run_remote_denoise(ssh_target, remote_root, remote_python, callback, port,
     guards are this function's ssh exit-status check and, definitively, the
     frame-count verification before the mux.
     """
-    remote_src, needs_staging = resolve_remote_src(remote_source, remote_root, input_file)
+    remote_src, needs_staging = resolve_remote_src(remote_source, input_file)
     if needs_staging:
         remote_dir = f"{remote_root}/Temp/_remote"
         print(f"[svtav1-dispatch] staging source -> {ssh_target}:{remote_dir}/")
@@ -302,9 +304,7 @@ def run_remote_denoise(ssh_target, remote_root, remote_python, callback, port,
                                f"{ssh_target}:{remote_dir}/"])
     else:
         print(f"[svtav1-dispatch] remote source in place: {ssh_target}:{remote_src}")
-    # Paths in the remote command are relative to remote_root when staged: the
-    # command runs after `cd`, and quoting a leading ~ would stop the remote
-    # shell expanding it. A --remote-source path is absolute and needs no cd.
+    # An absolute --remote-source path is unaffected by the `cd {remote_root}` below.
 
     remote_cmd = " ".join(shlex.quote(a) for a in [
         remote_python, "tools/svtav1-dispatch.py",
@@ -802,7 +802,7 @@ def main():
         sys.exit(2)
     if remote_source and not remote_denoise:
         print("[svtav1-dispatch] Error: --remote-source needs --remote-denoise.")
-        sys.exit(1)
+        sys.exit(2)
     if denoise_serve and not (denoise_bsvd or denoise_bsvd_smdegrain):
         print("[svtav1-dispatch] Error: --denoise-serve needs a BSVD denoise flag.")
         sys.exit(2)
@@ -816,7 +816,7 @@ def main():
     if not ffmpeg_exe and not denoise_serve:
         print("[svtav1-dispatch] Error: ffmpeg not found in PATH.")
         sys.exit(1)
-    if remote_denoise and not shutil.which("rsync"):
+    if remote_denoise and not remote_source and not shutil.which("rsync"):
         print("[svtav1-dispatch] Error: --remote-denoise needs rsync in PATH.")
         sys.exit(1)
 
