@@ -164,3 +164,15 @@ threads_per_slot = 16
 """)
     roster = load_roster(p, 32)
     assert [d.name for d in roster.enabled()] == ["igpu"]
+
+
+def test_the_example_roster_is_valid():
+    """The shipped example must load, or it teaches the wrong schema."""
+    from pathlib import Path
+    p = Path(__file__).resolve().parent.parent / "tools" / "archive_batch" / "denoisers.example.toml"
+    roster = load_roster(p, 32)
+    assert [d.name for d in roster.denoisers] == ["gpu1_4090", "igpu", "2070s"]
+    assert [d.name for d in roster.enabled()] == ["gpu1_4090", "igpu"]
+    # The 2070s entry carries windowing keys and must stay disabled until the
+    # back-end exists; enabling it has to fail loudly.
+    assert roster.denoisers[2].window == 1500 and not roster.denoisers[2].enabled

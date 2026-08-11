@@ -1,0 +1,66 @@
+# Denoiser roster -- copy to .archive-run/denoisers.toml and edit.
+#
+# Re-read before every clip. Changing `enabled` takes effect at the next clip
+# boundary: nothing is killed and no progress is lost. Every rostered denoiser
+# gets a worker, so a device disabled at startup can be switched on mid-run.
+#
+# Encoding is ALWAYS local. A remote host contributes a GPU and nothing else
+# (spec 2). encode.host must be "local" or the roster is rejected.
+
+# --- lane 1: gpu1's RTX 4090, over the network -----------------------------
+# Denoises on gpu1 and streams y4m back over raw TCP. The source is read in
+# place on gpu1 via --remote-source, so no part of the 2.5 TB archive is
+# copied to gpu1's root. Needs a port, and ports must be unique per remote.
+[[denoiser]]
+name    = "gpu1_4090"
+host    = "gpu1"
+backend = "trt"
+device  = 0
+tiling  = "none"
+port    = 5300
+enabled = true
+
+# --- lane 2: encoder-host's Radeon 8060S iGPU -----------------------------------
+# 128 GB of unified memory holds the full-frame BSVD state, so this lane needs
+# no tiling and no windowing. It uses its own interpreter and vspipe, because
+# BSVD's MIGraphX wheels stop at cp312 (see setup/denoiser.sh).
+#
+# Enable this together with gpu1_4090 for roster A. It competes with the
+# encoders for CPU: measured 5.19 fps solo against 3.27 fps under encode load.
+[[denoiser]]
+name    = "igpu"
+host    = "local"
+backend = "migraphx"
+device  = 0
+tiling  = "none"
+enabled = true
+
+# --- lane 3: encoder-host's RTX 2070 SUPER --------------------------------------
+# DISABLED AND NOT YET USABLE. 8 GB cannot hold the ~7.4 GB full-frame state,
+# so this card must run tile-sequential, and tile-sequential completes no
+# output frame until the last tile pass. Without windowing the whole denoised
+# clip is buffered at 6.22 MB/frame, which needs 335 GB for the longest clip
+# and cannot process 78% of this archive (spec 5.5).
+#
+# The roster REJECTS an enabled entry that sets tiling/window/margin until the
+# windowed back-end lands, so this cannot be switched on by accident. Its value
+# is covering for the 4090 when that card is busy with other work: roster B
+# (igpu + 2070s) is 21.0 days against 38.8 days for the iGPU alone.
+[[denoiser]]
+name    = "2070s"
+host    = "local"
+backend = "trt"
+device  = 1
+tiling  = "auto"
+window  = 1500
+margin  = 32
+enabled = false
+
+# --- the encode pool --------------------------------------------------------
+# Encoder-host's encode ceiling is 18.2 fps and 2 slots reach it: one wide encoder
+# wastes a quarter of the machine, 2 gain 19%, 3 add another 0.5%. Rejected if
+# slots x threads_per_slot exceeds the core count.
+[encode]
+host             = "local"
+slots            = 2
+threads_per_slot = 16
