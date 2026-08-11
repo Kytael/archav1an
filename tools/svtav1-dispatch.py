@@ -266,8 +266,20 @@ def callback_address(ssh_target):
         s.close()
 
 
+def resolve_remote_src(remote_source, remote_root, input_file):
+    """Where the remote half reads the source, and whether we must stage it.
+
+    With --remote-source the file already lives on the denoise host, so nothing
+    is copied: this is what keeps 2.5 TB of archive out of the remote's root.
+    """
+    if remote_source:
+        return remote_source, False
+    return f"Temp/_remote/{os.path.basename(input_file)}", True
+
+
 def run_remote_denoise(ssh_target, remote_root, remote_python, callback, port,
-                       input_file, forward_args, sink_cmd, temp_dir, stem):
+                       input_file, forward_args, sink_cmd, temp_dir, stem,
+                       remote_source=None):
     """Denoise on ssh_target, stream the y4m back over TCP, encode into sink_cmd.
 
     ssh carries only control (launch, stderr, exit status): a single ssh stream
@@ -280,15 +292,19 @@ def run_remote_denoise(ssh_target, remote_root, remote_python, callback, port,
     guards are this function's ssh exit-status check and, definitively, the
     frame-count verification before the mux.
     """
-    remote_dir = f"{remote_root}/Temp/_remote"
-    print(f"[svtav1-dispatch] staging source -> {ssh_target}:{remote_dir}/")
-    subprocess.check_call(["rsync", "-a", "--rsync-path",
-                           f"mkdir -p {remote_dir} && rsync",
-                           os.path.abspath(input_file),
-                           f"{ssh_target}:{remote_dir}/"])
-    # Paths in the remote command are relative to remote_root: the command runs
-    # after `cd`, and quoting a leading ~ would stop the remote shell expanding it.
-    remote_src = f"Temp/_remote/{os.path.basename(input_file)}"
+    remote_src, needs_staging = resolve_remote_src(remote_source, remote_root, input_file)
+    if needs_staging:
+        remote_dir = f"{remote_root}/Temp/_remote"
+        print(f"[svtav1-dispatch] staging source -> {ssh_target}:{remote_dir}/")
+        subprocess.check_call(["rsync", "-a", "--rsync-path",
+                               f"mkdir -p {remote_dir} && rsync",
+                               os.path.abspath(input_file),
+                               f"{ssh_target}:{remote_dir}/"])
+    else:
+        print(f"[svtav1-dispatch] remote source in place: {ssh_target}:{remote_src}")
+    # Paths in the remote command are relative to remote_root when staged: the
+    # command runs after `cd`, and quoting a leading ~ would stop the remote
+    # shell expanding it. A --remote-source path is absolute and needs no cd.
 
     remote_cmd = " ".join(shlex.quote(a) for a in [
         remote_python, "tools/svtav1-dispatch.py",
@@ -630,6 +646,7 @@ Denoisers (mutually exclusive):
 
 Split-host denoise (BSVD only) — denoise on a remote GPU, encode here:
   --remote-denoise SSH_TARGET   [--remote-root PATH (default ~/archav1an)
+                                 --remote-source PATH (read in place, skip staging)
                                  --remote-python PATH (default /opt/archav1an/venv/bin/python)
                                  --remote-port N (default 5300)
                                  --remote-callback IP (default: this host's IP toward the remote)]
@@ -683,6 +700,7 @@ def main():
     remote_python = "/opt/archav1an/venv/bin/python"
     remote_port = 5300
     remote_callback = None
+    remote_source = None
     denoise_serve = None
 
     i = 0
@@ -755,6 +773,8 @@ def main():
             remote_port = int(nextval() or 5300); i += 2
         elif arg == "--remote-callback":
             remote_callback = nextval(); i += 2
+        elif arg == "--remote-source":
+            remote_source = nextval(); i += 2
         elif arg == "--denoise-serve":
             denoise_serve = nextval(); i += 2
         elif arg in ("-h", "--help"):
@@ -780,6 +800,9 @@ def main():
     if remote_denoise and denoise_serve:
         print("[svtav1-dispatch] Error: --remote-denoise and --denoise-serve are exclusive.")
         sys.exit(2)
+    if remote_source and not remote_denoise:
+        print("[svtav1-dispatch] Error: --remote-source needs --remote-denoise.")
+        sys.exit(1)
     if denoise_serve and not (denoise_bsvd or denoise_bsvd_smdegrain):
         print("[svtav1-dispatch] Error: --denoise-serve needs a BSVD denoise flag.")
         sys.exit(2)
@@ -884,7 +907,7 @@ def main():
         print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
         run_remote_denoise(remote_denoise, remote_root, remote_python,
                            _callback, remote_port, input_file, _forward,
-                           svt_cmd, temp_dir, stem)
+                           svt_cmd, temp_dir, stem, remote_source=remote_source)
     elif any(_denoise_flags):
         if denoise_bsvd or denoise_bsvd_smdegrain:
             if not os.path.exists(denoise_bsvd_onnx):
