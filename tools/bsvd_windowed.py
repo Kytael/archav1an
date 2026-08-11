@@ -20,14 +20,25 @@ The fix bounds the clip, not the tile:
 
 Memory becomes (b - a) frames and stops depending on clip length.
 
-Why discarding a margin is exact, and why nothing is blended: BSVD's temporal
-receptive field is finite and known. shift_num=16 future frames, and
-SKIP_LENS=[8, 8, 4] over two cascaded DenBlocks gives about 16 frames of past.
-Feed a window real neighbouring frames for M >= 16 either side and its state at
-frame a is the state a whole-clip run would have had. The output is then
-bit-identical, not merely close, so there is no seam to hide. Blending was
-rejected: it softens detail and breathes at the window period. M defaults to 32,
-double the measured requirement. Gate 3 sweeps M to confirm the threshold.
+Why a discarded margin works, and why nothing is blended: BSVD's temporal state
+is bounded. It is all shift registers -- FIFOs of depth SKIP_LENS=[8, 8, 4] and
+the double-buffered memconv state, every one of them zeroed by reset() and
+overwritten as frames pass. Nothing accumulates, so old frames fall off the end
+rather than decaying away. Feed a window real neighbouring frames for M frames
+either side and its state on entering [a, b) approaches the state a whole-clip
+run would have had, and stops depending on where the window began.
+
+How close that is to exact is measured, not assumed. Gate 2 compares a windowed
+run against a whole-clip run on the same engine; gate 3 sweeps M. The reach is
+inferred from buffer shapes and names, not read out of the ONNX graph, and fp16
+kernels need not be bit-reproducible across differing call sequences, so the
+honest expectation is agreement at fp16 epsilon with no error concentrated at
+the window boundaries. A seam would show up as error clustered at a and b; that
+is the thing to look for, and the thing M exists to prevent.
+
+Blending was rejected regardless: it softens detail and breathes at the window
+period, and it would hide a seam rather than remove one. M defaults to 32,
+double the inferred requirement.
 """
 from collections import OrderedDict
 
