@@ -217,6 +217,16 @@ def main():
     scheduler.run()
     print(format_summary(scheduler.done, scheduler.failed, scheduler.failures,
                          time.monotonic() - started, state_path=STATE))
+
+    # An outage or a signal stops the run with clips still queued and nothing
+    # recorded failed. Exiting 0 there would tell a supervising script the
+    # archive is finished when it is not. Proven on 2026-08-11, when gpu1 took
+    # a Windows-update reboot mid-run and this returned 0 with 10 clips left.
+    remaining = scheduler.queue.qsize()
+    if remaining:
+        print(f"[archive-batch] stopped early with {remaining} clip(s) still "
+              f"queued. Re-run to resume.")
+        return 3
     return 1 if scheduler.failed else 0
 
 

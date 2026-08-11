@@ -89,3 +89,39 @@ def test_summary_reports_each_denoiser(tmp_path):
                                   reason="")) + "\n")
     out = cli.format_summary(1, 0, [], 36.0, state_path=str(p))
     assert "igpu" in out and "5.00 fps" in out
+
+
+def test_an_incomplete_run_exits_nonzero(tmp_path, monkeypatch):
+    """An outage stop recorded no failures, so exit 0 read as 'archive finished'."""
+    cli = _load_cli()
+
+    class _Sched:
+        done, failed, failures = 9, 0, []
+
+        def __init__(self):
+            import queue as _q
+            self.queue = _q.Queue()
+            for i in range(10):
+                self.queue.put(i)
+
+        def run(self):
+            return 0
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(cli, "Scheduler", lambda *a, **kw: _Sched())
+    monkeypatch.setattr(cli, "sweep_stage_root", lambda: 0)
+    monkeypatch.setattr(cli, "_roster", lambda: _roster_stub())
+    manifest = tmp_path / "m.tsv"
+    manifest.write_text("SetA/2001/f/a.MOV\t100\t30000/1001,50\t1.6\n")
+    monkeypatch.setattr(cli, "MANIFEST", str(manifest))
+    monkeypatch.setattr(cli, "STATE", str(tmp_path / "state.jsonl"))
+    assert cli.main() == 3
+
+
+def _roster_stub():
+    from tools.archive_batch.roster import Denoiser, EncodePool, Roster
+    return Roster(denoisers=(Denoiser(name="d", host="local", backend="trt",
+                                      device=0, tiling="none", enabled=True),),
+                  encode=EncodePool(host="local", slots=1, threads_per_slot=16))
