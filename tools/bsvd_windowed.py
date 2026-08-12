@@ -119,6 +119,26 @@ def window_read_plan(feed_start, feed_end, num_frames):
     return real_start, real_end, slots
 
 
+def check_tile_fits(H, W, tile, overlap):
+    """Raise if `tile` cannot be cut from the reflect-padded frame.
+
+    A tile is sliced out after the frame is padded by `overlap`, so it can be
+    at most H + overlap by W + overlap. A larger tile makes the slice come
+    back short, and the model then rejects it inside a skip connection --
+    "Expected size 1096 but got size 1216" -- which names neither the tile nor
+    the setting that caused it. For 1080p the ceiling is 1096 x 1936, and 1096
+    is also the tile that yields exactly one row of output.
+    """
+    if tile % 4:
+        raise ValueError(
+            f"tile must be a multiple of 4, got {tile}: the model holds state "
+            f"at half and quarter resolution, so H//2 and H//4 must be exact")
+    if tile > H + overlap or tile > W + overlap:
+        raise ValueError(
+            f"tile {tile} exceeds the padded frame {H + overlap}x{W + overlap}: "
+            f"a tile can be at most the frame plus one overlap in each axis")
+
+
 def _read_exact(stream, view):
     """Fill `view` from `stream`, or raise if the stream ends first."""
     got = 0
@@ -266,6 +286,8 @@ def build_bsvd_windowed_tiled(source_clip, *,
 
     H, W = source_clip.height, source_clip.width
     num_frames = source_clip.num_frames
+
+    check_tile_fits(H, W, tile, overlap)
 
     # The subprocess must produce the same clip this graph claims to denoise.
     # Checked once, before the engine build, because a mismatch would show up

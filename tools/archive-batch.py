@@ -26,7 +26,10 @@ from tools.archive_batch.transfer import (TransferError, TransferOutage,
                                           staged_path)
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RUN_DIR = os.path.join(REPO, ".archive-run")
+# A benchmark needs its own manifest, state and roster. Overriding the whole
+# directory keeps it away from the real run's files: hand-swapping the live
+# manifest under a running job is what destroyed it on 2026-08-11.
+RUN_DIR = os.environ.get("ARCHIVE_RUN_DIR") or os.path.join(REPO, ".archive-run")
 MANIFEST = os.path.join(RUN_DIR, "manifest-raw.tsv")
 STATE = os.path.join(RUN_DIR, "state.jsonl")
 ROSTER = os.path.join(RUN_DIR, "denoisers.toml")

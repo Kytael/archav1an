@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
-from bsvd_windowed import (plan_window, reflect_idx, tile_origins,
-                           window_read_plan)
+from bsvd_windowed import (check_tile_fits, plan_window, reflect_idx,
+                           tile_origins, window_read_plan)
 
 SHIFT = 16          # future frames the model reads
 PAST = 16           # SKIP_LENS [8, 8, 4] over two cascaded DenBlocks
@@ -32,6 +32,19 @@ def test_tile_origins_never_run_past_the_frame():
     for size in (1080, 1920, 720, 577):
         for start in tile_origins(size, 576, 16):
             assert 0 <= start <= size
+
+
+def test_the_largest_tile_1080p_allows_is_the_one_that_fits_in_one_row():
+    """1096 is both the ceiling and the ideal: 1096 - 16 = 1080 exactly."""
+    check_tile_fits(1080, 1920, 1096, 16)
+    with pytest.raises(ValueError, match="exceeds the padded frame"):
+        check_tile_fits(1080, 1920, 1216, 16)
+
+
+def test_a_tile_must_be_a_multiple_of_four():
+    check_tile_fits(1080, 1920, 576, 16)
+    with pytest.raises(ValueError, match="multiple of 4"):
+        check_tile_fits(1080, 1920, 1094, 16)
 
 
 def test_reflect_has_no_edge_repeat():

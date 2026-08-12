@@ -72,3 +72,4 @@ Thumbs.db
 tools/optsig_pref/features.csv
 .archive-run/
 Temp/_stage/
+.archive-bench/
