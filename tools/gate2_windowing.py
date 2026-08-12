@@ -94,7 +94,8 @@ def main():
 
     import numpy as np
 
-    from bsvd_windowed import build_bsvd_windowed_tiled, parse_tile_arg
+    from bsvd_windowed import (build_bsvd_windowed_tiled, parse_tile_arg,
+                               plan_tiling, tile_origins)
 
     tile = parse_tile_arg(args.tile)
 
@@ -107,11 +108,38 @@ def main():
                   vspipe=args.vspipe)
 
     n = src.num_frames
-    print(f"[gate2] {n} frames, tile {tile}, margin {args.margin}, "
-          f"window {args.window} vs whole-clip", flush=True)
+    # Report the geometry actually used, not the request: "auto" alone would
+    # hide a change in plan_tiling from every log this gate ever wrote.
+    th, tw = (plan_tiling(src.height, src.width, args.overlap)
+              if tile == "auto" else
+              (tile, tile) if isinstance(tile, int) else tile)
+    grid = (len(tile_origins(src.height, th, args.overlap)),
+            len(tile_origins(src.width, tw, args.overlap)))
+    sweep = grid[0] * grid[1] * th * tw / 1e6
+    print(f"[gate2] {n} frames, tile {args.tile} -> {th}x{tw}, grid "
+          f"{grid[0]}x{grid[1]}, sweep {sweep:.3f} Mpx "
+          f"({sweep / (src.width * src.height / 1e6):.2f}x the frame), "
+          f"margin {args.margin}, window {args.window} vs whole-clip", flush=True)
 
     print("[gate2] rendering whole-clip (window >= n)...", flush=True)
-    whole = render(build_bsvd_windowed_tiled(src, window=n + 1, **common))
+    clip = build_bsvd_windowed_tiled(src, window=n + 1, **common)
+    whole = render(clip)
+
+    # Drop the first engine before building the second. This gate is the only
+    # thing that ever wants two streamers at once, and at 1096x976 they need
+    # about 4.8 GB each, which does not fit the 2070S's 7.61 GiB usable. The
+    # state tensors are torch allocations, so releasing the clip and emptying
+    # the cache gives them back.
+    import gc
+
+    import torch
+    del clip
+    gc.collect()
+    torch.cuda.empty_cache()
+    print(f"[gate2] released the first engine, "
+          f"{torch.cuda.memory_allocated() / 2**30:.2f} GiB still allocated",
+          flush=True)
+
     print("[gate2] rendering windowed...", flush=True)
     win = render(build_bsvd_windowed_tiled(src, window=args.window, **common))
 

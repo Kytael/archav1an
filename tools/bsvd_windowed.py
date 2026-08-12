@@ -312,12 +312,13 @@ def build_bsvd_windowed_tiled(source_clip, *,
     `source_clip` before the engine is built. `source_clip` itself is used for
     frame properties and length, never for pixels.
 
-    Two buffers are resident: the window's decoded source, (window + 2*margin)
-    frames, and its output, `window` frames. Both are held in the engine's
-    dtype, lossless against what the model produced. At 1080p fp16 that is
-    12.4 MB a frame, so the default window of 750 costs about 19 GB and is
-    constant in clip length. Lower `window` to trade throughput for memory; the
-    fixed cost of the 2 * margin discarded frames grows as the window shrinks.
+    Three buffers are resident: the window's decoded source, (window +
+    2*margin) frames, the next window's source being read ahead, and this
+    window's output, `window` frames. All are held in the engine's dtype,
+    lossless against what the model produced. At 1080p fp16 that is 12.4 MB a
+    frame, so the default window of 750 costs about 30 GB and is constant in
+    clip length. Lower `window` to trade throughput for memory; the fixed cost
+    of the 2 * margin discarded frames grows as the window shrinks.
 
     Frames are served in any order within the resident window. Asking for a
     frame outside it builds that window, which is the full tile sweep, so
@@ -397,14 +398,64 @@ def build_bsvd_windowed_tiled(source_clip, *,
     # window rebuild -- a whole-clip run never rebuilds, so it never showed.
     lock = threading.Lock()
 
+    # Reading a window's source leaves the GPU idle: measured on the 2070S at
+    # about 43 s of every 231 s window, 18% of the lane. It needs no GPU and
+    # no VapourSynth worker, only a pipe and numpy copies, both of which drop
+    # the GIL -- so the next window's source is read on its own thread while
+    # this window's tiles sweep. Costs one extra source buffer.
+    ahead = {'a': None, 'src': None, 'thread': None, 'error': None}
+
+    def _read_source(a):
+        # Decoded once for the whole window, not once per tile: fetching inside
+        # the tile loop cost a full ffms2 decode plus bicubic-to-RGBS per tile
+        # and left the GPU at 0% while one core did colour conversion.
+        _, feed_start, feed_end = plan_window(a, num_frames, window, margin)
+        src = np.empty((feed_end - feed_start, 3, H, W), dtype=buf_dtype)
+        reader.read_into(src, feed_start, feed_end)
+        return src
+
+    def _drop_prefetch():
+        if ahead['thread'] is not None:
+            ahead['thread'].join()
+        ahead.update(a=None, src=None, thread=None, error=None)
+
+    def _start_prefetch(a):
+        if a is None or a >= num_frames:
+            return
+
+        def work():
+            try:
+                ahead['src'] = _read_source(a)
+            except Exception as exc:
+                # Surfaced when this window is claimed, not here, so a read
+                # failure still reaches the caller rather than vanishing.
+                ahead['error'] = exc
+
+        ahead.update(a=a, src=None, error=None)
+        ahead['thread'] = threading.Thread(target=work, daemon=True)
+        ahead['thread'].start()
+
+    def _take_source(a):
+        """The window's source, from the read-ahead when it is the right one."""
+        if ahead['thread'] is not None and ahead['a'] == a:
+            ahead['thread'].join()
+            src, err = ahead['src'], ahead['error']
+            ahead.update(a=None, src=None, thread=None, error=None)
+            if err is not None:
+                raise err
+            return src
+        # A seek landed outside the window that was being read ahead, so that
+        # work is wasted; read what was actually asked for.
+        _drop_prefetch()
+        return _read_source(a)
+
     def _build_window(a):
         b, feed_start, feed_end = plan_window(a, num_frames, window, margin)
         n_feed = feed_end - feed_start
-        # Decoded once for the whole window, not once per tile: fetching inside
-        # the tile loop cost twelve full ffms2 decodes plus bicubic-to-RGBS per
-        # window and left the GPU at 0% while one core did colour conversion.
-        src = np.empty((n_feed, 3, H, W), dtype=buf_dtype)
-        reader.read_into(src, feed_start, feed_end)
+        src = _take_source(a)
+        # The next window's source needs neither the GPU nor this thread, so
+        # start it before the sweep rather than after it.
+        _start_prefetch(b)
         buf = np.zeros((b - a, 3, H, W), dtype=buf_dtype)
         pad = (half, half, half, half)
         for (y, x) in tiles:
