@@ -117,6 +117,8 @@ def build_bsvd_windowed_tiled(source_clip, *,
     if window < 1:
         raise ValueError(f"window must be at least 1 frame, got {window}")
 
+    import threading
+
     import numpy as np
     import torch
     import vapoursynth as vs
@@ -142,6 +144,13 @@ def build_bsvd_windowed_tiled(source_clip, *,
              for x in tile_origins(W, tile, overlap)]
 
     state = {'start': None, 'buf': None}
+    # VapourSynth prefetches, so several selector calls run at once. The
+    # streamer is one ONNX session with one set of state tensors: a second
+    # thread entering _build_window calls reset() underneath the first and the
+    # run deadlocks. bsvd_vs_filter locks its selector for the same reason.
+    # Observed as GPU 0%, CPU 0.9%, 138 parked threads, exactly at the first
+    # window rebuild -- a whole-clip run never rebuilds, so it never showed.
+    lock = threading.Lock()
 
     def _read_window_source(feed_start, n_feed):
         """Decode the window's source frames once, into CPU RAM.
@@ -189,10 +198,11 @@ def build_bsvd_windowed_tiled(source_clip, *,
         state['start'], state['buf'] = a, buf
 
     def selector(n, f):
-        start = state['start']
-        if start is None or not (start <= n < start + state['buf'].shape[0]):
-            _build_window((n // window) * window)
-        arr = state['buf'][n - state['start']]
+        with lock:
+            start = state['start']
+            if start is None or not (start <= n < start + state['buf'].shape[0]):
+                _build_window((n // window) * window)
+            arr = state['buf'][n - state['start']].copy()
         fout = f.copy()
         for c in range(3):
             np.asarray(fout[c])[:] = arr[c]
