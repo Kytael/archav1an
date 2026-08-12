@@ -67,6 +67,23 @@ install_system_deps_arch() {
         pacman -S --needed --noconfirm "${_missing[@]}" || { log_error "Failed to install system dependencies via pacman"; return 1; }
     fi
 
+    # AUR helper. denoiser.sh installs three AUR packages (tensorrt,
+    # vapoursynth-plugin-removegrain-git, vapoursynth-plugin-ctmf-git) with
+    # `paru` and nothing used to check that it exists, so a host without it
+    # failed inside that component with a misleading error. pacman cannot
+    # install these: they are AUR-only, which is the whole reason a helper is
+    # needed. paru itself IS a repo package on CachyOS; on plain Arch it is not,
+    # and bootstrapping it means a makepkg build we do not do unattended.
+    if ! command -v paru &>/dev/null; then
+        if pacman -Si paru &>/dev/null && [ "$EUID" -eq 0 ]; then
+            log_info "Installing AUR helper paru..."
+            pacman -S --needed --noconfirm paru \
+                || log_warn "Failed to install paru — AUR packages in the denoiser component will be skipped"
+        else
+            log_warn "AUR helper 'paru' not found and not in the repos. Install it before setup.sh --install denoiser, or that component skips its AUR packages: git clone https://aur.archlinux.org/paru.git && cd paru && makepkg -si"
+        fi
+    fi
+
     log_success "Build tools and system libraries installed."
 }
 

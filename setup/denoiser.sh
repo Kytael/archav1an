@@ -76,67 +76,89 @@ install_denoiser() {
         fi
 
         # 2b. TensorRT (AUR — cannot build as root, use SUDO_USER)
+        #
+        # This is the SYSTEM TensorRT (currently 11.x), and ONLY the vstrt /
+        # SCUNet path in 2d needs it, at compile time, for its headers. The BSVD
+        # lane does not use it at all — section 9 installs its own TensorRT 10
+        # runtime into the venv, because the ORT provider hard-links .so.10.
+        # So a failure here must NOT abort the component: it used to `return 1`
+        # and take section 9 down with it, which left every host that cannot
+        # build the AUR package with no BSVD TRT EP for no reason. Failure now
+        # skips 2d and nothing else.
+        local _have_sys_trt=1
         if ! pacman -Qi tensorrt &>/dev/null; then
-            if [ -z "$_aur_user" ] || [ "$_aur_user" = "root" ]; then
-                log_error "Cannot install AUR package 'tensorrt' as root. Set SUDO_USER or run: sudo -u <user> paru -S tensorrt"
-                return 1
-            fi
-            log_info "Installing tensorrt from AUR as $_aur_user (this may take a while)..."
-            # Pass CUDA toolkit path so cmake can find nvcc (WSL2: nvcc lives at /opt/cuda/bin)
             local _cuda_bin=""
             for _d in /opt/cuda/bin /usr/local/cuda/bin; do
                 [ -x "$_d/nvcc" ] && { _cuda_bin="$_d"; break; }
             done
-            sudo -u "$_aur_user" env \
-                PATH="${_cuda_bin:+$_cuda_bin:}${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}" \
-                CUDAToolkit_ROOT="${_cuda_bin%/bin}" \
-                paru -S --needed --noconfirm tensorrt || { log_error "Failed to install tensorrt from AUR"; return 1; }
+            if [ -z "$_aur_user" ] || [ "$_aur_user" = "root" ]; then
+                log_warn "Cannot build AUR package 'tensorrt' as root. Set SUDO_USER or run: sudo -u <user> paru -S tensorrt"
+                _have_sys_trt=0
+            elif ! command -v paru &>/dev/null; then
+                # system_deps.sh installs paru; this only catches a host that
+                # skipped that component or lost the package since.
+                log_warn "AUR helper 'paru' not found — cannot install the system tensorrt. Run: setup.sh --install system_deps"
+                _have_sys_trt=0
+            else
+                log_info "Installing tensorrt from AUR as $_aur_user (this may take a while)..."
+                # Pass CUDA toolkit path so cmake can find nvcc (WSL2: nvcc lives at /opt/cuda/bin)
+                sudo -u "$_aur_user" env \
+                    PATH="${_cuda_bin:+$_cuda_bin:}${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}" \
+                    CUDAToolkit_ROOT="${_cuda_bin%/bin}" \
+                    paru -S --needed --noconfirm tensorrt \
+                    || { log_warn "Failed to install tensorrt from AUR"; _have_sys_trt=0; }
+            fi
         else
             log_info "tensorrt already installed."
         fi
+        [ "$_have_sys_trt" -eq 1 ] \
+            || log_warn "No system TensorRT — skipping the vstrt/SCUNet plugin build. The BSVD lane is unaffected and is wired below."
 
         # 2c. PyTorch CUDA
         log_info "Installing PyTorch CUDA (cu128) + vsscunet + havsfunc into venv..."
         "$VENV_DIR/bin/pip" install torch torchvision --index-url https://download.pytorch.org/whl/cu128 || { log_error "Failed to install PyTorch CUDA"; return 1; }
 
-        # 2d. Build libvstrt.so from vs-mlrt source
-        log_info "Building libvstrt.so from vs-mlrt source..."
-        local ORIG_DIR="$(pwd)"
-        mkdir -p build_tmp && cd build_tmp || return 1
+        # 2d. Build libvstrt.so from vs-mlrt source. Needs the system TensorRT
+        # headers from 2b, so it is skipped when that package is absent.
+        if [ "$_have_sys_trt" -eq 1 ]; then
+            log_info "Building libvstrt.so from vs-mlrt source..."
+            local ORIG_DIR="$(pwd)"
+            mkdir -p build_tmp && cd build_tmp || return 1
 
-        clone_src denoiser vs-mlrt vs-mlrt || { cd "$ORIG_DIR"; return 1; }
+            clone_src denoiser vs-mlrt vs-mlrt || { cd "$ORIG_DIR"; return 1; }
 
-        cd vs-mlrt/vstrt
-        mkdir -p build && cd build
-        cmake .. \
-            -DCMAKE_BUILD_TYPE=Release \
-            -G Ninja \
-            -DVAPOURSYNTH_INCLUDE_DIRECTORY="$VS_INCLUDE_DIR" \
-            -DCMAKE_CXX_FLAGS="-ffast-math" \
-            || { log_error "vstrt cmake failed"; cd "$ORIG_DIR"; return 1; }
-        ninja || { log_error "vstrt build failed"; cd "$ORIG_DIR"; return 1; }
+            cd vs-mlrt/vstrt
+            mkdir -p build && cd build
+            cmake .. \
+                -DCMAKE_BUILD_TYPE=Release \
+                -G Ninja \
+                -DVAPOURSYNTH_INCLUDE_DIRECTORY="$VS_INCLUDE_DIR" \
+                -DCMAKE_CXX_FLAGS="-ffast-math" \
+                || { log_error "vstrt cmake failed"; cd "$ORIG_DIR"; return 1; }
+            ninja || { log_error "vstrt build failed"; cd "$ORIG_DIR"; return 1; }
 
-        # Output is libvstrt.so (standard TRT) or libvstrt_rtx.so (TRT RTX)
-        local _vstrt_lib=""
-        if [ -f "libvstrt_rtx.so" ]; then
-            _vstrt_lib="libvstrt_rtx.so"
-        elif [ -f "libvstrt.so" ]; then
-            _vstrt_lib="libvstrt.so"
-        else
-            log_error "vstrt build succeeded but no libvstrt*.so found"
-            cd "$ORIG_DIR"; return 1
-        fi
-        cp "$_vstrt_lib" "$VS_PLUGIN_PATH/libvstrt.so"
-        log_success "libvstrt.so installed to $VS_PLUGIN_PATH/"
-        cd "$ORIG_DIR"
+            # Output is libvstrt.so (standard TRT) or libvstrt_rtx.so (TRT RTX)
+            local _vstrt_lib=""
+            if [ -f "libvstrt_rtx.so" ]; then
+                _vstrt_lib="libvstrt_rtx.so"
+            elif [ -f "libvstrt.so" ]; then
+                _vstrt_lib="libvstrt.so"
+            else
+                log_error "vstrt build succeeded but no libvstrt*.so found"
+                cd "$ORIG_DIR"; return 1
+            fi
+            cp "$_vstrt_lib" "$VS_PLUGIN_PATH/libvstrt.so"
+            log_success "libvstrt.so installed to $VS_PLUGIN_PATH/"
+            cd "$ORIG_DIR"
 
-        # 2e. Symlink trtexec for vsmlrt.py
-        mkdir -p "$VS_PLUGIN_PATH/vsmlrt-cuda"
-        if command -v trtexec &>/dev/null; then
-            ln -sf "$(command -v trtexec)" "$VS_PLUGIN_PATH/vsmlrt-cuda/trtexec"
-            log_info "Symlinked trtexec to $VS_PLUGIN_PATH/vsmlrt-cuda/"
-        else
-            log_warn "trtexec not found in PATH — vsmlrt TRT engine caching may not work"
+            # 2e. Symlink trtexec for vsmlrt.py
+            mkdir -p "$VS_PLUGIN_PATH/vsmlrt-cuda"
+            if command -v trtexec &>/dev/null; then
+                ln -sf "$(command -v trtexec)" "$VS_PLUGIN_PATH/vsmlrt-cuda/trtexec"
+                log_info "Symlinked trtexec to $VS_PLUGIN_PATH/vsmlrt-cuda/"
+            else
+                log_warn "trtexec not found in PATH — vsmlrt TRT engine caching may not work"
+            fi
         fi
 
     fi
@@ -536,13 +558,22 @@ for sigma in [15, 25, 50]:
         if "$VENV_DIR/bin/pip" install -U 'tensorrt-cu12-libs<11'; then
             _trt_libdir="$("$VENV_DIR/bin/python" -c "import tensorrt_libs,os;print(os.path.dirname(tensorrt_libs.__file__))" 2>/dev/null)"
         fi
+        # The ORT provider needs libcudnn.so.9 as well as libnvinfer.so.10, and
+        # registering only the tensorrt dir leaves the session dying on cudnn.
+        # Arch hosts get it from pacman `cudnn` in /usr/lib, but that package is
+        # not universal, and torch already pulls a copy into the venv. Register
+        # both dirs so the EP does not depend on which of the two is present.
+        local _cudnn_libdir
+        _cudnn_libdir="$(echo "$VENV_DIR"/lib/python3.*/site-packages/nvidia/cudnn/lib)"
+        [ -f "$_cudnn_libdir/libcudnn.so.9" ] || _cudnn_libdir=""
         if [ -n "$_trt_libdir" ] && [ -f "$_trt_libdir/libnvinfer.so.10" ]; then
             if { [ "$EUID" -eq 0 ] || [ -w /etc/ld.so.conf.d ]; } \
-               && echo "$_trt_libdir" > /etc/ld.so.conf.d/archav1an-tensorrt.conf 2>/dev/null \
+               && printf '%s\n' "$_trt_libdir" ${_cudnn_libdir:+"$_cudnn_libdir"} \
+                    > /etc/ld.so.conf.d/archav1an-tensorrt.conf 2>/dev/null \
                && ldconfig 2>/dev/null; then
-                log_success "BSVD TRT EP wired: libnvinfer.so.10 installed + registered on the loader path ($_trt_libdir)."
+                log_success "BSVD TRT EP wired: libnvinfer.so.10 installed + registered on the loader path ($_trt_libdir${_cudnn_libdir:+, $_cudnn_libdir})."
             else
-                log_warn "BSVD TRT EP: libnvinfer.so.10 installed at $_trt_libdir but not registered globally (need root). Run --denoise-bsvd with:  LD_LIBRARY_PATH=$_trt_libdir:\$LD_LIBRARY_PATH"
+                log_warn "BSVD TRT EP: libnvinfer.so.10 installed at $_trt_libdir but not registered globally (need root). Run --denoise-bsvd with:  LD_LIBRARY_PATH=$_trt_libdir${_cudnn_libdir:+:$_cudnn_libdir}:\$LD_LIBRARY_PATH"
             fi
         else
             log_warn "BSVD TRT EP: could not install libnvinfer.so.10 (tensorrt-cu12-libs<11). --denoise-bsvd will fall back to the slower CUDA EP."
