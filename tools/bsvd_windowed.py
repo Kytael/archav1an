@@ -231,6 +231,9 @@ class VspipeWindowSource:
         self.width, self.height, self.num_frames = width, height, num_frames
         # Same order svtav1-dispatch uses (:956): the child must be the build
         # the parent chose, or it decodes with a different VapourSynth.
+        # Set by info(); RGBS until proven otherwise, and info() is called
+        # before the first read.
+        self.raw_dtype = None
         self.vspipe = vspipe or os.environ.get("VSPIPE") or shutil.which("vspipe")
         if not self.vspipe:
             raise RuntimeError(
@@ -239,7 +242,14 @@ class VspipeWindowSource:
             raise RuntimeError(f"window source script not found: {self.script}")
 
     def info(self):
-        """Width, height and frame count that the script actually produces."""
+        """Width, height and frame count that the script actually produces.
+
+        Also records the pipe's sample format, so the reader never assumes it.
+        Guessing wrong does not raise -- it reinterprets the bytes and hands
+        the model a garbled frame -- so it is read from the script itself.
+        """
+        import numpy as np
+
         out = subprocess.run([self.vspipe, "-i", self.script, "-"],
                              capture_output=True, text=True)
         if out.returncode:
@@ -250,19 +260,29 @@ class VspipeWindowSource:
             key, _, val = line.partition(":")
             fields[key.strip()] = val.strip()
         try:
-            return (int(fields["Width"]), int(fields["Height"]), int(fields["Frames"]))
+            geom = (int(fields["Width"]), int(fields["Height"]),
+                    int(fields["Frames"]))
+            sample, bits = fields["Sample Type"], int(fields["Bits"])
         except (KeyError, ValueError):
             raise RuntimeError(f"could not read geometry from vspipe --info:\n{out.stdout}")
+        if sample != "Float" or bits not in (16, 32):
+            raise RuntimeError(
+                f"window source must be float RGB, got {sample} {bits}-bit "
+                f"({fields.get('Format Name')}) from {self.script}")
+        self.raw_dtype = np.float16 if bits == 16 else np.float32
+        return geom
 
     def read_into(self, dest, feed_start, feed_end):
         """Fill dest[k] with source frame reflect_idx(feed_start + k)."""
         import numpy as np
 
+        if self.raw_dtype is None:
+            self.info()
         real_start, real_end, slots = window_read_plan(
             feed_start, feed_end, self.num_frames)
         cmd = [self.vspipe, "-s", str(real_start), "-e", str(real_end - 1),
                self.script, "-"]
-        raw = np.empty((3, self.height, self.width), dtype=np.float32)
+        raw = np.empty((3, self.height, self.width), dtype=self.raw_dtype)
         view = memoryview(raw.reshape(-1).view(np.uint8))
         # stderr goes to a file, not a pipe: nothing drains a pipe while this
         # loop is reading stdout, so a chatty child would block on a full
@@ -312,13 +332,16 @@ def build_bsvd_windowed_tiled(source_clip, *,
     `source_clip` before the engine is built. `source_clip` itself is used for
     frame properties and length, never for pixels.
 
-    Three buffers are resident: the window's decoded source, (window +
-    2*margin) frames, the next window's source being read ahead, and this
-    window's output, `window` frames. All are held in the engine's dtype,
+    Four buffers are resident, because both the source read and the sweep run
+    a window ahead: the source being swept and the next one being read, each
+    (window + 2*margin) frames, plus the output being served and the next one
+    being built, each `window` frames. All are held in the engine's dtype,
     lossless against what the model produced. At 1080p fp16 that is 12.4 MB a
-    frame, so the default window of 750 costs about 30 GB and is constant in
-    clip length. Lower `window` to trade throughput for memory; the fixed cost
-    of the 2 * margin discarded frames grows as the window shrinks.
+    frame, so the default window of 750 costs about 39 GB and is constant in
+    clip length. It scales linearly with `window`, so raising it is what makes
+    this path expensive, not long clips. Lower `window` to trade throughput
+    for memory; the fixed cost of the 2 * margin discarded frames grows as the
+    window shrinks.
 
     Frames are served in any order within the resident window. Asking for a
     frame outside it builds that window, which is the full tile sweep, so
@@ -383,6 +406,15 @@ def build_bsvd_windowed_tiled(source_clip, *,
     torch_dtype = streamer.torch_dtype
     device = streamer.device
     buf_dtype = np.float16 if torch_dtype == torch.float16 else np.float32
+    # The source script sends fp16 because the engine is normally fp16 and the
+    # window is held in that dtype anyway. An fp32 engine fed from an fp16
+    # pipe would be quietly denoising rounded input, so refuse rather than
+    # lose precision silently.
+    if np.dtype(buf_dtype).itemsize > np.dtype(reader.raw_dtype).itemsize:
+        raise ValueError(
+            f"engine works in {np.dtype(buf_dtype).name} but {source_script} "
+            f"sends {np.dtype(reader.raw_dtype).name}: the source would be "
+            f"rounded below the engine's precision")
 
     half = overlap // 2
     out_h, out_w = tile_h - overlap, tile_w - overlap
@@ -404,6 +436,11 @@ def build_bsvd_windowed_tiled(source_clip, *,
     # the GIL -- so the next window's source is read on its own thread while
     # this window's tiles sweep. Costs one extra source buffer.
     ahead = {'a': None, 'src': None, 'thread': None, 'error': None}
+    # The next window's finished output, swept while the encoder drains this
+    # one. Only one sweep runs at a time: the streamer is a single session
+    # with one set of state tensors, and a second reset() underneath it would
+    # corrupt the run.
+    built = {'a': None, 'buf': None, 'thread': None, 'error': None}
 
     def _read_source(a):
         # Decoded once for the whole window, not once per tile: fetching inside
@@ -449,7 +486,7 @@ def build_bsvd_windowed_tiled(source_clip, *,
         _drop_prefetch()
         return _read_source(a)
 
-    def _build_window(a):
+    def _sweep(a):
         b, feed_start, feed_end = plan_window(a, num_frames, window, margin)
         n_feed = feed_end - feed_start
         src = _take_source(a)
@@ -480,13 +517,55 @@ def build_bsvd_windowed_tiled(source_clip, *,
                     buf[oi - a, :, y:ey, x:ex] = crop.cpu().numpy().astype(
                         buf_dtype, copy=False)
         del src
+        return buf
+
+    def _start_build(a):
+        """Sweep window `a` in the background, so the GPU works while the
+        encoder drains the window already finished.
+
+        Without this the next sweep cannot start until the selector has handed
+        the encoder the last frame of the current window, and the encoder
+        applies back pressure long before that. Measured on the 2070S as 23 s
+        of GPU idle per 165 s window, 14% of the lane, with the encoder's CPU
+        climbing through every gap.
+        """
+        if a is None or a >= num_frames:
+            return
+
+        def work():
+            try:
+                built['buf'] = _sweep(a)
+            except Exception as exc:
+                built['error'] = exc
+
+        built.update(a=a, buf=None, error=None)
+        built['thread'] = threading.Thread(target=work, daemon=True)
+        built['thread'].start()
+
+    def _make_current(a):
+        """Publish window `a`, then queue the one after it."""
+        if built['thread'] is not None and built['a'] == a:
+            built['thread'].join()
+            buf, err = built['buf'], built['error']
+            built.update(a=None, buf=None, thread=None, error=None)
+            if err is not None:
+                raise err
+        else:
+            # A seek landed outside the window being built, so that sweep is
+            # wasted. Wait for it anyway: it owns the streamer, and a second
+            # sweep would call reset() underneath it.
+            if built['thread'] is not None:
+                built['thread'].join()
+                built.update(a=None, buf=None, thread=None, error=None)
+            buf = _sweep(a)
         state['start'], state['buf'] = a, buf
+        _start_build(a + window)
 
     def selector(n, f):
         with lock:
             start = state['start']
             if start is None or not (start <= n < start + state['buf'].shape[0]):
-                _build_window((n // window) * window)
+                _make_current((n // window) * window)
             arr = state['buf'][n - state['start']].copy()
         fout = f.copy()
         for c in range(3):

@@ -115,9 +115,17 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
             # Same _head, so the subprocess decodes the same clip by
             # construction. It only ever streams forward, so it needs a small
             # cache, not the warmup-sized one the denoise graph needs.
+            #
+            # Emitted as RGBH, not RGBS: the filter holds the window in the
+            # engine's fp16 anyway, so sending fp32 doubles the pipe traffic
+            # (24.9 MB a frame against 12.4) and costs a cast on arrival. The
+            # RGBS line above is unchanged, so the pixels are the same ones
+            # the denoise graph computes; this only rounds them once, where
+            # the reader used to.
             source_vpy_body = _head + (
                 'core.max_cache_size = 512\n'
-                '_rgb.set_output(0)\n'
+                '_rgb16 = core.resize.Point(_rgb, format=vs.RGBH)\n'
+                '_rgb16.set_output(0)\n'
             )
         else:
             denoise_lines = _head + (

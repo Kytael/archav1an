@@ -213,15 +213,20 @@ SYNTH = '''\
 import vapoursynth as vs
 core = vs.core
 clip = core.std.Splice([
-    core.std.BlankClip(width=8, height=4, format=vs.RGBS, length=1,
+    core.std.BlankClip(width=8, height=4, format=vs.{fmt}, length=1,
                        color=[i / 100, i / 100 + 0.01, i / 100 + 0.02])
     for i in range({n})])
 clip.set_output(0)
 '''
 
 
+def synth(n, fmt="RGBS"):
+    return SYNTH.format(n=n, fmt=fmt)
+
+
 @pytest.mark.skipif(not VSPIPE, reason="vspipe not installed")
-def test_the_subprocess_reader_matches_get_frame(tmp_path):
+@pytest.mark.parametrize("fmt", ["RGBS", "RGBH"])
+def test_the_subprocess_reader_matches_get_frame(tmp_path, fmt):
     """The whole point of the reader: identical pixels, decoded out of process.
 
     This is what catches the plane order. vspipe writes RGB planes as GBR
@@ -234,7 +239,7 @@ def test_the_subprocess_reader_matches_get_frame(tmp_path):
 
     n = 40
     script = tmp_path / "synth.vpy"
-    script.write_text(SYNTH.format(n=n))
+    script.write_text(synth(n, fmt))
     ns = {}
     exec(compile(script.read_text(), str(script), "exec"), ns)
     clip = ns["clip"]
@@ -242,6 +247,9 @@ def test_the_subprocess_reader_matches_get_frame(tmp_path):
     reader = VspipeWindowSource(str(script), clip.width, clip.height,
                                 clip.num_frames, vspipe=VSPIPE)
     assert reader.info() == (clip.width, clip.height, clip.num_frames)
+    # The pipe's dtype is read from the script, never assumed: guessing wrong
+    # reinterprets the bytes into a garbled frame instead of raising.
+    assert reader.raw_dtype == (np.float16 if fmt == "RGBH" else np.float32)
 
     # Spans both ends of the clip, so the reflected slots are checked too.
     feed_start, feed_end = -5, n + 5
@@ -256,6 +264,17 @@ def test_the_subprocess_reader_matches_get_frame(tmp_path):
                 f"slot {k} plane {c} differs from get_frame"
 
 
+@pytest.mark.skipif(not VSPIPE, reason="vspipe not installed")
+def test_the_reader_refuses_a_source_that_is_not_float_rgb(tmp_path):
+    """An integer source would be read as float and come out as noise."""
+    from bsvd_windowed import VspipeWindowSource
+    script = tmp_path / "synth.vpy"
+    script.write_text(synth(4, "YUV420P8"))
+    reader = VspipeWindowSource(str(script), 8, 4, 4, vspipe=VSPIPE)
+    with pytest.raises(RuntimeError, match="must be float RGB"):
+        reader.info()
+
+
 def test_the_reader_resolves_vspipe_the_way_dispatch_does(tmp_path, monkeypatch):
     """Parent and child must be the same VapourSynth build.
 
@@ -265,7 +284,7 @@ def test_the_reader_resolves_vspipe_the_way_dispatch_does(tmp_path, monkeypatch)
     """
     from bsvd_windowed import VspipeWindowSource
     script = tmp_path / "synth.vpy"
-    script.write_text(SYNTH.format(n=1))
+    script.write_text(synth(1))
 
     monkeypatch.setenv("VSPIPE", "/pinned/vspipe")
     assert VspipeWindowSource(str(script), 8, 4, 1).vspipe == "/pinned/vspipe"
@@ -286,7 +305,7 @@ def test_the_reader_reports_a_geometry_mismatch(tmp_path):
     from bsvd_windowed import VspipeWindowSource
 
     script = tmp_path / "synth.vpy"
-    script.write_text(SYNTH.format(n=10))
+    script.write_text(synth(10))
     reader = VspipeWindowSource(str(script), 8, 4, 10, vspipe=VSPIPE)
     assert reader.info() == (8, 4, 10)
 
