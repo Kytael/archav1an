@@ -40,8 +40,6 @@ Blending was rejected regardless: it softens detail and breathes at the window
 period, and it would hide a seam rather than remove one. M defaults to 32,
 double the inferred requirement.
 """
-from collections import OrderedDict
-
 # torch, numpy, vapoursynth and the streamer are imported inside the builder,
 # not here. The geometry below is plain arithmetic and decides whether output is
 # exact, so it must stay unit-testable on a host with no GPU stack.
@@ -90,16 +88,17 @@ def build_bsvd_windowed_tiled(source_clip, *,
                               variant: str = 'bsvd-64',
                               shift_num: int = 16,
                               tile: int = 576, overlap: int = 16,
-                              window: int = 1500, margin: int = 32):
+                              window: int = 750, margin: int = 32):
     """Wrap tile-sequential windowed BSVD as a VS clip via ModifyFrame.
 
     `source_clip` must be RGBS. Output has the same format, size and length.
 
-    One window is resident at a time, held in the engine's dtype so it is
-    lossless against what the model produced. At 1080p fp16 that is 12.4 MB a
-    frame: about 18.6 GB at the default window of 1500, and constant in clip
-    length. Lower `window` to trade throughput for memory; the per-window cost
-    of the 2 * margin discarded frames grows as the window shrinks.
+    Two buffers are resident: the window's decoded source, (window + 2*margin)
+    frames, and its output, `window` frames. Both are held in the engine's
+    dtype, lossless against what the model produced. At 1080p fp16 that is
+    12.4 MB a frame, so the default window of 750 costs about 19 GB and is
+    constant in clip length. Lower `window` to trade throughput for memory; the
+    fixed cost of the 2 * margin discarded frames grows as the window shrinks.
 
     Frames are served in any order within the resident window. Asking for a
     frame outside it builds that window, which is the full tile sweep, so
@@ -122,7 +121,7 @@ def build_bsvd_windowed_tiled(source_clip, *,
     import torch
     import vapoursynth as vs
 
-    from bsvd_vs_filter import BSVDOrtStreamingV2, _vsframe_rgbs_to_torch
+    from bsvd_vs_filter import BSVDOrtStreamingV2
 
     if source_clip.format.id != int(vs.RGBS):
         raise ValueError(f"source_clip must be RGBS, got {source_clip.format.name}")
@@ -142,50 +141,51 @@ def build_bsvd_windowed_tiled(source_clip, *,
     tiles = [(y, x) for y in tile_origins(H, tile, overlap)
              for x in tile_origins(W, tile, overlap)]
 
-    # Source frames are fetched once per tile pass. A small LRU keeps the
-    # padded full frame across tiles at the same feed position from being
-    # decoded len(tiles) times over.
-    src_cache: 'OrderedDict[int, torch.Tensor]' = OrderedDict()
-    SRC_CACHE = 8
-
     state = {'start': None, 'buf': None}
 
-    def _padded_source(src_idx):
-        hit = src_cache.get(src_idx)
-        if hit is not None:
-            src_cache.move_to_end(src_idx)
-            return hit
-        frame = source_clip.get_frame(src_idx)
-        t = _vsframe_rgbs_to_torch(frame, device, torch_dtype)   # (1, 3, H, W)
-        padded = torch.nn.functional.pad(t, (half, half, half, half), mode='reflect')
-        src_cache[src_idx] = padded
-        src_cache.move_to_end(src_idx)
-        while len(src_cache) > SRC_CACHE:
-            src_cache.popitem(last=False)
-        return padded
+    def _read_window_source(feed_start, n_feed):
+        """Decode the window's source frames once, into CPU RAM.
+
+        Fetching inside the tile loop re-decoded the whole window for every
+        tile -- twelve full ffms2 decodes plus bicubic-to-RGBS at 1080p, all
+        synchronous and single threaded. Measured on the 2070S that left the
+        GPU at 0% while one core did colour conversion. Decoding once and
+        feeding every tile from RAM is what makes this GPU bound.
+        """
+        src = np.empty((n_feed, 3, H, W), dtype=buf_dtype)
+        for k in range(n_feed):
+            frame = source_clip.get_frame(reflect_idx(feed_start + k, num_frames))
+            for c in range(3):
+                src[k, c] = np.asarray(frame[c])
+        return src
 
     def _build_window(a):
         b, feed_start, feed_end = plan_window(a, num_frames, window, margin)
+        n_feed = feed_end - feed_start
+        src = _read_window_source(feed_start, n_feed)
         buf = np.zeros((b - a, 3, H, W), dtype=buf_dtype)
+        pad = (half, half, half, half)
         for (y, x) in tiles:
             streamer.reset()
-            src_cache.clear()
             ey, ex = min(y + out_h, H), min(x + out_w, W)
             ah, aw = ey - y, ex - x
-            # Feed shift_num past feed_end to flush the pipeline: the output for
+            # Feed shift_num past the end to flush the pipeline: the output for
             # a fed frame emerges shift_num steps later.
-            for j in range(feed_start, feed_end + shift_num):
-                if j < feed_end:
-                    padded = _padded_source(reflect_idx(j, num_frames))
+            for k in range(n_feed + shift_num):
+                if k < n_feed:
+                    t = torch.from_numpy(src[k]).to(
+                        device=device, dtype=torch_dtype).unsqueeze(0)
+                    padded = torch.nn.functional.pad(t, pad, mode='reflect')
                     tin = padded[:, :, y:y + tile, x:x + tile].contiguous()
                 else:
                     tin = torch.zeros(1, 3, tile, tile, device=device, dtype=torch_dtype)
                 out = streamer.step(tin, sigma)
-                oi = j - shift_num
+                oi = feed_start + k - shift_num
                 if a <= oi < b:
                     crop = out[0, :, half:half + ah, half:half + aw].clamp(0, 1)
                     buf[oi - a, :, y:ey, x:ex] = crop.cpu().numpy().astype(
                         buf_dtype, copy=False)
+        del src
         state['start'], state['buf'] = a, buf
 
     def selector(n, f):

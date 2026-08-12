@@ -40,8 +40,11 @@ def load_source(path, frames):
 
 
 def render(clip):
+    """Render to fp16. float32 cost 22 GB per clip at 900x1080p, and both
+    clips are held at once; the filter's own buffer is fp16 anyway, so this
+    loses nothing that the comparison could have seen."""
     import numpy as np
-    out = np.empty((clip.num_frames, 3, clip.height, clip.width), dtype=np.float32)
+    out = np.empty((clip.num_frames, 3, clip.height, clip.width), dtype=np.float16)
     for i, f in enumerate(clip.frames()):
         for c in range(3):
             out[i, c] = np.asarray(f[c])
@@ -81,7 +84,7 @@ def main():
     print("[gate2] rendering windowed...", flush=True)
     win = render(build_bsvd_windowed_tiled(src, window=args.window, **common))
 
-    diff = np.abs(whole - win)
+    diff = np.abs(whole.astype(np.float32) - win.astype(np.float32))
     per_frame = diff.reshape(n, -1).max(axis=1)
     identical = int((per_frame == 0).sum())
     print(f"\n[gate2] bit-identical frames: {identical}/{n}")
