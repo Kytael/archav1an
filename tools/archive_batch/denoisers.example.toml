@@ -36,16 +36,18 @@ tiling  = "none"
 enabled = true
 
 # --- lane 3: encoder-host's RTX 2070 SUPER --------------------------------------
-# DISABLED AND NOT YET USABLE. 8 GB cannot hold the ~7.4 GB full-frame state,
+# Usable since 2026-08-11: gate 2 passed bit-identical, 480/480 frames, with
+# zero difference at the window joins. 8 GB cannot hold the ~7.4 GB full-frame state,
 # so this card must run tile-sequential, and tile-sequential completes no
 # output frame until the last tile pass. Without windowing the whole denoised
 # clip is buffered at 6.22 MB/frame, which needs 335 GB for the longest clip
 # and cannot process 78% of this archive (spec 5.5).
 #
-# The roster REJECTS an enabled entry that sets tiling/window/margin until the
-# windowed back-end lands, so this cannot be switched on by accident. Its value
-# is covering for the 4090 when that card is busy with other work: roster B
-# (igpu + 2070s) is 21.0 days against 38.8 days for the iGPU alone.
+# Left disabled because roster A (4090 + iGPU) is the default. Enable it when
+# the 4090 is busy with other work: that is what this lane is for. window is
+# the resident frame count -- source plus output is about 19 GB at 750 -- and
+# margin must stay at or above 16, the model's future context, or windowing
+# stops being exact.
 #
 # device = 0, not 1. The two encoder-host GPUs do not share an ordinal space: CUDA
 # enumerates only the NVIDIA card and ROCm only the AMD one, so both are 0 and
@@ -57,7 +59,7 @@ host    = "local"
 backend = "trt"
 device  = 0
 tiling  = "auto"
-window  = 1500
+window  = 750
 margin  = 32
 enabled = false
 

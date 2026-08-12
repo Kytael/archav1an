@@ -120,24 +120,57 @@ def test_missing_file_raises_roster_error(tmp_path):
         load_roster(tmp_path / "absent.toml", core_count=32)
 
 
-def test_enabled_denoiser_cannot_request_unimplemented_windowing(tmp_path):
-    """The spec's own example 2070s entry would run BSVD full-frame on 8 GB."""
-    p = tmp_path / "r.toml"
-    p.write_text("""
+def _toml(tiling="auto", window=750, margin=32, extra=""):
+    return f"""
 [[denoiser]]
 name = "2070s"
 host = "local"
 backend = "trt"
-device = 1
-tiling = "auto"
-window = 1500
-margin = 32
-
+device = 0
+tiling = "{tiling}"
+window = {window}
+margin = {margin}
+{extra}
 [encode]
 slots = 1
 threads_per_slot = 16
-""")
-    with pytest.raises(RosterError, match="not implemented"):
+"""
+
+
+def test_a_tiled_denoiser_is_accepted_now_that_windowing_exists(tmp_path):
+    p = tmp_path / "r.toml"
+    p.write_text(_toml())
+    roster = load_roster(p, 32)
+    assert roster.denoisers[0].tiling == "auto" and roster.denoisers[0].window == 750
+
+
+def test_a_margin_below_the_models_context_is_rejected(tmp_path):
+    """Gate 2 is only bit-identical because the margin exceeds the model's reach."""
+    p = tmp_path / "r.toml"
+    p.write_text(_toml(margin=8))
+    with pytest.raises(RosterError, match="below the model"):
+        load_roster(p, 32)
+
+
+def test_a_tiled_denoiser_without_a_window_is_rejected(tmp_path):
+    """Tiling without a window buffers the whole clip: 335 GB for the longest."""
+    p = tmp_path / "r.toml"
+    p.write_text(_toml(window=0))
+    with pytest.raises(RosterError, match="needs a window"):
+        load_roster(p, 32)
+
+
+def test_a_window_without_tiling_is_rejected(tmp_path):
+    p = tmp_path / "r.toml"
+    p.write_text(_toml(tiling="none", window=750))
+    with pytest.raises(RosterError, match="without tiling"):
+        load_roster(p, 32)
+
+
+def test_an_unknown_tiling_mode_is_rejected(tmp_path):
+    p = tmp_path / "r.toml"
+    p.write_text(_toml(tiling="quarters"))
+    with pytest.raises(RosterError, match="expected one of"):
         load_roster(p, 32)
 
 

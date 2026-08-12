@@ -7,6 +7,12 @@ import tomllib
 from dataclasses import dataclass
 
 
+# shift_num: BSVD reads 16 frames of future context, so a smaller margin cannot
+# reproduce a whole-clip run. Proven by gate 2 at margin 32.
+MIN_MARGIN = 16
+TILING_MODES = {"none", "auto"}
+
+
 class RosterError(Exception):
     """The roster is unusable and the run must not start."""
 
@@ -88,15 +94,28 @@ def _validate(roster, core_count):
     if roster.encode.host != "local":
         raise RosterError("encode.host must be 'local': remote hosts contribute GPUs only")
 
-    # Windowed tile-sequential denoise is spec 5.5 and is not built yet. Accepting
-    # the keys silently would run BSVD full-frame on an 8 GB card, which either
-    # runs out of memory or falls back to CPU without saying so. Only enabled
-    # entries are rejected, so a roster can carry a disabled entry ready for it.
-    for d in roster.enabled():
-        if d.window or d.tiling != "none":
+    # Windowed tile-sequential denoise landed with gate 2 passing bit-identical
+    # on 2026-08-11, so these keys now do something. They still have to be
+    # coherent: a margin below the model's 16 frames of future context cannot
+    # reproduce a whole-clip run, and an unknown tiling mode has no tile size.
+    for d in roster.denoisers:
+        if d.tiling not in TILING_MODES:
             raise RosterError(
-                f"denoiser '{d.name}' sets tiling/window, which is not implemented "
-                f"yet (spec 5.5). Remove the keys or disable the entry.")
+                f"denoiser '{d.name}' has tiling '{d.tiling}'; expected one of "
+                f"{sorted(TILING_MODES)}")
+        if d.tiling != "none":
+            if d.window < 1:
+                raise RosterError(
+                    f"denoiser '{d.name}' is tiled but sets window {d.window}; a "
+                    f"tiled denoiser needs a window or it buffers the whole clip")
+            if d.margin < MIN_MARGIN:
+                raise RosterError(
+                    f"denoiser '{d.name}' sets margin {d.margin}, below the model's "
+                    f"{MIN_MARGIN} frames of context; windowing would not be exact")
+        elif d.window:
+            raise RosterError(
+                f"denoiser '{d.name}' sets window {d.window} without tiling; "
+                f"windowing only applies to a tiled denoiser")
 
     ports = [d.port for d in roster.denoisers if d.is_remote]
     if any(p == 0 for p in ports):
