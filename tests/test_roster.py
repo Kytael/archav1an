@@ -205,7 +205,7 @@ def test_the_example_roster_is_valid():
     p = Path(__file__).resolve().parent.parent / "tools" / "archive_batch" / "denoisers.example.toml"
     roster = load_roster(p, 32)
     assert [d.name for d in roster.denoisers] == ["gpu1_4090", "igpu", "2070s"]
+    # Roster A is the shipped default; the 2070S lane is for when the 4090 is busy.
     assert [d.name for d in roster.enabled()] == ["gpu1_4090", "igpu"]
-    # The 2070s entry carries windowing keys and must stay disabled until the
-    # back-end exists; enabling it has to fail loudly.
-    assert roster.denoisers[2].window == 1500 and not roster.denoisers[2].enabled
+    tiled = roster.denoisers[2]
+    assert tiled.tiling == "auto" and tiled.window == 750 and tiled.margin >= 16
