@@ -4,13 +4,16 @@ These are the numbers that decide whether windowed output is bit-identical to a
 whole-clip run. They are plain arithmetic on purpose, so they can be checked
 without a GPU.
 """
+import os
+import shutil
 import sys
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
-from bsvd_windowed import plan_window, reflect_idx, tile_origins
+from bsvd_windowed import (plan_window, reflect_idx, tile_origins,
+                           window_read_plan)
 
 SHIFT = 16          # future frames the model reads
 PAST = 16           # SKIP_LENS [8, 8, 4] over two cascaded DenBlocks
@@ -95,3 +98,138 @@ def test_the_builder_refuses_an_odd_overlap_and_an_empty_window():
         build_bsvd_windowed_tiled(object(), onnx_path="x.onnx", sigma=0.05, overlap=15)
     with pytest.raises(ValueError, match="window must be at least"):
         build_bsvd_windowed_tiled(object(), onnx_path="x.onnx", sigma=0.05, window=0)
+
+
+def test_the_builder_refuses_to_read_its_source_in_process():
+    """No source script means the old in-graph read, which deadlocks."""
+    from bsvd_windowed import build_bsvd_windowed_tiled
+    with pytest.raises(ValueError, match="source_script is required"):
+        build_bsvd_windowed_tiled(object(), onnx_path="x.onnx", sigma=0.05)
+
+
+# --- the read plan: one forward pass over the source, reflected at the ends ---
+
+def test_read_plan_is_one_contiguous_forward_range():
+    real_start, real_end, slots = window_read_plan(2968, 4532, 10000)
+    assert (real_start, real_end) == (2968, 4532)
+    assert len(slots) == 4532 - 2968
+    assert all(len(s) == 1 for s in slots), "no reflection away from the clip ends"
+    assert [s[0] for s in slots] == list(range(len(slots)))
+
+
+def test_read_plan_never_asks_for_a_frame_outside_the_clip():
+    for a, n in ((0, 800), (0, 10000), (9000, 9700)):
+        b, fs, fe = plan_window(a, n, window=1500, margin=32)
+        real_start, real_end, _ = window_read_plan(fs, fe, n)
+        assert 0 <= real_start < real_end <= n
+
+
+def test_read_plan_sends_a_reflected_frame_to_both_of_its_slots():
+    # Window 0 of a 10000-frame clip feeds [-32, 1532): frame 32 is read once
+    # and used both as the reflection of -32 and as itself.
+    _, fs, fe = plan_window(0, 10000, window=1500, margin=32)
+    real_start, _, slots = window_read_plan(fs, fe, 10000)
+    assert real_start == 0
+    assert slots[32] == [0, 64], "slot 0 is the reflection of frame -32"
+    assert slots[0] == [32], "frame 0 appears once; reflect has no edge repeat"
+
+
+def test_read_plan_covers_every_window_slot_exactly_once():
+    for a, n in ((0, 800), (0, 10000), (9000, 9700), (1500, 10000)):
+        b, fs, fe = plan_window(a, n, window=1500, margin=32)
+        _, _, slots = window_read_plan(fs, fe, n)
+        filled = sorted(k for s in slots for k in s)
+        assert filled == list(range(fe - fs))
+
+
+# --- the reader itself, against the frames VapourSynth hands back -----------
+
+VSPIPE = os.environ.get("VSPIPE") or "/opt/archav1an/bin/vspipe"
+if not os.path.exists(VSPIPE):
+    VSPIPE = shutil.which("vspipe") or ""
+
+SYNTH = '''\
+import vapoursynth as vs
+core = vs.core
+clip = core.std.Splice([
+    core.std.BlankClip(width=8, height=4, format=vs.RGBS, length=1,
+                       color=[i / 100, i / 100 + 0.01, i / 100 + 0.02])
+    for i in range({n})])
+clip.set_output(0)
+'''
+
+
+@pytest.mark.skipif(not VSPIPE, reason="vspipe not installed")
+def test_the_subprocess_reader_matches_get_frame(tmp_path):
+    """The whole point of the reader: identical pixels, decoded out of process.
+
+    This is what catches the plane order. vspipe writes RGB planes as GBR
+    while frame[i] is RGB, so a reader that copies plane p to plane p swaps
+    two of the three channels and denoises a colour-rotated clip.
+    """
+    vs = pytest.importorskip("vapoursynth")
+    np = pytest.importorskip("numpy")
+    from bsvd_windowed import VspipeWindowSource
+
+    n = 40
+    script = tmp_path / "synth.vpy"
+    script.write_text(SYNTH.format(n=n))
+    ns = {}
+    exec(compile(script.read_text(), str(script), "exec"), ns)
+    clip = ns["clip"]
+
+    reader = VspipeWindowSource(str(script), clip.width, clip.height,
+                                clip.num_frames, vspipe=VSPIPE)
+    assert reader.info() == (clip.width, clip.height, clip.num_frames)
+
+    # Spans both ends of the clip, so the reflected slots are checked too.
+    feed_start, feed_end = -5, n + 5
+    got = np.empty((feed_end - feed_start, 3, clip.height, clip.width),
+                   dtype=np.float32)
+    reader.read_into(got, feed_start, feed_end)
+
+    for k in range(feed_end - feed_start):
+        frame = clip.get_frame(reflect_idx(feed_start + k, n))
+        for c in range(3):
+            assert np.array_equal(got[k, c], np.asarray(frame[c])), \
+                f"slot {k} plane {c} differs from get_frame"
+
+
+def test_the_reader_resolves_vspipe_the_way_dispatch_does(tmp_path, monkeypatch):
+    """Parent and child must be the same VapourSynth build.
+
+    The MIGraphX lane pins $VSPIPE to its own interpreter's binary
+    (dispatch_cmd.py), so a reader that only looked at PATH would decode the
+    window with a different build than the graph it feeds.
+    """
+    from bsvd_windowed import VspipeWindowSource
+    script = tmp_path / "synth.vpy"
+    script.write_text(SYNTH.format(n=1))
+
+    monkeypatch.setenv("VSPIPE", "/pinned/vspipe")
+    assert VspipeWindowSource(str(script), 8, 4, 1).vspipe == "/pinned/vspipe"
+    # An explicit argument still wins over the environment.
+    assert VspipeWindowSource(str(script), 8, 4, 1,
+                              vspipe="/explicit/vspipe").vspipe == "/explicit/vspipe"
+
+    monkeypatch.delenv("VSPIPE")
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    with pytest.raises(RuntimeError, match=r"vspipe not found"):
+        VspipeWindowSource(str(script), 8, 4, 1)
+
+
+@pytest.mark.skipif(not VSPIPE, reason="vspipe not installed")
+def test_the_reader_reports_a_geometry_mismatch(tmp_path):
+    """A source script that drifted from the clip must fail, not blur."""
+    np = pytest.importorskip("numpy")
+    from bsvd_windowed import VspipeWindowSource
+
+    script = tmp_path / "synth.vpy"
+    script.write_text(SYNTH.format(n=10))
+    reader = VspipeWindowSource(str(script), 8, 4, 10, vspipe=VSPIPE)
+    assert reader.info() == (8, 4, 10)
+
+    short = VspipeWindowSource(str(script), 8, 4, 99, vspipe=VSPIPE)
+    got = np.empty((5, 3, 4, 8), dtype=np.float32)
+    with pytest.raises(RuntimeError, match="stopped early|exited"):
+        short.read_into(got, 90, 95)

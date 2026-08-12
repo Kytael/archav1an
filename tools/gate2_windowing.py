@@ -20,23 +20,38 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "tools"))
 
 
-def load_source(path, frames):
-    import vapoursynth as vs
-    core = vs.core
-    for d in ("/opt/archav1an/lib/vapoursynth", "/usr/lib/vapoursynth"):
-        for so in ("libffms2.so", "libvszip.so"):
-            p = os.path.join(d, so)
-            if os.path.exists(p):
-                try:
-                    core.std.LoadPlugin(p)
-                except vs.Error:
-                    pass
-    from vstools import initialize_clip
-    clip = core.ffms2.Source(source=path)
-    clip = initialize_clip(clip)
-    if frames:
-        clip = clip[:frames]
-    return core.resize.Bicubic(clip, format=vs.RGBS, matrix_in_s="709")
+# One definition of the source, used twice: exec'd here to build the clip the
+# filter wraps, and written to disk for the reader subprocess to run. They must
+# be the same clip, and the cheapest way to guarantee that is to have one text.
+SOURCE_SCRIPT = '''\
+import os as _os
+import vapoursynth as vs
+core = vs.core
+for _d in ("/opt/archav1an/lib/vapoursynth", "/usr/lib/vapoursynth"):
+    for _so in ("libffms2.so", "libvszip.so"):
+        _p = _os.path.join(_d, _so)
+        if _os.path.exists(_p):
+            try:
+                core.std.LoadPlugin(_p)
+            except vs.Error:
+                pass
+from vstools import initialize_clip
+clip = core.ffms2.Source(source={path!r})
+clip = initialize_clip(clip)
+if {frames!r}:
+    clip = clip[:{frames!r}]
+clip = core.resize.Bicubic(clip, format=vs.RGBS, matrix_in_s="709")
+clip.set_output(0)
+'''
+
+
+def load_source(path, frames, script_path):
+    text = SOURCE_SCRIPT.format(path=os.path.abspath(path), frames=frames)
+    with open(script_path, "w") as fh:
+        fh.write(text)
+    ns = {}
+    exec(compile(text, script_path, "exec"), ns)
+    return ns["clip"]
 
 
 def render(clip):
@@ -62,19 +77,31 @@ def main():
     ap.add_argument("--tile", type=int, default=576)
     ap.add_argument("--overlap", type=int, default=16)
     ap.add_argument("--sigma", type=float, default=0.05)
-    ap.add_argument("--device", type=int, default=1)
+    # device 0, not 1: CUDA enumerates only the NVIDIA card, so the 2070S is
+    # ordinal 0 and device 1 fails with "invalid device ordinal".
+    ap.add_argument("--device", type=int, default=0)
     ap.add_argument("--ep", default="TRT")
+    ap.add_argument("--source-script", default=os.path.join(
+        REPO, "Temp", "gate2_source.vpy"))
+    # dispatch puts $VS_PREFIX/bin first on PATH before it spawns anything;
+    # this harness is standalone, so it names the same binary itself rather
+    # than inheriting whichever vspipe PATH happens to resolve.
+    ap.add_argument("--vspipe", default=os.path.join(
+        os.environ.get("VS_PREFIX", "/opt/archav1an"), "bin", "vspipe"))
     args = ap.parse_args()
 
     import numpy as np
 
     from bsvd_windowed import build_bsvd_windowed_tiled
 
+    os.makedirs(os.path.dirname(os.path.abspath(args.source_script)), exist_ok=True)
+    src = load_source(args.source, args.frames, args.source_script)
+
     common = dict(onnx_path=args.onnx, sigma=args.sigma, ep=args.ep,
                   device_id=args.device, tile=args.tile, overlap=args.overlap,
-                  margin=args.margin)
+                  margin=args.margin, source_script=args.source_script,
+                  vspipe=args.vspipe)
 
-    src = load_source(args.source, args.frames)
     n = src.num_frames
     print(f"[gate2] {n} frames, tile {args.tile}, margin {args.margin}, "
           f"window {args.window} vs whole-clip", flush=True)
@@ -103,9 +130,18 @@ def main():
               f"(joins at {bounds[:6]}{'...' if len(bounds) > 6 else ''})")
         print(f"[gate2] max diff at joins   : {seam.max():.3e}")
         print(f"[gate2] max diff elsewhere  : {body.max() if body.size else 0:.3e}")
-        ratio = (seam.max() / body.max()) if body.size and body.max() > 0 else float("inf")
-        print(f"[gate2] join/body ratio     : {ratio:.2f}"
-              f"   (>> 1 means a real seam; ~1 means no seam)")
+        # A ratio needs a non-zero denominator to mean anything. Printing "inf"
+        # for the perfect case reads as the worst case against the hint below,
+        # so say which case it is in words instead.
+        if body.size and body.max() > 0:
+            print(f"[gate2] join/body ratio     : {seam.max() / body.max():.2f}"
+                  f"   (>> 1 means a real seam; ~1 means no seam)")
+        elif seam.max() > 0:
+            print("[gate2] join/body ratio     : SEAM ONLY -- the joins differ and "
+                  "everything else is exactly zero. The margin is too small.")
+        else:
+            print("[gate2] join/body ratio     : no difference anywhere -- joins "
+                  "and body are both exactly zero.")
 
     worst = int(per_frame.argmax())
     print(f"\n[gate2] worst frame {worst} (window join at "

@@ -83,6 +83,10 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
     source = os.path.abspath(source)
     backend_lines = _mlrt_backend_lines(streams)
     model_line = f'_model_enum = _SCUNetModel["scunet_{model_name}"]'
+    # Set only by the windowed tile-sequential path, which reads its window
+    # source from a second vspipe process instead of from its own graph.
+    source_vpy_path = os.path.splitext(vpy_path)[0] + ".source.vpy"
+    source_vpy_body = ""
 
     if use_bsvd or use_bsvd_smdegrain:
         bsvd_onnx = os.path.abspath(bsvd_onnx)
@@ -95,12 +99,22 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
         if bsvd_tile:
             # Tile-sequential windowed path for cards that cannot hold the
             # full-frame state (spec 5.5). Memory is one window, not one clip.
+            # The window's source frames come from a subprocess running the
+            # companion script below: reading them from the selector would
+            # deadlock the thread pool this graph is running on.
             denoise_lines = _head + (
                 f'from bsvd_windowed import build_bsvd_windowed_tiled\n'
                 f'_bsvd_rgb = build_bsvd_windowed_tiled(_rgb, onnx_path=r{bsvd_onnx!r}, '
                 f'sigma={bsvd_sigma}, ep={bsvd_ep!r}, device_id={bsvd_device}, fp16=True, '
                 f'tile={bsvd_tile}, overlap={bsvd_overlap}, window={bsvd_window}, '
-                f'margin={bsvd_margin})\n'
+                f'margin={bsvd_margin}, source_script=r{source_vpy_path!r})\n'
+            )
+            # Same _head, so the subprocess decodes the same clip by
+            # construction. It only ever streams forward, so it needs a small
+            # cache, not the warmup-sized one the denoise graph needs.
+            source_vpy_body = _head + (
+                'core.max_cache_size = 512\n'
+                '_rgb.set_output(0)\n'
             )
         else:
             denoise_lines = _head + (
@@ -212,7 +226,7 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
     # out, GPU idle). 4096 fits the warmup for 8/10-bit — confirmed on encoder-host
     # MIGraphX: 1024 hangs, 4096 encodes at full speed. (SMDegrain also needs 4096.)
     _cache_mb = 4096
-    vpy = (
+    prologue = (
         f'import sys as _sys; _sys.path.insert(0, {venv_site_pkgs!r})\n'
         f'from vstools import vs, core, initialize_clip, finalize_clip\n'
         f'core.max_cache_size = {_cache_mb}\n'
@@ -225,6 +239,9 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
         f'    # the y4m pipe to SvtAv1EncApp stays 4:2:0.\n'
         f'    src = core.resize.Bicubic(src, format=vs.YUV420P10, matrix_s="709", chromaloc_s="left")\n'
         f'src = initialize_clip(src)\n'
+    )
+    vpy = (
+        prologue +
         f'\n'
         f'{vsmlrt_import}'
         f'{denoise_lines}\n'
@@ -239,6 +256,9 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
     )
     with open(vpy_path, "w") as f:
         f.write(vpy)
+    if source_vpy_body:
+        with open(source_vpy_path, "w") as f:
+            f.write(prologue + "\n" + source_vpy_body)
 
 
 # ---------------------------------------------------------------------------
