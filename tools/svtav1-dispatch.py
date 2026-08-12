@@ -1050,13 +1050,33 @@ def main():
                 sys.exit(1)
             _ort_providers = _ort.get_available_providers()
             # onnxruntime-gpu always LISTS the TRT provider; session creation
-            # still fails if libnvinfer isn't installed (e.g. encoder-host 2070S).
-            # Only pick TRT when the library actually resolves.
-            _has_nvinfer = False
+            # still fails if the TensorRT runtime isn't installed. So ask the
+            # question that actually decides it: can the provider library load?
+            #
+            # This used to be ctypes.util.find_library("nvinfer"), which asks
+            # only whether SOME nvinfer sits in the ldconfig cache, and got both
+            # ends of that wrong. It answers yes to the system AUR tensorrt
+            # (11.x, soname .so.11) that the provider cannot use, so the session
+            # then dies with "libnvinfer.so.10 => not found"; and it reads only
+            # the ldconfig cache, so it answers no on a non-root install even
+            # though setup.sh's own LD_LIBRARY_PATH advice has made the library
+            # loadable -- selecting the slower CUDA EP with no message at all.
+            # Loading the provider resolves its real DT_NEEDED chain (nvinfer
+            # .so.10 AND cudnn .so.9), honours LD_LIBRARY_PATH, and needs no
+            # soname hardcoded here.
+            _trt_loads = False
             if "TensorrtExecutionProvider" in _ort_providers:
-                import ctypes.util
-                _has_nvinfer = ctypes.util.find_library("nvinfer") is not None
-            if _has_nvinfer:
+                import ctypes
+                _prov_so = os.path.join(os.path.dirname(_ort.__file__), "capi",
+                                        "libonnxruntime_providers_tensorrt.so")
+                try:
+                    ctypes.CDLL(_prov_so)
+                    _trt_loads = True
+                except OSError as _e:
+                    print(f"[svtav1-dispatch] TensorRT EP unavailable ({_e}); "
+                          "falling back. Run setup.sh --install denoiser as root "
+                          "to wire it.")
+            if _trt_loads:
                 bsvd_ep = "TRT"
             elif "CUDAExecutionProvider" in _ort_providers:
                 bsvd_ep = "CUDA"
