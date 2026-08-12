@@ -167,6 +167,15 @@ update_check() {
 declare -A RESOLVE_VISITED
 declare -a RESOLVE_PLAN
 
+# Components already built by THIS invocation. RESOLVE_VISITED dedupes within
+# one install_tool call and is reset on every call, so it cannot see across
+# targets -- and install_all_tools calls install_tool once per component. Under
+# FORCE_REINSTALL=1 nothing else stops a shared dependency rebuilding once per
+# dependent: for --install A that is ffmpeg 8 times, svt_av1 9, system_deps 13.
+# A component built moments ago in the same run is never stale, so this guard
+# holds in both forced and unforced mode.
+declare -A BUILT_THIS_RUN
+
 resolve_deps_recursive() {
     local tool=$1
     if [[ -n "${RESOLVE_VISITED[$tool]}" ]]; then return; fi
@@ -218,7 +227,9 @@ install_tool() {
     local _env_force="${FORCE_REINSTALL:-0}"
 
     for item in "${RESOLVE_PLAN[@]}"; do
-        if [ "$_env_force" = "1" ]; then
+        if [ -n "${BUILT_THIS_RUN[$item]}" ]; then
+            echo -e "  - $item: ${GREEN}Already built in this run${NC}"
+        elif [ "$_env_force" = "1" ]; then
             echo -e "  - $item: ${RED}To be reinstalled (FORCE_REINSTALL=1)${NC}"
             install_queue+=("$item")
         elif is_installed "$item"; then
@@ -286,6 +297,8 @@ install_tool() {
             FORCE_REINSTALL="$_env_force"
             return 1
         fi
+        # Only a successful build counts: a failure must not mask a later retry.
+        BUILT_THIS_RUN[$item]=1
     done
 
     # Restore to the entry value (not 0): env FORCE_REINSTALL=1 must survive
