@@ -16,6 +16,9 @@ import sysconfig
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tag as _tag
+# Tile parsing lives with the tiling code so the split-host path and the gates
+# read the flag the same way. Module-level imports there are stdlib only.
+from bsvd_windowed import parse_tile_arg, tile_arg
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +109,7 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
                 f'from bsvd_windowed import build_bsvd_windowed_tiled\n'
                 f'_bsvd_rgb = build_bsvd_windowed_tiled(_rgb, onnx_path=r{bsvd_onnx!r}, '
                 f'sigma={bsvd_sigma}, ep={bsvd_ep!r}, device_id={bsvd_device}, fp16=True, '
-                f'tile={bsvd_tile}, overlap={bsvd_overlap}, window={bsvd_window}, '
+                f'tile={bsvd_tile!r}, overlap={bsvd_overlap}, window={bsvd_window}, '
                 f'margin={bsvd_margin}, source_script=r{source_vpy_path!r})\n'
             )
             # Same _head, so the subprocess decodes the same clip by
@@ -867,7 +870,7 @@ def main():
         elif arg == "--temp-tag":
             temp_tag = nextval(); i += 2
         elif arg == "--bsvd-tile":
-            bsvd_tile = int(nextval() or 0); i += 2
+            bsvd_tile = parse_tile_arg(nextval()); i += 2
         elif arg == "--bsvd-overlap":
             bsvd_overlap = int(nextval() or 16); i += 2
         elif arg == "--bsvd-window":
@@ -1009,7 +1012,7 @@ def main():
             _forward += ["--temp-tag", temp_tag]
         if bsvd_tile:
             # The denoise half runs remotely, so the tiling belongs there.
-            _forward += ["--bsvd-tile", str(bsvd_tile),
+            _forward += ["--bsvd-tile", tile_arg(bsvd_tile),
                          "--bsvd-overlap", str(bsvd_overlap),
                          "--bsvd-window", str(bsvd_window),
                          "--bsvd-margin", str(bsvd_margin)]

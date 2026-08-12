@@ -119,8 +119,31 @@ def window_read_plan(feed_start, feed_end, num_frames):
     return real_start, real_end, slots
 
 
-def check_tile_fits(H, W, tile, overlap):
-    """Raise if `tile` cannot be cut from the reflect-padded frame.
+def parse_tile_arg(text):
+    """Read a tile setting: "auto", "HxW", or a bare square size.
+
+    "auto" sizes each axis to the frame, which wastes far less than a square
+    tile on a 16:9 source. Inverse of tile_arg(); the split-host path sends
+    this value over the wire and parses it back, so the two must agree.
+    """
+    text = text or "0"
+    if text == "auto":
+        return "auto"
+    if "x" in text:
+        th, tw = text.split("x", 1)
+        return (int(th), int(tw))
+    return int(text)
+
+
+def tile_arg(tile):
+    """Serialise a tile setting back to its command-line form."""
+    if isinstance(tile, (tuple, list)):
+        return f"{tile[0]}x{tile[1]}"
+    return str(tile)
+
+
+def check_tile_fits(H, W, tile_h, tile_w, overlap):
+    """Raise if a tile cannot be cut from the reflect-padded frame.
 
     A tile is sliced out after the frame is padded by `overlap`, so it can be
     at most H + overlap by W + overlap. A larger tile makes the slice come
@@ -129,14 +152,59 @@ def check_tile_fits(H, W, tile, overlap):
     the setting that caused it. For 1080p the ceiling is 1096 x 1936, and 1096
     is also the tile that yields exactly one row of output.
     """
-    if tile % 4:
+    for axis, t, limit in (("height", tile_h, H + overlap),
+                           ("width", tile_w, W + overlap)):
+        if t % 4:
+            raise ValueError(
+                f"tile {axis} must be a multiple of 4, got {t}: the model holds "
+                f"state at half and quarter resolution, so //2 and //4 must be exact")
+        if t > limit:
+            raise ValueError(
+                f"tile {axis} {t} exceeds the padded frame's {limit}: a tile can "
+                f"be at most the frame plus one overlap in each axis")
+
+
+# 1096x1096 = 1.20 Mpx was measured working on the 2070S's 8 GB, at about
+# 5.3 GB resident. That is the largest tile with a measurement behind it, so
+# it is the budget rather than a computed VRAM estimate.
+TILE_BUDGET_MPX = 1.2
+
+
+def plan_tiling(H, W, overlap=16, budget_mpx=TILE_BUDGET_MPX, max_grid=8):
+    """Pick (tile_h, tile_w) covering HxW with the least redundant area.
+
+    A tile contributes `tile - overlap`, so covering H in `rows` passes needs
+    a tile of ceil(H / rows) + overlap, rounded up to a multiple of 4. Square
+    tiles cannot cover a 16:9 frame evenly, so the last one lands almost on
+    top of its neighbour: at 1080p a 576 tile does 1.28x the frame's pixels
+    and a 960 tile does 2.67x. Sizing each axis to the frame instead gets that
+    to 1.03x, which is the single largest win available on the 2070S lane.
+
+    Grids whose tile exceeds `budget_mpx` are skipped, so this never returns a
+    tile the card cannot hold.
+    """
+    def up4(v):
+        return -(-v // 4) * 4
+
+    best = None
+    for rows in range(1, max_grid + 1):
+        for cols in range(1, max_grid + 1):
+            th = up4(-(-H // rows) + overlap)
+            tw = up4(-(-W // cols) + overlap)
+            if th > H + overlap or tw > W + overlap:
+                continue
+            area = th * tw / 1e6
+            if area > budget_mpx:
+                continue
+            # Total model pixels per frame is what costs time; fewer tiles
+            # breaks a tie because each one is a separate state reset.
+            key = (rows * cols * area, rows * cols)
+            if best is None or key < best[0]:
+                best = (key, th, tw)
+    if best is None:
         raise ValueError(
-            f"tile must be a multiple of 4, got {tile}: the model holds state "
-            f"at half and quarter resolution, so H//2 and H//4 must be exact")
-    if tile > H + overlap or tile > W + overlap:
-        raise ValueError(
-            f"tile {tile} exceeds the padded frame {H + overlap}x{W + overlap}: "
-            f"a tile can be at most the frame plus one overlap in each axis")
+            f"no tiling of {W}x{H} fits {budget_mpx} Mpx with overlap {overlap}")
+    return best[1], best[2]
 
 
 def _read_exact(stream, view):
@@ -233,7 +301,7 @@ def build_bsvd_windowed_tiled(source_clip, *,
                               device_id: int = 0, fp16: bool = True,
                               variant: str = 'bsvd-64',
                               shift_num: int = 16,
-                              tile: int = 576, overlap: int = 16,
+                              tile=576, overlap: int = 16,
                               window: int = 750, margin: int = 32,
                               source_script: str = "", vspipe: str = ""):
     """Wrap tile-sequential windowed BSVD as a VS clip via ModifyFrame.
@@ -287,7 +355,15 @@ def build_bsvd_windowed_tiled(source_clip, *,
     H, W = source_clip.height, source_clip.width
     num_frames = source_clip.num_frames
 
-    check_tile_fits(H, W, tile, overlap)
+    # "auto" sizes each axis to the frame, which is worth about 1.24x on the
+    # pixel work at 1080p against the square 576 this lane used to run.
+    if tile == "auto":
+        tile_h, tile_w = plan_tiling(H, W, overlap)
+    elif isinstance(tile, (tuple, list)):
+        tile_h, tile_w = tile
+    else:
+        tile_h = tile_w = tile
+    check_tile_fits(H, W, tile_h, tile_w, overlap)
 
     # The subprocess must produce the same clip this graph claims to denoise.
     # Checked once, before the engine build, because a mismatch would show up
@@ -301,16 +377,16 @@ def build_bsvd_windowed_tiled(source_clip, *,
             f"x{got[2]} frames, but the clip is {W}x{H} x{num_frames}")
 
     streamer = BSVDOrtStreamingV2(
-        onnx_path=onnx_path, H=tile, W=tile, B=1, variant=variant,
+        onnx_path=onnx_path, H=tile_h, W=tile_w, B=1, variant=variant,
         shift_num=shift_num, fp16=fp16, device_id=device_id, ep=ep)
     torch_dtype = streamer.torch_dtype
     device = streamer.device
     buf_dtype = np.float16 if torch_dtype == torch.float16 else np.float32
 
     half = overlap // 2
-    out_h = out_w = tile - overlap
-    tiles = [(y, x) for y in tile_origins(H, tile, overlap)
-             for x in tile_origins(W, tile, overlap)]
+    out_h, out_w = tile_h - overlap, tile_w - overlap
+    tiles = [(y, x) for y in tile_origins(H, tile_h, overlap)
+             for x in tile_origins(W, tile_w, overlap)]
 
     state = {'start': None, 'buf': None}
     # VapourSynth prefetches, so several selector calls run at once. The
@@ -342,9 +418,10 @@ def build_bsvd_windowed_tiled(source_clip, *,
                     t = torch.from_numpy(src[k]).to(
                         device=device, dtype=torch_dtype).unsqueeze(0)
                     padded = torch.nn.functional.pad(t, pad, mode='reflect')
-                    tin = padded[:, :, y:y + tile, x:x + tile].contiguous()
+                    tin = padded[:, :, y:y + tile_h, x:x + tile_w].contiguous()
                 else:
-                    tin = torch.zeros(1, 3, tile, tile, device=device, dtype=torch_dtype)
+                    tin = torch.zeros(1, 3, tile_h, tile_w,
+                                      device=device, dtype=torch_dtype)
                 out = streamer.step(tin, sigma)
                 oi = feed_start + k - shift_num
                 if a <= oi < b:

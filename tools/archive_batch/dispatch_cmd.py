@@ -13,9 +13,11 @@ MIGX_VENV = os.path.expanduser("~/reposetc/bsvd/migraphx-venv")
 MIGX_LIBS = os.path.expanduser("~/reposetc/bsvd/migraphx-libs/lib")
 
 BSVD_SIGMA = "0.05"
-# "auto" is the only tiling mode with a measured size: 576 is what the 2070S
-# was benchmarked at and what fits its 8 GB with windowing on.
-TILE_FOR = {"auto": 576}
+# "auto" lets the filter size each axis to the frame. A square tile cannot
+# cover 16:9 evenly -- 576 does 1.28x the frame's pixels at 1080p, and a
+# bigger square is worse, not better -- so auto picks 1096x976 there, 1.03x,
+# and never returns a tile the card cannot hold.
+TILE_FOR = {"auto": "auto"}
 ENCODER_PARAMS = ("--tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 "
                   "--sharpness 1 --tf-strength 2 --variance-boost-strength 1 "
                   "--variance-octile 7 --enable-dlf 2")

@@ -12,8 +12,15 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
-from bsvd_windowed import (check_tile_fits, plan_window, reflect_idx,
-                           tile_origins, window_read_plan)
+from bsvd_windowed import (TILE_BUDGET_MPX, check_tile_fits, plan_tiling,
+                           plan_window, reflect_idx, tile_origins,
+                           window_read_plan)
+
+
+def sweep_mpx(H, W, tile_h, tile_w, overlap=16):
+    """Model pixels per output frame for this tiling -- what costs time."""
+    n = len(tile_origins(H, tile_h, overlap)) * len(tile_origins(W, tile_w, overlap))
+    return n * tile_h * tile_w / 1e6
 
 SHIFT = 16          # future frames the model reads
 PAST = 16           # SKIP_LENS [8, 8, 4] over two cascaded DenBlocks
@@ -34,17 +41,58 @@ def test_tile_origins_never_run_past_the_frame():
             assert 0 <= start <= size
 
 
+def test_auto_tiling_covers_1080p_in_two_tiles_of_one_row():
+    """1096x976 yields exactly 1080x960, so 1x2 covers the frame."""
+    th, tw = plan_tiling(1080, 1920, overlap=16)
+    assert (th, tw) == (1096, 976)
+    ys = tile_origins(1080, th, 16)
+    xs = tile_origins(1920, tw, 16)
+    assert (len(ys), len(xs)) == (1, 2), "one row, two columns"
+
+
+def test_auto_tiling_beats_the_square_tile_it_replaces():
+    """The whole point: less redundant area than square 576."""
+    th, tw = plan_tiling(1080, 1920, overlap=16)
+    auto = sweep_mpx(1080, 1920, th, tw)
+    square = sweep_mpx(1080, 1920, 576, 576)
+    frame = 1080 * 1920 / 1e6
+    assert auto / frame < 1.05, f"auto wastes {auto / frame:.2f}x"
+    assert square / frame > 1.25, "square 576 was the 1.28x baseline"
+    assert auto < square / 1.2, "must be at least a 1.2x cut in pixel work"
+
+
+def test_auto_tiling_never_exceeds_the_measured_vram_budget():
+    for H, W in ((1080, 1920), (720, 1280), (1080, 1440), (2160, 3840)):
+        th, tw = plan_tiling(H, W, overlap=16)
+        assert th * tw / 1e6 <= TILE_BUDGET_MPX, f"{H}x{W} -> {th}x{tw}"
+        check_tile_fits(H, W, th, tw, 16)
+
+
+def test_auto_tiling_covers_every_pixel():
+    for H, W in ((1080, 1920), (720, 1280), (2160, 3840)):
+        th, tw = plan_tiling(H, W, overlap=16)
+        ys, xs = tile_origins(H, th, 16), tile_origins(W, tw, 16)
+        assert max(ys) + th - 16 >= H, f"{H}x{W} leaves rows uncovered"
+        assert max(xs) + tw - 16 >= W, f"{H}x{W} leaves columns uncovered"
+
+
 def test_the_largest_tile_1080p_allows_is_the_one_that_fits_in_one_row():
     """1096 is both the ceiling and the ideal: 1096 - 16 = 1080 exactly."""
-    check_tile_fits(1080, 1920, 1096, 16)
-    with pytest.raises(ValueError, match="exceeds the padded frame"):
-        check_tile_fits(1080, 1920, 1216, 16)
+    check_tile_fits(1080, 1920, 1096, 1096, 16)
+    with pytest.raises(ValueError, match="height 1216 exceeds"):
+        check_tile_fits(1080, 1920, 1216, 1216, 16)
+    # Wide is allowed where tall is not: the padded frame is 1096 x 1936.
+    check_tile_fits(1080, 1920, 1096, 1936, 16)
+    with pytest.raises(ValueError, match="width 1940 exceeds"):
+        check_tile_fits(1080, 1920, 1096, 1940, 16)
 
 
-def test_a_tile_must_be_a_multiple_of_four():
-    check_tile_fits(1080, 1920, 576, 16)
-    with pytest.raises(ValueError, match="multiple of 4"):
-        check_tile_fits(1080, 1920, 1094, 16)
+def test_a_tile_must_be_a_multiple_of_four_on_both_axes():
+    check_tile_fits(1080, 1920, 576, 576, 16)
+    with pytest.raises(ValueError, match="height must be a multiple of 4"):
+        check_tile_fits(1080, 1920, 1094, 976, 16)
+    with pytest.raises(ValueError, match="width must be a multiple of 4"):
+        check_tile_fits(1080, 1920, 1096, 974, 16)
 
 
 def test_reflect_has_no_edge_repeat():

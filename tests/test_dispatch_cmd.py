@@ -80,7 +80,9 @@ TILED = Denoiser(name="2070s", host="local", backend="trt", device=0,
 def test_a_tiled_denoiser_gets_the_windowed_flags():
     argv, _ = build_command(TILED, ENCODE, staged="/t/x.MOV", out="/t/o.mkv",
                             remote_src=None, callback=None)
-    assert argv[argv.index("--bsvd-tile") + 1] == "576"
+    # "auto" rather than a fixed size: the filter sizes each axis to the
+    # frame, which a square tile cannot do on a 16:9 source.
+    assert argv[argv.index("--bsvd-tile") + 1] == "auto"
     assert argv[argv.index("--bsvd-window") + 1] == "1500"
     assert argv[argv.index("--bsvd-margin") + 1] == "32"
 

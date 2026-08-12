@@ -74,7 +74,9 @@ def main():
     ap.add_argument("--frames", type=int, default=900)
     ap.add_argument("--window", type=int, default=300)
     ap.add_argument("--margin", type=int, default=32)
-    ap.add_argument("--tile", type=int, default=576)
+    # Same three forms dispatch accepts, read by the same parser: "auto",
+    # "HxW", or a bare square size.
+    ap.add_argument("--tile", default="576")
     ap.add_argument("--overlap", type=int, default=16)
     ap.add_argument("--sigma", type=float, default=0.05)
     # device 0, not 1: CUDA enumerates only the NVIDIA card, so the 2070S is
@@ -92,18 +94,20 @@ def main():
 
     import numpy as np
 
-    from bsvd_windowed import build_bsvd_windowed_tiled
+    from bsvd_windowed import build_bsvd_windowed_tiled, parse_tile_arg
+
+    tile = parse_tile_arg(args.tile)
 
     os.makedirs(os.path.dirname(os.path.abspath(args.source_script)), exist_ok=True)
     src = load_source(args.source, args.frames, args.source_script)
 
     common = dict(onnx_path=args.onnx, sigma=args.sigma, ep=args.ep,
-                  device_id=args.device, tile=args.tile, overlap=args.overlap,
+                  device_id=args.device, tile=tile, overlap=args.overlap,
                   margin=args.margin, source_script=args.source_script,
                   vspipe=args.vspipe)
 
     n = src.num_frames
-    print(f"[gate2] {n} frames, tile {args.tile}, margin {args.margin}, "
+    print(f"[gate2] {n} frames, tile {tile}, margin {args.margin}, "
           f"window {args.window} vs whole-clip", flush=True)
 
     print("[gate2] rendering whole-clip (window >= n)...", flush=True)
