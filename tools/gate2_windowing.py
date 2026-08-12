@@ -77,7 +77,7 @@ def main():
     # Same three forms dispatch accepts, read by the same parser: "auto",
     # "HxW", or a bare square size.
     ap.add_argument("--tile", default="576")
-    ap.add_argument("--overlap", type=int, default=16)
+    ap.add_argument("--overlap", type=int, default=32)
     ap.add_argument("--sigma", type=float, default=0.05)
     # device 0, not 1: CUDA enumerates only the NVIDIA card, so the 2070S is
     # ordinal 0 and device 1 fails with "invalid device ordinal".

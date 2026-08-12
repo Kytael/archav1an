@@ -169,8 +169,23 @@ def check_tile_fits(H, W, tile_h, tile_w, overlap):
 # it is the budget rather than a computed VRAM estimate.
 TILE_BUDGET_MPX = 1.2
 
+# A tile is given `overlap` pixels of context, half on each side, and the model
+# needs enough of it that a tile's output does not depend on where the tile
+# began. 16 is not enough. Measured at 1080p against an overlap-128 render,
+# 120 frames, worst pixel and share of pixels differing by a whole 8-bit code:
+#
+#   overlap 16 (8 px/side)   2.161e-02  = 5.5 codes   0.0079%   join 4.21x
+#   overlap 32 (16 px/side)  7.202e-03  = 1.8 codes   0.0001%   join 2.90x
+#   overlap 64 (32 px/side)  1.846e-03  = 0.5 codes   0.0000%   join 2.75x
+#
+# 32 cuts the seam 79x and cost nothing measurable: at 1080p it renders in the
+# same time as 16, because the larger tile is slightly more efficient per pixel
+# and offsets the 3.1% extra area. 64 buys a provable zero for about 5% more.
+DEFAULT_OVERLAP = 32
 
-def plan_tiling(H, W, overlap=16, budget_mpx=TILE_BUDGET_MPX, max_grid=8):
+
+def plan_tiling(H, W, overlap=DEFAULT_OVERLAP, budget_mpx=TILE_BUDGET_MPX,
+                max_grid=8):
     """Pick (tile_h, tile_w) covering HxW with the least redundant area.
 
     A tile contributes `tile - overlap`, so covering H in `rows` passes needs
@@ -321,7 +336,7 @@ def build_bsvd_windowed_tiled(source_clip, *,
                               device_id: int = 0, fp16: bool = True,
                               variant: str = 'bsvd-64',
                               shift_num: int = 16,
-                              tile=576, overlap: int = 16,
+                              tile=576, overlap: int = DEFAULT_OVERLAP,
                               window: int = 750, margin: int = 32,
                               source_script: str = "", vspipe: str = ""):
     """Wrap tile-sequential windowed BSVD as a VS clip via ModifyFrame.

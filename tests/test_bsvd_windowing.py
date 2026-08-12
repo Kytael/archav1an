@@ -12,7 +12,8 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
-from bsvd_windowed import (TILE_BUDGET_MPX, check_tile_fits, plan_tiling,
+from bsvd_windowed import (DEFAULT_OVERLAP, TILE_BUDGET_MPX, check_tile_fits,
+                           plan_tiling,
                            plan_window, reflect_idx, tile_origins,
                            window_read_plan)
 
@@ -48,6 +49,30 @@ def test_auto_tiling_covers_1080p_in_two_tiles_of_one_row():
     ys = tile_origins(1080, th, 16)
     xs = tile_origins(1920, tw, 16)
     assert (len(ys), len(xs)) == (1, 2), "one row, two columns"
+
+
+def test_the_default_overlap_is_the_one_that_closes_the_seam():
+    """16 leaves a 5.5-code seam at the tile join; 32 cuts it 79x.
+
+    Measured at 1080p against an overlap-128 render over 120 frames: the share
+    of pixels differing by a whole 8-bit code goes 0.0079% -> 0.0001%, and it
+    rendered in the same time, so the 3.1% extra tile area costs nothing
+    measurable. A revert to 16 would reintroduce a visible-in-numbers seam.
+    """
+    assert DEFAULT_OVERLAP == 32
+    th, tw = plan_tiling(1080, 1920)
+    assert (th, tw) == (1112, 992), "1x2 grid yielding exactly 1080x960"
+    assert (len(tile_origins(1080, th, DEFAULT_OVERLAP)),
+            len(tile_origins(1920, tw, DEFAULT_OVERLAP))) == (1, 2)
+    assert th * tw / 1e6 <= TILE_BUDGET_MPX, "must still fit the 8 GB card"
+
+
+def test_the_default_overlap_still_beats_the_old_square_tile():
+    """The seam fix must not cost back the tiling win."""
+    th, tw = plan_tiling(1080, 1920)
+    auto = sweep_mpx(1080, 1920, th, tw, DEFAULT_OVERLAP)
+    square = sweep_mpx(1080, 1920, 576, 576, 16)
+    assert auto < square / 1.15, f"auto {auto:.3f} vs old 576 {square:.3f}"
 
 
 def test_auto_tiling_beats_the_square_tile_it_replaces():

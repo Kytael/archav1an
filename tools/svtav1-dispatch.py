@@ -82,7 +82,7 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
                       use_stasunet=False, stasunet_engine="", stasunet_pre_darken_ev=0.0,
                       use_bsvd=False, use_bsvd_smdegrain=False,
                       bsvd_onnx="", bsvd_sigma=0.08, bsvd_ep="TRT", bsvd_device=0,
-                      bsvd_tile=0, bsvd_overlap=16, bsvd_window=0, bsvd_margin=32):
+                      bsvd_tile=0, bsvd_overlap=32, bsvd_window=0, bsvd_margin=32):
     source = os.path.abspath(source)
     backend_lines = _mlrt_backend_lines(streams)
     model_line = f'_model_enum = _SCUNetModel["scunet_{model_name}"]'
@@ -776,7 +776,7 @@ def main():
     denoise_thsad = 350
     denoise_bsvd = False
     bsvd_tile = 0
-    bsvd_overlap = 16
+    bsvd_overlap = 32
     bsvd_window = 0
     bsvd_margin = 32
     denoise_bsvd_smdegrain = False
@@ -880,7 +880,7 @@ def main():
         elif arg == "--bsvd-tile":
             bsvd_tile = parse_tile_arg(nextval()); i += 2
         elif arg == "--bsvd-overlap":
-            bsvd_overlap = int(nextval() or 16); i += 2
+            bsvd_overlap = int(nextval() or 32); i += 2
         elif arg == "--bsvd-window":
             bsvd_window = int(nextval() or 0); i += 2
         elif arg == "--bsvd-margin":
