@@ -51,6 +51,12 @@ import json
 import csv
 import numpy as np
 import concurrent.futures
+# Anything we compile is the default. This has to run before the shutil.which()
+# calls below resolve, so it sits with the imports. See tools/prefix_env.py.
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "tools"))
+from prefix_env import prefer_prefix_bin
+prefer_prefix_bin()
 
 ver_str = "v2.9.20 (Clean UI)"
 
