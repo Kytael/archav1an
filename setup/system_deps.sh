@@ -119,9 +119,15 @@ install_system_deps_debian() {
         libfribidi-dev libfontconfig-dev libopus-dev
         libzimg-dev libjpeg-turbo8-dev libwebp-dev libavif-dev libxxhash-dev
         libdav1d-dev
-        # FFmpeg link dependencies
+        # FFmpeg link dependencies. libssl-dev is not optional even though
+        # nothing links OpenSSL directly: srt.pc carries
+        # "Requires.private: openssl libcrypto", so without openssl.pc and
+        # libcrypto.pc every pkg-config query for srt fails and FFmpeg's
+        # configure reports "srt >= 1.3.0 not found" with no hint of the real
+        # cause. Arch never hits this because its openssl package ships the
+        # .pc files and is always present.
         libvpx-dev libmp3lame-dev libvorbis-dev libsoxr-dev libgnutls28-dev
-        libsrt-openssl-dev libvidstab-dev libbluray-dev
+        libsrt-openssl-dev libssl-dev libvidstab-dev libbluray-dev
         # Python and utilities
         python3 python3-pip python3-venv python3-dev python3-numpy
         python3-psutil python3-rich cython3
