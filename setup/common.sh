@@ -363,17 +363,25 @@ detect_gpu() {
     fi
 
     if [ "$GPU_VENDOR" = "nvidia" ] || [ "$GPU_VENDOR" = "both" ]; then
-        if [ -d "/opt/cuda/bin" ]; then
-            export PATH="/opt/cuda/bin:$PATH"
+        # /opt/cuda is where Arch's cuda package lands. Every other packaging
+        # (NVIDIA's own .deb repos, DGX OS) uses /usr/local/cuda. Only checking
+        # the Arch path left nvcc off PATH on Ubuntu, so ffvship logged
+        # "Neither nvcc nor hipcc found" and fell back to a Vulkan build on a
+        # host with a working CUDA 13 toolkit sitting in /usr/local/cuda/bin.
+        local _cuda_bin
+        for _cuda_bin in /opt/cuda/bin /usr/local/cuda/bin; do
+            [ -x "$_cuda_bin/nvcc" ] || continue
+            case ":$PATH:" in *":$_cuda_bin:"*) ;; *) export PATH="$_cuda_bin:$PATH" ;; esac
             if [ ! -f /etc/profile.d/cuda.sh ]; then
                 if [ "$EUID" -eq 0 ]; then
-                    echo 'export PATH="/opt/cuda/bin:$PATH"' > /etc/profile.d/cuda.sh
-                    log_info "Added /opt/cuda/bin to system PATH via /etc/profile.d/cuda.sh"
+                    echo "export PATH=\"$_cuda_bin:\$PATH\"" > /etc/profile.d/cuda.sh
+                    log_info "Added $_cuda_bin to system PATH via /etc/profile.d/cuda.sh"
                 else
                     log_warn "Not root — skipped writing /etc/profile.d/cuda.sh (PATH exported for this session only)."
                 fi
             fi
-        fi
+            break
+        done
     fi
 
     if [ "$GPU_VENDOR" = "nvidia" ]; then

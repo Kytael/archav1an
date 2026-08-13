@@ -34,11 +34,17 @@ install_subtext() {
     # find_installation('python', 'python3') which would resolve via that
     # meson's sys.executable rather than the venv interpreter (same trap as
     # the VS R76 build).
-    CC=clang CXX=clang++ "$VENV_DIR/bin/meson" setup build --buildtype=release \
+    # The venv also has to lead PATH. SubText's meson.build resolves the
+    # VapourSynth headers with python3 -c 'import vapoursynth as vs;
+    # print(vs.get_include())', and meson picks python3 off PATH -- the distro
+    # one, which on Ubuntu cannot import our VapourSynth at all, since ours
+    # lives under $VS_PREFIX and is reachable only through the venv's
+    # _vapoursynth_native.pth. Same failure and same fix as BestSource.
+    PATH="$VENV_DIR/bin:$PATH" CC=clang CXX=clang++ "$VENV_DIR/bin/meson" setup build --buildtype=release \
         -Dc_args="-march=native -O3" \
         -Dcpp_args="-march=native -O3" \
         -Db_lto=true || { cd "$ORIG_DIR"; log_error "SubText meson setup failed"; return 1; }
-    "$VENV_DIR/bin/meson" compile -C build || { cd "$ORIG_DIR"; log_error "SubText meson compile failed"; return 1; }
+    PATH="$VENV_DIR/bin:$PATH" "$VENV_DIR/bin/meson" compile -C build || { cd "$ORIG_DIR"; log_error "SubText meson compile failed"; return 1; }
 
     # R5 (autotools) produced libsubtext.so; R6 (meson shared_module with
     # name_prefix: '') produces subtext.so. Accept either, install as the
