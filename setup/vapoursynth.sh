@@ -57,35 +57,45 @@ install_vapoursynth() {
     # python_libs pins Cython 3.2.9 in the venv, so put the venv first and get
     # the same transpiler on every host instead of the distro's.
     #
-    # VapourSynth's meson.build hardcodes limited_api: '3.12', so Cython emits
-    # limited-API code. That output compiles against Python 3.14 headers, which
-    # is why the Arch hosts build vapoursynth.abi3.so happily, but not against
-    # 3.12: it reaches for PyCFunctionObject, PyASCIIObject and
-    # PyUnstable_Code_NewWithPosOnlyArgs, and the build dies with 20
-    # undeclared-identifier errors naming CPython internals, never Cython.
-    # Cython 3.2.9 is not the problem -- the failure is identical with it.
+    # VapourSynth's meson.build hardcodes limited_api: '3.12', so meson defines
+    # Py_LIMITED_API and names the module vapoursynth.abi3.so. It never defines
+    # CYTHON_LIMITED_API, though, which is the macro Cython actually reads to
+    # decide whether it may touch CPython internals. Cython therefore emits the
+    # full-API forms: PyCFunctionObject, PyASCIIObject,
+    # PyUnstable_Code_NewWithPosOnlyArgs, _PyDict_GetItem_KnownHash.
     #
-    # A 3.12 host cannot just move to a newer Python: the only aarch64
-    # onnxruntime-gpu wheel published anywhere is cp312-only, so gpu4's venv
-    # is pinned to 3.12 by the BSVD lane.
+    # Python 3.14 headers still declare those under Py_LIMITED_API, so the Arch
+    # hosts compile and their abi3.so genuinely references them. Python 3.12
+    # hides them, and the build dies with 20 undeclared-identifier errors that
+    # name CPython internals and never mention Cython.
     #
-    # So turn the limited API off below 3.13 only. Hosts on 3.13+ keep building
-    # the identical vapoursynth.abi3.so they build today; below that the module
-    # installs as vapoursynth.cpython-<ver>-<arch>.so, which the bridge accepts.
-    local _limited_api_opt=()
+    # Neither of the obvious escapes works. A newer venv Python is out: the only
+    # aarch64 onnxruntime-gpu wheel published anywhere is cp312-only, so the
+    # BSVD lane pins 3.12. Turning the limited API off is out too: the module
+    # then builds as C++ with a struct member literally named `namespace`, a
+    # reserved word, and no Cython version mangles it (3.0.8 and 3.2.9 both
+    # fail identically).
+    #
+    # Defining CYTHON_LIMITED_API makes Cython emit the portable forms, which
+    # compile on 3.12 and still produce abi3. Only pre-3.13 needs it, so 3.13+
+    # hosts build exactly what they build today. It goes through CXXFLAGS, not
+    # -Dcpp_args: the latter replaces the value meson derives from the
+    # environment and would silently drop set_native_build_flags' -march=native
+    # -O3 -flto.
+    local _saved_cxxflags="${CXXFLAGS:-}"
     local _py_minor="${_vs_py_ver##*.}"
     if [ "${_vs_py_ver%%.*}" = "3" ] && [ "$_py_minor" -lt 13 ]; then
-        log_info "Python $_vs_py_ver: disabling meson's limited API (Cython's limited-API output does not compile against pre-3.13 headers)."
-        _limited_api_opt=(-Dpython.allow_limited_api=false)
+        log_info "Python $_vs_py_ver: adding -DCYTHON_LIMITED_API=1 (Cython otherwise emits internals that pre-3.13 hides under Py_LIMITED_API)."
+        export CXXFLAGS="${CXXFLAGS:-} -DCYTHON_LIMITED_API=1"
     fi
 
     PATH="$VENV_DIR/bin:$PATH" "$VENV_DIR/bin/meson" setup build \
         --prefix="$VS_PREFIX" \
         --buildtype=release \
-        "${_limited_api_opt[@]}" \
         -Dpython.platlibdir="lib/python${_vs_py_ver}/site-packages" \
         -Dpython.purelibdir="lib/python${_vs_py_ver}/site-packages" \
-        || { cd "$ORIG_DIR"; log_error "VapourSynth meson setup failed"; return 1; }
+        || { cd "$ORIG_DIR"; export CXXFLAGS="$_saved_cxxflags"; log_error "VapourSynth meson setup failed"; return 1; }
+    export CXXFLAGS="$_saved_cxxflags"
     log_info "VS R76 build: cython $(PATH="$VENV_DIR/bin:$PATH" cython --version 2>&1)"
     "$VENV_DIR/bin/meson" compile -C build \
         || { cd "$ORIG_DIR"; log_error "VapourSynth meson compile failed"; return 1; }
@@ -106,13 +116,7 @@ install_vapoursynth() {
     # the old python3.X/ tree until manually cleaned, and grabbing the
     # stale one would wire the bridge to the wrong build.
     local VS_PKG_DIR="$VS_PREFIX/lib/python${_vs_py_ver}/site-packages/vapoursynth"
-    # The extension module is vapoursynth.abi3.so under the limited API and
-    # vapoursynth.cpython-<ver>-<arch>.so with it off, so accept either. The
-    # abi3 form is listed first, so hosts that still build it resolve exactly
-    # as before.
-    local _vs_ext_mod
-    _vs_ext_mod="$(ls "$VS_PKG_DIR"/vapoursynth.abi*.so "$VS_PKG_DIR"/vapoursynth.cpython-*.so 2>/dev/null | head -1)"
-    if [ -d "$VS_PKG_DIR" ] && [ -n "$_vs_ext_mod" ]; then
+    if [ -d "$VS_PKG_DIR" ] && [ -f "$VS_PKG_DIR"/vapoursynth.abi*.so ]; then
         # Sweep older python3.X/ install_dirs from prior venvs to avoid
         # ambiguity for anything that does `find ... -name vapoursynth.abi*.so`
         # (e.g. our own pre-bridge code in older revisions of this script).
