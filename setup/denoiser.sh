@@ -10,7 +10,6 @@ SOURCES["denoiser:knlmeanscl"]="https://github.com/Khanattila/KNLMeansCL.git|mas
 SOURCES["denoiser:vsmlrt-py"]="https://github.com/AmusementClub/vs-mlrt.git|master"
 SOURCES["denoiser:mvsfunc"]="https://github.com/HomeOfVapourSynthEvolution/mvsfunc.git|master"
 SOURCES["denoiser:havsfunc-legacy"]="https://github.com/HomeOfVapourSynthEvolution/havsfunc.git|r33"
-SOURCES["denoiser:scunet-weights"]="https://github.com/cszn/SCUNet/releases/download/v1.0|pinned"
 # The three SMDegrain plugins. Arch takes these from the AUR; Ubuntu has no
 # AUR, so it builds the same upstreams the AUR packages track. mvtools is
 # pinned to v29 to match Arch's vapoursynth-plugin-mvtools 29, and the other
@@ -527,25 +526,17 @@ for name in ['scunet_color_15', 'scunet_color_25', 'scunet_color_50',
     print(f'  {name}.onnx done', flush=True)
 " "$ONNX_DIR" || { log_error "ONNX color export failed"; return 1; }
 
-    # Download gray model .pth files
-    log_info "Downloading gray SCUNet model weights (optional)..."
+    # Gray SCUNet weights are not downloaded: nobody publishes them any more.
+    # cszn/SCUNet has no releases at all now (the v1.0 tag this used to fetch
+    # from returns 404 for every asset, colour ones included), and the release
+    # vsscunet itself pulls from, HolyWu/vs-scunet@model, carries only the five
+    # colour models. So the download could not succeed on any host and just
+    # printed three warnings per run.
+    #
+    # The export below still runs, so dropping scunet_gray_{15,25,50}.pth into
+    # this directory by hand is all it takes to get the ONNX files.
     local GRAY_PTH_DIR="$ONNX_DIR/gray_pth"
     mkdir -p "$GRAY_PTH_DIR"
-    local _gray_base="https://github.com/cszn/SCUNet/releases/download/v1.0"
-    for _sigma in 15 25 50; do
-        local _fname="scunet_gray_${_sigma}.pth"
-        if [ -f "$GRAY_PTH_DIR/$_fname" ] && [ -s "$GRAY_PTH_DIR/$_fname" ]; then
-            log_info "  $_fname already present, skipping"
-            continue
-        fi
-        if curl -fsSL "$_gray_base/$_fname" -o "$GRAY_PTH_DIR/$_fname" 2>/dev/null; then
-            log_info "  Downloaded $_fname"
-        else
-            log_warn "  Could not download $_fname — gray models will be unavailable"
-            rm -f "$GRAY_PTH_DIR/$_fname"
-        fi
-    done
-    record_src denoiser scunet-weights "https://github.com/cszn/SCUNet/releases/download/v1.0" pinned v1.0
 
     "$VENV_DIR/bin/python3" -c "
 import torch, sys
@@ -559,7 +550,9 @@ for sigma in [15, 25, 50]:
     name = f'scunet_gray_{sigma}'
     pth = gray_dir / f'{name}.pth'
     if not pth.exists():
-        print(f'  skip {name}.pth (not found)', flush=True)
+        # Nobody publishes gray weights any more, so absence is the normal
+        # case and not worth a line of output. Drop the .pth in by hand and
+        # this exports it.
         continue
     out = out_dir / f'{name}.onnx'
     if out.exists() and out.stat().st_size > 1024:
