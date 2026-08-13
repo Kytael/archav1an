@@ -156,8 +156,17 @@ install_system_deps_debian() {
                 local trt_ver
                 trt_ver="$(pick_tensorrt10_version "$cuda_major")"
                 if [ -n "$trt_ver" ]; then
+                    # Every TensorRT package has to be pinned in ONE apt
+                    # transaction. Installing the runtime here and the headers
+                    # later (from the denoiser component, which is what needs
+                    # them to build vstrt) lets the second apt resolve to the
+                    # 11.x candidate and drag the runtime up with it, undoing
+                    # the pin. The dev packages are small; the split is not
+                    # worth the breakage.
                     log_info "Pinning TensorRT to $trt_ver for the onnxruntime TRT EP."
-                    DEPS+=("libnvinfer10=$trt_ver" "libnvinfer-plugin10=$trt_ver")
+                    DEPS+=("libnvinfer10=$trt_ver" "libnvinfer-plugin10=$trt_ver"
+                           "libnvinfer-dev=$trt_ver" "libnvinfer-headers-dev=$trt_ver"
+                           "libnvinfer-plugin-dev=$trt_ver" "libnvinfer-headers-plugin-dev=$trt_ver")
                 else
                     log_warn "No TensorRT 10.x build for CUDA $cuda_major in apt — --denoise-bsvd will fall back to the slower CUDA EP."
                 fi

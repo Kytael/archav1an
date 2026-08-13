@@ -71,8 +71,10 @@ install_denoiser() {
             else
                 pacman -S --needed --noconfirm cudnn || { log_error "Failed to install cudnn. Run: sudo pacman -S cudnn"; return 1; }
             fi
+        elif dpkg -l 'libcudnn9-cuda-*' 2>/dev/null | grep -q '^ii'; then
+            log_info "cudnn already installed."
         else
-            log_warn "Debian/Ubuntu: install libcudnn9-cuda-12 manually from NVIDIA repos"
+            log_warn "No libcudnn9-cuda-* package. Run: sudo setup.sh --install system_deps. Both the ORT TRT EP and the CUDA EP need libcudnn.so.9."
         fi
 
         # 2b. TensorRT (AUR — cannot build as root, use SUDO_USER)
@@ -86,7 +88,17 @@ install_denoiser() {
         # build the AUR package with no BSVD TRT EP for no reason. Failure now
         # skips 2d and nothing else.
         local _have_sys_trt=1
-        if ! pacman -Qi tensorrt &>/dev/null; then
+        if [ "$DISTRO_FAMILY" != "arch" ]; then
+            # Ubuntu has no AUR. The headers vstrt compiles against come from
+            # apt instead, pinned alongside the runtime by system_deps so one
+            # transaction fixes the TensorRT version. Nothing to build here.
+            if dpkg -s libnvinfer-headers-dev &>/dev/null; then
+                log_info "TensorRT headers already installed (apt)."
+            else
+                log_warn "No libnvinfer-headers-dev — skipping the vstrt/SCUNet plugin build. Run: sudo setup.sh --install system_deps. The BSVD lane is unaffected."
+                _have_sys_trt=0
+            fi
+        elif ! pacman -Qi tensorrt &>/dev/null; then
             local _cuda_bin=""
             for _d in /opt/cuda/bin /usr/local/cuda/bin; do
                 [ -x "$_d/nvcc" ] && { _cuda_bin="$_d"; break; }
@@ -538,7 +550,22 @@ for sigma in [15, 25, 50]:
     if [ "$GPU_VENDOR" = "nvidia" ] || [ "$GPU_VENDOR" = "both" ]; then
         # onnxruntime-gpu ships CUDA + TensorRT EPs (the latter is what we use
         # for BSVD V2 stateful streaming).
-        "$VENV_DIR/bin/pip" install -U onnxruntime-gpu \
+        # PyPI has no aarch64 build of onnxruntime-gpu, and never has, for any
+        # release. NVIDIA's jetson-ai-lab devpi is the only index that carries
+        # one, and it is keyed by CUDA version (sbsa/cu130 for CUDA 13.0).
+        local _ort_index=()
+        if [ "$(uname -m)" = "aarch64" ]; then
+            local _ort_cu
+            _ort_cu="$( { command -v nvcc >/dev/null && nvcc --version || /usr/local/cuda/bin/nvcc --version; } 2>/dev/null \
+                | sed -n 's/.*release \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1\2/p' | head -1)"
+            if [ -n "$_ort_cu" ]; then
+                _ort_index=(--extra-index-url "https://pypi.jetson-ai-lab.io/sbsa/cu${_ort_cu}")
+                log_info "aarch64: adding the jetson-ai-lab sbsa/cu${_ort_cu} index for onnxruntime-gpu."
+            else
+                log_warn "aarch64 with no detectable CUDA version — onnxruntime-gpu will not resolve on PyPI."
+            fi
+        fi
+        "$VENV_DIR/bin/pip" install -U "${_ort_index[@]}" onnxruntime-gpu \
             || log_warn "Failed to install onnxruntime-gpu — --denoise-bsvd will fail at dispatch"
 
         # TensorRT RUNTIME for the ORT TRT EP. onnxruntime-gpu's provider .so
@@ -555,7 +582,16 @@ for sigma in [15, 25, 50]:
         # untouched for the vstrt/SCUNet + standalone-engine paths that use them).
         log_info "Installing TensorRT 10 runtime libs for the onnxruntime TRT EP (BSVD)..."
         local _trt_libdir=""
-        if "$VENV_DIR/bin/pip" install -U 'tensorrt-cu12-libs<11'; then
+        local _trt_on_loader_path=0
+        if ldconfig -p 2>/dev/null | grep -q 'libnvinfer\.so\.10'; then
+            # A system TensorRT 10 already satisfies the provider. This is the
+            # normal Ubuntu case: system_deps pins libnvinfer10 from apt, which
+            # lands in the default loader path. It is also the ONLY route on
+            # aarch64, where no index publishes a TensorRT wheel at all.
+            # Arch is unaffected: its AUR tensorrt is 11.x, soname .so.11, so
+            # this test fails there and the pip path below still runs.
+            _trt_on_loader_path=1
+        elif "$VENV_DIR/bin/pip" install -U 'tensorrt-cu12-libs<11'; then
             _trt_libdir="$("$VENV_DIR/bin/python" -c "import tensorrt_libs,os;print(os.path.dirname(tensorrt_libs.__file__))" 2>/dev/null)"
         fi
         # The ORT provider needs libcudnn.so.9 as well as libnvinfer.so.10, and
@@ -566,7 +602,9 @@ for sigma in [15, 25, 50]:
         local _cudnn_libdir
         _cudnn_libdir="$(echo "$VENV_DIR"/lib/python3.*/site-packages/nvidia/cudnn/lib)"
         [ -f "$_cudnn_libdir/libcudnn.so.9" ] || _cudnn_libdir=""
-        if [ -n "$_trt_libdir" ] && [ -f "$_trt_libdir/libnvinfer.so.10" ]; then
+        if [ "$_trt_on_loader_path" -eq 1 ]; then
+            log_success "BSVD TRT EP wired: libnvinfer.so.10 is already on the loader path (system TensorRT)."
+        elif [ -n "$_trt_libdir" ] && [ -f "$_trt_libdir/libnvinfer.so.10" ]; then
             if { [ "$EUID" -eq 0 ] || [ -w /etc/ld.so.conf.d ]; } \
                && printf '%s\n' "$_trt_libdir" ${_cudnn_libdir:+"$_cudnn_libdir"} \
                     > /etc/ld.so.conf.d/archav1an-tensorrt.conf 2>/dev/null \
@@ -575,6 +613,10 @@ for sigma in [15, 25, 50]:
             else
                 log_warn "BSVD TRT EP: libnvinfer.so.10 installed at $_trt_libdir but not registered globally (need root). Run --denoise-bsvd with:  LD_LIBRARY_PATH=$_trt_libdir${_cudnn_libdir:+:$_cudnn_libdir}:\$LD_LIBRARY_PATH"
             fi
+        elif [ "$(uname -m)" = "aarch64" ]; then
+            # Naming the wheel here would be wrong advice: no index publishes a
+            # TensorRT wheel for aarch64, so apt is the only source.
+            log_warn "BSVD TRT EP: no libnvinfer.so.10 on the loader path. aarch64 has no TensorRT wheel, so install it with: sudo setup.sh --install system_deps. --denoise-bsvd will fall back to the slower CUDA EP."
         else
             log_warn "BSVD TRT EP: could not install libnvinfer.so.10 (tensorrt-cu12-libs<11). --denoise-bsvd will fall back to the slower CUDA EP."
         fi
