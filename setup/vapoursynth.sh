@@ -52,54 +52,37 @@ install_vapoursynth() {
     _vs_py_ver="$("$VENV_DIR/bin/python" -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
     log_info "VS R76 build: targeting Python $_vs_py_ver from $VENV_DIR (via $VENV_DIR/bin/meson)"
 
-    # meson resolves cython with find_program, so it takes whatever PATH offers
-    # first: on Ubuntu that is /usr/bin/cython 3.0.8, on Arch pacman's 3.2.9.
-    # python_libs pins Cython 3.2.9 in the venv, so put the venv first and get
-    # the same transpiler on every host instead of the distro's.
+    # meson resolves cython with find_program, but the ninja rule it writes
+    # records the bare command "cython" -- so the PATH that decides which
+    # transpiler actually runs is the one at COMPILE time, not setup time.
+    # Every meson call below therefore carries the venv first.
     #
-    # VapourSynth's meson.build hardcodes limited_api: '3.12', so meson defines
-    # Py_LIMITED_API and names the module vapoursynth.abi3.so. It never defines
-    # CYTHON_LIMITED_API, though, which is the macro Cython actually reads to
-    # decide whether it may touch CPython internals. Cython therefore emits the
-    # full-API forms: PyCFunctionObject, PyASCIIObject,
-    # PyUnstable_Code_NewWithPosOnlyArgs, _PyDict_GetItem_KnownHash.
+    # This matters because VapourSynth's meson.build sets limited_api: '3.12'.
+    # Cython 3.2.9 sees that and emits limited-API-safe code, defining
+    # CYTHON_LIMITED_API itself. Cython 3.0.8, which is what Ubuntu 24.04 ships
+    # as /usr/bin/cython, does not: it emits the full-API forms
+    # (PyCFunctionObject, PyASCIIObject, PyUnstable_Code_NewWithPosOnlyArgs,
+    # PyBytes_AS_STRING) plus a struct member literally named "namespace", a
+    # C++ reserved word. Against Python 3.12 headers that fails with a wall of
+    # undeclared-identifier errors that name CPython internals and never
+    # mention Cython.
     #
-    # Python 3.14 headers still declare those under Py_LIMITED_API, so the Arch
-    # hosts compile and their abi3.so genuinely references them. Python 3.12
-    # hides them, and the build dies with 20 undeclared-identifier errors that
-    # name CPython internals and never mention Cython.
+    # Arch never noticed: its pacman cython is already 3.2.9, so both the setup
+    # and compile steps got a good transpiler no matter what PATH held.
     #
-    # Neither of the obvious escapes works. A newer venv Python is out: the only
-    # aarch64 onnxruntime-gpu wheel published anywhere is cp312-only, so the
-    # BSVD lane pins 3.12. Turning the limited API off is out too: the module
-    # then builds as C++ with a struct member literally named `namespace`, a
-    # reserved word, and no Cython version mangles it (3.0.8 and 3.2.9 both
-    # fail identically).
-    #
-    # Defining CYTHON_LIMITED_API makes Cython emit the portable forms, which
-    # compile on 3.12 and still produce abi3. Only pre-3.13 needs it, so 3.13+
-    # hosts build exactly what they build today. It goes through CXXFLAGS, not
-    # -Dcpp_args: the latter replaces the value meson derives from the
-    # environment and would silently drop set_native_build_flags' -march=native
-    # -O3 -flto.
-    local _saved_cxxflags="${CXXFLAGS:-}"
-    local _py_minor="${_vs_py_ver##*.}"
-    if [ "${_vs_py_ver%%.*}" = "3" ] && [ "$_py_minor" -lt 13 ]; then
-        log_info "Python $_vs_py_ver: adding -DCYTHON_LIMITED_API=1 (Cython otherwise emits internals that pre-3.13 hides under Py_LIMITED_API)."
-        export CXXFLAGS="${CXXFLAGS:-} -DCYTHON_LIMITED_API=1"
-    fi
-
+    # python_libs pins Cython 3.2.9 in the venv, which is the version to use on
+    # every host. No extra defines are needed once the right one runs -- that
+    # was verified by building with and without -DCYTHON_LIMITED_API=1.
     PATH="$VENV_DIR/bin:$PATH" "$VENV_DIR/bin/meson" setup build \
         --prefix="$VS_PREFIX" \
         --buildtype=release \
         -Dpython.platlibdir="lib/python${_vs_py_ver}/site-packages" \
         -Dpython.purelibdir="lib/python${_vs_py_ver}/site-packages" \
-        || { cd "$ORIG_DIR"; export CXXFLAGS="$_saved_cxxflags"; log_error "VapourSynth meson setup failed"; return 1; }
-    export CXXFLAGS="$_saved_cxxflags"
-    log_info "VS R76 build: cython $(PATH="$VENV_DIR/bin:$PATH" cython --version 2>&1)"
-    "$VENV_DIR/bin/meson" compile -C build \
+        || { cd "$ORIG_DIR"; log_error "VapourSynth meson setup failed"; return 1; }
+    log_info "VS R76 build: cython $(PATH="$VENV_DIR/bin:$PATH" command -v cython) $(PATH="$VENV_DIR/bin:$PATH" cython --version 2>&1)"
+    PATH="$VENV_DIR/bin:$PATH" "$VENV_DIR/bin/meson" compile -C build \
         || { cd "$ORIG_DIR"; log_error "VapourSynth meson compile failed"; return 1; }
-    "$VENV_DIR/bin/meson" install -C build \
+    PATH="$VENV_DIR/bin:$PATH" "$VENV_DIR/bin/meson" install -C build \
         || { cd "$ORIG_DIR"; log_error "VapourSynth meson install failed"; return 1; }
     cd "$BUILD_DIR"
 
