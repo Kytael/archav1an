@@ -1,7 +1,7 @@
 # `--lp` is a level, not a thread count
 
-Status: measured on encoder-host 2026-08-13. No code changed yet; the recommendations at the
-end are open.
+Status: measured on encoder-host 2026-08-13, auto-level behaviour confirmed on gpu1, gpu2 and
+gpu3 the same day. Applied — see "What changed" at the end.
 
 ## What the encoder actually accepts
 
@@ -30,7 +30,8 @@ mini-gops in parallel as well, leading to higher speed, but much higher memory."
 The av1an paths are correct: every `run_linux_*.sh` and `av1an-batch-*.sh` passes `--lp 3`,
 a real level, because av1an already runs many chunk workers.
 
-Two places on the single-pass path pass a core count instead:
+Two places on the single-pass path passed a core count instead. Both are fixed; they are
+recorded here because the mistake is easy to repeat:
 
 - `run_linux_dance_HQ_crf27.sh:13` — `LP=$(nproc)`, capped at 64, passed as `--lp "$LP"`.
   On a 32-thread box that is `--lp 32`, clamped to level 6.
@@ -65,6 +66,39 @@ with memory.
 Auto picks level 6 on this box, so `--lp 0`, `--lp 16` and `--lp 32` are the same encoder
 configuration. The PPCS column is where the memory goes: 74 buffers up to level 3, then 107,
 140 and 305 as the extra mini-GOPs arrive.
+
+## What `--lp 0` picks, and why it is not a synonym for 6
+
+`load_default_buffer_configuration_settings` in `Source/Lib/Globals/enc_handle.c:306-331`
+maps the logical processor count straight onto a level:
+
+| logical cores | auto level |
+|---|---|
+| 1 | 1 |
+| 2 | 2 |
+| 3 - 5 | 3 |
+| 6 - 11 | 4 |
+| 12 - 23 | 5 |
+| 24 or more | 6 |
+
+Two details matter. The count is `get_num_processors()`, so it is logical threads, not
+physical cores. And `--pin N` is applied first: `pin_threads` replaces the core count when it
+is smaller, so `--pin` steers the auto level as well as the affinity.
+
+Measured across the fleet 2026-08-13 by reading the encoder's own banner:
+
+| host | logical cores | encoder | `--lp 0` gives |
+|---|---|---|---|
+| encoder-host | 32 | PSY v2.3.0-C | **6** |
+| gpu1 | 16 | mainline v4.1.0 | **5** |
+| gpu2 | 16 | PSY v2.3.0-C | **5** |
+| gpu3 | 16 | mainline v4.1.0 | **5** |
+
+Both encoder builds agree, so the mapping is not PSY-specific. The practical consequence:
+every 16-thread host in the fleet drops from level 6 to level 5 when a hardcoded core count
+is replaced by `--lp 0`. That is the encoder's own judgement and it costs memory rather than
+quality — on encoder-host level 5 measured 2672 MB against 4795 MB — but it is a real change in
+encoder configuration, not a no-op.
 
 ### Concurrent slots
 
@@ -114,17 +148,32 @@ wrong: 32 clamps to level 6, which is exactly what `--lp 16` and the encoder's o
 also give. Whatever caused the contention loss, it was not a thread request that the
 recommended configuration did not also make.
 
-## Recommendations
+## What changed
 
-1. **Stop passing a core count.** In `run_linux_dance_HQ_crf27.sh`, delete the `LP=$(nproc)`
-   block and pass `--lp 0`, or drop the flag and let the encoder default. Measured cost:
-   22.11 fps against 22.90, inside noise.
-2. **Pass a level in `dispatch_cmd.py`.** `--lp 4` with `slots = 3` matches the 3-denoiser
-   roster, so no denoiser waits for an encoder slot, and costs 1.5% of the ceiling for 35%
-   less memory. If you prefer the fewest moving parts, keep `slots = 2` and pass `--lp 6`.
-3. **Fix or drop the thread budget in `roster.py`.** `slots * threads_per_slot <= cores` is
-   arithmetic over a value the encoder ignores. Either rename the field to `lp_level`,
-   validate `0 <= lp_level <= 6`, and drop the ceiling, or keep a core budget and spend it on
-   `--pin`, which is the parameter that accepts one.
-4. **Re-benchmark before trusting the archive-run estimate.** Any change here moves the
-   encode rate the schedule is built on.
+Applied 2026-08-13.
+
+1. **`run_linux_dance_HQ_crf27.sh` passes `--lp 0`.** The `LP=$(nproc)` block is gone. On
+   encoder-host this is the same level 6 as before, at 22.11 fps against 22.90, inside noise. On
+   the 16-thread hosts it is level 5 rather than the clamped 6 — see the auto table above.
+2. **`roster.py` field `threads_per_slot` is now `lp_level`, default 6.** `dispatch_cmd.py`
+   passes it straight to `--lp`, so a roster now names a level instead of a thread count.
+   Level 6 rather than 4 because the pool runs 2 slots: at 2 slots level 6 measured 26.27 fps
+   against 23.05 at level 4, and only 3 or more slots close that gap. Level 4 remains the
+   better setting *if* `slots` ever goes to 3, where it reaches 25.88 fps for 35% less memory.
+3. **The thread budget is gone, and `oversubscribe` with it.** `slots * threads_per_slot <=
+   cores * oversubscribe` was arithmetic over a value the encoder ignores, and no thread
+   budget replaces it: a single level-4 encoder already asks for 87 threads on 32 cores.
+   `_validate` now rejects an `lp_level` outside `[0, 6]`, because the encoder would only
+   clamp it to 6 and warn. `load_roster` no longer takes `core_count`.
+
+This is a config-key rename. A roster that still says `threads_per_slot` silently falls back
+to the default `lp_level = 6`; `.archive-run/denoisers.toml` was migrated in place. The
+`.archive-bench*` rosters are historical run artifacts and were left alone.
+
+**Re-benchmark before trusting the archive-run estimate.** The 2-slot encode rate the
+schedule is built on came from clamped runs that were already at level 6, so it should hold,
+but no combined denoise-plus-encode run has been measured since.
+
+Not done: nothing spends a core budget on `--pin`. `--pin` is the parameter that accepts a
+core count, and it also steers `--lp 0`, so it is the right lever if the encoders ever need
+to be confined. No measurement exists for it.

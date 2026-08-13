@@ -1,7 +1,7 @@
 from tools.archive_batch.dispatch_cmd import build_command
 from tools.archive_batch.roster import Denoiser, EncodePool
 
-ENCODE = EncodePool(host="local", slots=2, threads_per_slot=16)
+ENCODE = EncodePool(host="local", slots=2, lp_level=6)
 REMOTE = Denoiser(name="gpu1_4090", host="gpu1", backend="trt", device=0,
                   tiling="none", enabled=True, port=5300)
 LOCAL = Denoiser(name="igpu", host="local", backend="migraphx", device=0,
@@ -34,7 +34,7 @@ def test_sigma_is_always_the_fleet_default():
 def test_lp_comes_from_the_encode_pool():
     argv, _ = build_command(LOCAL, ENCODE, staged="/t/x.MOV", out="/t/o.mkv",
                             remote_src=None, callback=None)
-    assert argv[argv.index("--lp") + 1] == "16"
+    assert argv[argv.index("--lp") + 1] == "6"
 
 
 def test_migraphx_denoiser_pins_vspipe_and_interpreter():

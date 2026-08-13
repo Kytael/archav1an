@@ -39,7 +39,7 @@ def build_command(denoiser, encode, staged, out, remote_src, callback):
             "-i", staged, "-o", out,
             "--quality", "27",
             "--photon-noise", "6",
-            "--lp", str(encode.threads_per_slot),
+            "--lp", str(encode.lp_level),
             "--speed", "4",
             "--denoise-bsvd",
             "--bsvd-sigma", BSVD_SIGMA,

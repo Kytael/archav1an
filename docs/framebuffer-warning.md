@@ -62,8 +62,26 @@ Reproduced with no GPU, no BSVD and no TensorRT by a VPY that only mimics the sh
 | synchronous `get_frame` instead | none |
 | **async lookahead, 1200 frames** | **1,443,236,736 B (58 frames)** |
 
-The residual grows with the run because the cache grows, bounded by `core.max_cache_size`
-(4096 MB, set explicitly in the generated VPY).
+## It is bounded, and it is not an orphan
+
+The two runs above suggested the residual grows with run length. It does not. Re-measured
+2026-08-13 with the same graph shape driven by a synthetic `BlankClip` source, so run length
+is the only variable:
+
+| frames | residual | RGBS frames | wall |
+|---|---|---|---|
+| 300 | 99,533,568 B | 4 | 0.9 s |
+| 1200 | 2,687,406,336 B | 108 | 3.6 s |
+| 3000 | 2,886,473,472 B | 116 | 8.1 s |
+| 10000 | 1,020,219,072 B | 41 | 26.6 s |
+
+The residual rises, flattens well below the 4096 MB `core.max_cache_size` the generated VPY
+sets, and at 10000 frames is lower than at 1200. That is a cache whose occupancy at teardown
+depends on where eviction happened to be, not a leak: a leak would be monotonic.
+
+Nothing is orphaned either. The memory is ordinary host heap in the vspipe process, and the
+kernel reclaims it when vspipe exits, which is the next thing that happens. The warning is
+printed on the way out.
 
 ## Do not shrink the cache
 
@@ -82,8 +100,12 @@ success (:1236). So on a run that works the message is written and thrown away. 
 only in failure diagnostics — which is where it was seen, next to a real
 `Failed to read packet: Input/output error`.
 
-## Recommendation
+## Decision: ignore it
 
-Leave it. It is an accounting note at teardown, the frames are released by process exit, and
-the cache that produces it is load-bearing. If it is distracting in failure logs, drop that
-one line in `_print_log_tail` rather than touching the graph or the cache size.
+Closed 2026-08-13. The three things that would make it worth acting on are all false: it is
+not GPU memory, it is not unbounded, and it is not held after the process exits. It is an
+accounting note at teardown over a cache that is load-bearing — shrinking that cache
+deadlocks the graph.
+
+No code change. If the line is ever distracting in a failure log, drop it in
+`_print_log_tail` rather than touching the graph or the cache size.

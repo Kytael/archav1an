@@ -82,16 +82,20 @@ margin  = 32
 enabled = false
 
 # --- the encode pool --------------------------------------------------------
-# Encoder-host's encode ceiling is 18.2 fps and 2 slots reach it: one wide encoder
-# wastes a quarter of the machine, 2 gain 19%, 3 add another 0.5%. Rejected if
-# slots x threads_per_slot exceeds the core count.
+# Encoder-host's encode ceiling is about 26 fps and 2 slots reach it: one wide
+# encoder wastes a quarter of the machine, 2 gain 15%, 3 add nothing.
 #
-# oversubscribe raises that ceiling by the given factor and defaults to 1.0.
-# SVT-AV1 leaves gaps in a slot's threads, so booking slightly past the core
-# count fills them. 1.25 on a 32-thread box permits 5 slots x 8 threads = 40.
-# It is opt-in because it trades per-clip latency for total throughput.
+# lp_level is SVT-AV1's --lp: a parallelism LEVEL in [0, 6], NOT a thread count.
+# It costs memory, not quality -- every level produced a bit-identical bitstream.
+# Level 6 is the default because this pool runs few slots, and a low level only
+# fills the machine when many slots share it: at 2 slots level 6 measured
+# 26.27 fps against 23.05 at level 4, while 3 slots at level 4 reached 25.88 for
+# 35% less memory. Budget about 4.8 GB a slot at level 6, 2.1 GB at level 4.
+#
+# 0 lets the encoder choose from the core count. That is level 5 on a 16-thread
+# host and reaches 6 only at 24 threads, so 0 is not a synonym for 6.
+# See docs/lp-and-encoder-parallelism.md.
 [encode]
-host             = "local"
-slots            = 2
-threads_per_slot = 16
-oversubscribe    = 1.0
+host     = "local"
+slots    = 2
+lp_level = 6

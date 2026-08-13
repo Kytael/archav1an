@@ -50,12 +50,13 @@ class Denoiser:
 class EncodePool:
     host: str
     slots: int
-    threads_per_slot: int
-    # How far past the core count the encoders may be booked. SVT-AV1 does not
-    # keep every thread of a slot busy, so a small overbook fills the gaps and
-    # raises total throughput. 1.0 means never exceed the core count, which is
-    # the safe default; a run that wants the overbook has to ask for it.
-    oversubscribe: float = 1.0
+    # SVT-AV1's --lp: a parallelism LEVEL in [0, 6], not a thread count. 0 lets
+    # the encoder pick from the core count, which on a 16-thread host is level 5
+    # and only reaches 6 at 24 threads. 6 is the default here because the pool
+    # runs few slots: at 2 slots level 6 measured 26.27 fps against 23.05 at
+    # level 4, and only 3 or more slots close that gap. See
+    # docs/lp-and-encoder-parallelism.md. The cost is memory, ~4.8 GB a slot.
+    lp_level: int = 6
 
 
 @dataclass(frozen=True)
@@ -67,7 +68,7 @@ class Roster:
         return tuple(d for d in self.denoisers if d.enabled)
 
 
-def load_roster(path, core_count):
+def load_roster(path):
     try:
         with open(path, "rb") as fh:
             data = tomllib.load(fh)
@@ -80,10 +81,9 @@ def load_roster(path, core_count):
     enc = data.get("encode", {})
     encode = EncodePool(host=enc.get("host", "local"),
                         slots=int(enc.get("slots", 2)),
-                        threads_per_slot=int(enc.get("threads_per_slot", 16)),
-                        oversubscribe=float(enc.get("oversubscribe", 1.0)))
+                        lp_level=int(enc.get("lp_level", 6)))
     roster = Roster(denoisers=denoisers, encode=encode)
-    _validate(roster, core_count)
+    _validate(roster)
     return roster
 
 
@@ -102,7 +102,7 @@ def _denoiser(entry):
         raise RosterError(f"denoiser entry missing required key: {e}")
 
 
-def _validate(roster, core_count):
+def _validate(roster):
     names = [d.name for d in roster.denoisers]
     if len(names) != len(set(names)):
         raise RosterError("duplicate denoiser name in roster")
@@ -153,17 +153,11 @@ def _validate(roster, core_count):
                 f"denoiser '{d.name}' sets stage_source on a local host; the "
                 f"source is already local, so there is nothing to stage")
 
-    if roster.encode.oversubscribe < 1.0:
+    # There is no thread budget to check. --lp is a level, and every level asks
+    # for more threads than the machine has anyway: level 4 measured 87 threads
+    # and level 6 measured 95, on 32 cores. The encoder clamps an out-of-range
+    # level to 6 with a warning that scrolls past, so reject it here instead.
+    if not 0 <= roster.encode.lp_level <= 6:
         raise RosterError(
-            f"encode.oversubscribe is {roster.encode.oversubscribe}; it raises the "
-            f"thread ceiling, so it cannot be below 1.0")
-
-    concurrent = min(roster.encode.slots, len(active))
-    threads = concurrent * roster.encode.threads_per_slot
-    ceiling = core_count * roster.encode.oversubscribe
-    if threads > ceiling:
-        raise RosterError(
-            f"roster would oversubscribe {core_count} cores: {concurrent} concurrent "
-            f"encoders x {roster.encode.threads_per_slot} threads = {threads}, above "
-            f"the ceiling of {ceiling:g} set by encode.oversubscribe "
-            f"{roster.encode.oversubscribe:g}")
+            f"encode.lp_level is {roster.encode.lp_level}; --lp takes a parallelism "
+            f"level in [0, 6], not a thread count. Use --pin for a core count.")

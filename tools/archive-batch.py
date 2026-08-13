@@ -110,7 +110,7 @@ def make_runner(encode):
 
 
 def _roster():
-    return load_roster(ROSTER, os.cpu_count() or 1)
+    return load_roster(ROSTER)
 
 
 def sweep_stage_root():
@@ -195,7 +195,7 @@ def main():
 
     print(f"[archive-batch] {len(clips)} clips in manifest, {len(todo)} to do")
     print(f"[archive-batch] denoisers: {[d.name for d in roster.enabled()]}, "
-          f"{roster.encode.slots} encoder slots x --lp {roster.encode.threads_per_slot}")
+          f"{roster.encode.slots} encoder slots at --lp {roster.encode.lp_level}")
     if not todo:
         print("[archive-batch] nothing to do.")
         return 0

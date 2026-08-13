@@ -124,4 +124,4 @@ def _roster_stub():
     from tools.archive_batch.roster import Denoiser, EncodePool, Roster
     return Roster(denoisers=(Denoiser(name="d", host="local", backend="trt",
                                       device=0, tiling="none", enabled=True),),
-                  encode=EncodePool(host="local", slots=1, threads_per_slot=16))
+                  encode=EncodePool(host="local", slots=1, lp_level=6))

@@ -11,9 +11,11 @@ cd "$(dirname "$0")"
 source "$(dirname "$(realpath "$0")")/activate-venv.sh"
 touch "tools/sh-used-$(basename "$0").txt"
 
-LP=$(nproc)
-[ "$LP" -gt 64 ] && LP=64
-echo "Starting SvtAv1EncApp Batch (Dance HQ CRF 27) — single-pass, ${LP} threads..."
+# --lp is a parallelism LEVEL in [0, 6], not a thread count, so the old
+# LP=$(nproc) here only ever clamped to 6 with a warning. 0 lets the encoder
+# choose from the core count: level 5 on a 16-thread host, 6 at 24 or more.
+# See docs/lp-and-encoder-parallelism.md.
+echo "Starting SvtAv1EncApp Batch (Dance HQ CRF 27) — single-pass..."
 # Extra args passed to this script are forwarded to svtav1-dispatch.py (e.g. --denoise-scunet)
 EXTRA_ARGS=("$@")
 
@@ -53,7 +55,7 @@ while IFS= read -r -d '' f <&3; do
         -o "$OUTPUT_FILE" \
         --quality 27 \
         --photon-noise 6 \
-        --lp "$LP" \
+        --lp 0 \
         --speed 4 \
         --encoder-params "--tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 --sharpness 1 --tf-strength 2 --variance-boost-strength 1 --variance-octile 7 --enable-dlf 2" \
         "${EXTRA_ARGS[@]}"; then
