@@ -19,6 +19,25 @@ install_ffvship() {
     # Ensure pkg-config can find locally-built libraries (ffms2, ffmpeg, etc.)
     export PKG_CONFIG_PATH="$VS_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
+    # pkg-config supplies -L$VS_PREFIX/lib -lffms2, which is enough to find
+    # libffms2 itself and not enough to link. libffms2's DT_NEEDED names
+    # libavcodec.so.63, libavutil.so.61 and friends from the same prefix, and ld
+    # resolves a shared library's own dependencies through -rpath-link or
+    # LD_LIBRARY_PATH -- never through -L. This function never called
+    # set_native_build_flags, so neither was set and the link died on
+    # "undefined reference to av_malloc@LIBAVUTIL_61".
+    #
+    # Arch hid this: pacman's ffmpeg also ships libavcodec.so.63, so ld found
+    # those instead and linked FFVship against the SYSTEM libraries, same
+    # soname and older ABI. That is the wrong-library trap from 5fbe07c, and it
+    # only failed loudly here because Ubuntu ships .so.60 and has nothing to
+    # accidentally match.
+    #
+    # LD_RUN_PATH records the prefix in the built binary, so FFVship keeps
+    # resolving to our libraries at runtime without an env var.
+    export LD_LIBRARY_PATH="$VS_PREFIX/lib:${LD_LIBRARY_PATH:-}"
+    export LD_RUN_PATH="$VS_PREFIX/lib:${LD_RUN_PATH:-}"
+
     # Ensure ROCm/HIP tools and environment are set up
     if [ -d "/opt/rocm" ]; then
         export PATH="/opt/rocm/bin:$PATH"
