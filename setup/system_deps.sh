@@ -193,21 +193,38 @@ debian_system_deps() {
                 local trt_ver
                 trt_ver="$(pick_tensorrt10_version "$cuda_ver")"
                 if [ -n "$trt_ver" ]; then
-                    # Every TensorRT package has to be pinned in ONE apt
-                    # transaction. Installing the runtime here and the headers
-                    # later (from the denoiser component, which is what needs
-                    # them to build vstrt) lets the second apt resolve to the
-                    # 11.x candidate and drag the runtime up with it, undoing
-                    # the pin. The dev packages are small; the split is not
-                    # worth the breakage.
-                    log_info "Pinning TensorRT to $trt_ver for the onnxruntime TRT EP." >&2
+                    # Two rules, both learned by breaking them:
+                    #
+                    # 1. Every TensorRT package goes in ONE apt transaction.
+                    #    Installing the runtime here and the headers later, from
+                    #    the denoiser that needs them to build vstrt, lets the
+                    #    second apt resolve to the 11.x candidate and drag the
+                    #    runtime up with it, undoing the pin.
+                    # 2. The pin must cover the whole dependency closure, not
+                    #    just what we name. apt does not back off the newest
+                    #    candidate for an unpinned dependency -- it reports a
+                    #    conflict and fails the transaction. Pinning
+                    #    libnvinfer-bin alone produced exactly that against
+                    #    libnvinfer-lean10, -vc-plugin10, -dispatch10 and
+                    #    libnvonnxparsers10.
+                    #
+                    # So this is libnvinfer-bin's full Depends closure plus the
+                    # dev packages vstrt compiles against. Verify any change
+                    # with: apt-get install -s -y <the whole list>
+                    #
                     # libnvinfer-bin carries trtexec, which vsmlrt uses to cache
                     # TRT engines; without it the denoiser warns and rebuilds
-                    # engines every run. It has to be pinned with the rest.
-                    DEPS+=("libnvinfer10=$trt_ver" "libnvinfer-plugin10=$trt_ver"
-                           "libnvinfer-dev=$trt_ver" "libnvinfer-headers-dev=$trt_ver"
-                           "libnvinfer-plugin-dev=$trt_ver" "libnvinfer-headers-plugin-dev=$trt_ver"
-                           "libnvinfer-bin=$trt_ver")
+                    # every engine on every run.
+                    log_info "Pinning TensorRT to $trt_ver for the onnxruntime TRT EP." >&2
+                    local _trt_pkg
+                    for _trt_pkg in libnvinfer10 libnvinfer-plugin10 \
+                                    libnvinfer-lean10 libnvinfer-vc-plugin10 \
+                                    libnvinfer-dispatch10 libnvonnxparsers10 \
+                                    libnvinfer-dev libnvinfer-headers-dev \
+                                    libnvinfer-plugin-dev libnvinfer-headers-plugin-dev \
+                                    libnvinfer-bin; do
+                        DEPS+=("$_trt_pkg=$trt_ver")
+                    done
                 else
                     log_warn "No TensorRT 10.x build for CUDA $cuda_major in apt — --denoise-bsvd will fall back to the slower CUDA EP." >&2
                 fi
