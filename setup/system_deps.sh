@@ -147,6 +147,9 @@ debian_system_deps() {
         # for them here keeps every apt call in one transaction.
         ocl-icd-opencl-dev opencl-headers
         libboost-filesystem-dev libboost-system-dev
+        # fftw3f, which MVTools' meson.build requires outright. On Arch it
+        # arrives as a dependency of the AUR mvtools package.
+        libfftw3-dev
         # Performance
         libmimalloc-dev
     )
@@ -198,9 +201,13 @@ debian_system_deps() {
                     # the pin. The dev packages are small; the split is not
                     # worth the breakage.
                     log_info "Pinning TensorRT to $trt_ver for the onnxruntime TRT EP." >&2
+                    # libnvinfer-bin carries trtexec, which vsmlrt uses to cache
+                    # TRT engines; without it the denoiser warns and rebuilds
+                    # engines every run. It has to be pinned with the rest.
                     DEPS+=("libnvinfer10=$trt_ver" "libnvinfer-plugin10=$trt_ver"
                            "libnvinfer-dev=$trt_ver" "libnvinfer-headers-dev=$trt_ver"
-                           "libnvinfer-plugin-dev=$trt_ver" "libnvinfer-headers-plugin-dev=$trt_ver")
+                           "libnvinfer-plugin-dev=$trt_ver" "libnvinfer-headers-plugin-dev=$trt_ver"
+                           "libnvinfer-bin=$trt_ver")
                 else
                     log_warn "No TensorRT 10.x build for CUDA $cuda_major in apt — --denoise-bsvd will fall back to the slower CUDA EP." >&2
                 fi

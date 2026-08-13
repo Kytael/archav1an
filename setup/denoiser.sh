@@ -72,22 +72,29 @@ build_meson_vs_plugin() {
     clone_src denoiser "$name" "$name" || { cd "$ORIG_DIR"; return 1; }
     cd "$name" || { cd "$ORIG_DIR"; log_error "Failed to cd into $name"; return 1; }
 
-    # --libdir is relative to --prefix, so this installs straight into
-    # $VS_PREFIX/lib/vapoursynth, which is what get_vs_plugin_path returns.
     "$MESON" setup build --prefix="$VS_PREFIX" --libdir="lib/vapoursynth" \
         --buildtype=release \
         || { cd "$ORIG_DIR"; log_error "$name meson setup failed"; return 1; }
     ninja -C build || { cd "$ORIG_DIR"; log_error "$name build failed"; return 1; }
-    ninja -C build install || { cd "$ORIG_DIR"; log_error "$name install failed"; return 1; }
-    cd "$ORIG_DIR"
 
-    # meson picks the installed name, so confirm it rather than assume it
-    # matches what ARTIFACTS expects.
-    if [ ! -f "$VS_PLUGIN_PATH/$lib" ]; then
-        log_error "$name built but $VS_PLUGIN_PATH/$lib is missing (present: $(ls "$VS_PLUGIN_PATH" 2>/dev/null | tr '\n' ' '))"
+    # Copy the built plugin ourselves rather than running `ninja install`.
+    # RemoveGrain and CTMF ignore --libdir and install into
+    # $(pkg-config --variable=libdir vapoursynth)/vapoursynth, and our bridged
+    # vapoursynth.pc points libdir at the Python package directory -- so they
+    # landed in .../site-packages/vapoursynth/vapoursynth/ where nothing looks
+    # for them. Taking the artifact straight out of the build tree is what
+    # wwxd.sh already does and does not depend on each project's install logic.
+    local _built
+    _built="$(find build -maxdepth 2 -name '*.so' -type f 2>/dev/null | head -1)"
+    if [ -z "$_built" ]; then
+        cd "$ORIG_DIR"
+        log_error "$name built but no .so found under build/"
         return 1
     fi
-    log_success "$name installed to $VS_PLUGIN_PATH/$lib"
+    cp "$_built" "$VS_PLUGIN_PATH/$lib" \
+        || { cd "$ORIG_DIR"; log_error "Failed to copy $_built to $VS_PLUGIN_PATH/$lib"; return 1; }
+    cd "$ORIG_DIR"
+    log_success "$name installed to $VS_PLUGIN_PATH/$lib (from $_built)"
 }
 
 install_denoiser() {
