@@ -246,7 +246,17 @@ drop_pip_vapoursynth_stub() {
         VIRTUAL_ENV="$VENV_DIR" uv pip uninstall vapoursynth >/dev/null 2>&1 && return 0
     fi
     "$VENV_DIR/bin/pip" uninstall -y vapoursynth >/dev/null 2>&1 \
-        || log_warn "Could not remove the pip vapoursynth stub; importing vapoursynth may report a core/module version mismatch."
+        || { log_warn "Could not remove the pip vapoursynth stub; importing vapoursynth may report a core/module version mismatch."; return 0; }
+
+    # Re-register the built module. Installing the wheel rewrites
+    # ~/.config/vapoursynth/vapoursynth.toml to name its own libvsscript.so, so
+    # the entry install_vapoursynth wrote is gone by now -- and once the wheel
+    # is uninstalled that path does not exist either, leaving vspipe dead with
+    # "Python executable and library path couldn't be determined despite
+    # automatic configuration".
+    "$VENV_DIR/bin/python" -m vapoursynth config &>/dev/null \
+        && log_info "Re-wrote vapoursynth.toml for the source-built libvsscript.so." \
+        || log_warn "Removed the pip stub but could not re-run 'python -m vapoursynth config'; vspipe may fail to initialise VSScript."
 }
 
 # Virtual environment path for Python dependencies
