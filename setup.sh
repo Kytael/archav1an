@@ -59,7 +59,14 @@ is_installed() {
                 pacman -Qi dav1d &> /dev/null && \
                 pacman -Qi mimalloc &> /dev/null
             else
-                dpkg -s build-essential &> /dev/null
+                # Same reasoning as the arch branch: check key packages, not
+                # just build-essential, so a newly added dep triggers a
+                # reinstall instead of reporting the component as done.
+                dpkg -s build-essential &> /dev/null && \
+                dpkg -s clang &> /dev/null && \
+                dpkg -s meson &> /dev/null && \
+                dpkg -s libdav1d-dev &> /dev/null && \
+                dpkg -s libmimalloc-dev &> /dev/null
             fi
             ;;
         "python_libs")
