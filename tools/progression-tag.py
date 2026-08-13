@@ -5,6 +5,12 @@ import subprocess
 import tempfile
 import sys
 import shutil
+# Anything we compile is the default. This has to run before any module-level
+# shutil.which() resolves, so it sits with the imports. See tools/prefix_env.py.
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from prefix_env import prefer_prefix_bin
+prefer_prefix_bin()
 
 
 # --- GLOBALS ---

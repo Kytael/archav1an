@@ -19,6 +19,7 @@ import tag as _tag
 # Tile parsing lives with the tiling code so the split-host path and the gates
 # read the flag the same way. Module-level imports there are stdlib only.
 from bsvd_windowed import parse_tile_arg, tile_arg
+from prefix_env import prefer_prefix_bin
 
 
 # ---------------------------------------------------------------------------
@@ -721,51 +722,6 @@ Concurrency:
                                 Temp/<stem>, so parallel runs over same-named
                                 sources cannot delete each other's files
 """
-
-
-def prefer_prefix_bin():
-    """Put $VS_PREFIX/bin ahead of PATH and $VS_PREFIX/lib ahead of the loader,
-    as activate-venv.sh does.
-
-    Every binary here is found with shutil.which, and nothing on any of the
-    three hosts has the prefix on PATH. VS_PREFIX arrived in May 2026 and
-    installs moved to /opt/archav1an, so since then which() has been resolving
-    to whatever pre-existed: March /usr/local builds on encoder-host and gpu2,
-    pacman builds on gpu1. Every setup.sh --install since has produced
-    binaries that nothing ran.
-
-    Callers that already source activate-venv.sh are unaffected -- this only
-    re-adds an entry that is already first there.
-    """
-    prefix = os.environ.get("VS_PREFIX", "/opt/archav1an")
-    prefix_bin = os.path.join(prefix, "bin")
-    if not os.path.isdir(prefix_bin):
-        return
-
-    # The lib half is not optional. Taking the prefix binaries without the
-    # prefix libraries gives them the SYSTEM libavcodec.so.63, which carries
-    # the same soname but an older ABI. The binary starts, so the mismatch is
-    # invisible until a lazily-bound symbol only the newer library defines is
-    # called -- on 2026-08-12, av_bsf_graph_free during bitstream-filter
-    # teardown, which made ffmpeg write a complete output file and then exit
-    # 127. It hit only sources whose structure builds a bsf graph (the S2S
-    # clips carry a tmcd track), so it read as a bad-clip problem for two runs.
-    # A batch run reaches here without activate-venv.sh, which is why
-    # interactive use never saw it.
-    # Appended, not prepended: the MIGraphX lane hands us its own
-    # LD_LIBRARY_PATH and must keep first claim. Appending is still enough,
-    # because every LD_LIBRARY_PATH entry is searched before /usr/lib.
-    prefix_lib = os.path.join(prefix, "lib")
-    if os.path.isdir(prefix_lib):
-        ld_parts = [p for p in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep) if p]
-        if prefix_lib not in ld_parts:
-            os.environ["LD_LIBRARY_PATH"] = os.pathsep.join(ld_parts + [prefix_lib])
-
-    parts = os.environ.get("PATH", "").split(os.pathsep)
-    if parts and parts[0] == prefix_bin:
-        return
-    os.environ["PATH"] = os.pathsep.join(
-        [prefix_bin] + [p for p in parts if p != prefix_bin])
 
 
 def main():
