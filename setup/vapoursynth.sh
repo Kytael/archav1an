@@ -220,12 +220,21 @@ EOF
         MESON="$VENV_DIR/bin/meson"
         command -v ninja &> /dev/null || NINJA="$VENV_DIR/bin/ninja"
     fi
-    "$MESON" setup build --prefix="$VS_PREFIX" --buildtype=release \
+    # BestSource's meson.build finds the VapourSynth headers by running
+    # `python3 -c 'import vapoursynth as vs; print(vs.get_include())'`, so that
+    # python has to be one that can import OUR VapourSynth. Ours installs under
+    # $VS_PREFIX and is reachable from the venv through the
+    # _vapoursynth_native.pth written above; a bare python3 is the distro's, and
+    # on a host with no system-wide vapoursynth package the command exits 1 and
+    # takes meson setup with it. Arch hides this, because pacman's vapoursynth
+    # answers for /usr/bin/python3 -- with the system headers instead of the
+    # ones we just built.
+    PATH="$VENV_DIR/bin:$PATH" "$MESON" setup build --prefix="$VS_PREFIX" --buildtype=release \
         -Dc_args="-march=native -O3" \
         -Dcpp_args="-march=native -O3" \
         -Db_lto=true \
         || { cd "$ORIG_DIR"; log_error "BestSource meson setup failed"; return 1; }
-    "$NINJA" -C build || { cd "$ORIG_DIR"; log_error "BestSource ninja build failed"; return 1; }
+    PATH="$VENV_DIR/bin:$PATH" "$NINJA" -C build || { cd "$ORIG_DIR"; log_error "BestSource ninja build failed"; return 1; }
     "$NINJA" -C build install || { cd "$ORIG_DIR"; log_error "BestSource ninja install failed"; return 1; }
 
     local BS_SO
