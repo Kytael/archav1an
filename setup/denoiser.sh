@@ -20,6 +20,32 @@ SOURCES["denoiser:removegrain"]="https://github.com/vapoursynth/vs-removegrain.g
 SOURCES["denoiser:ctmf"]="https://github.com/HomeOfVapourSynthEvolution/VapourSynth-CTMF.git|master"
 ARTIFACTS["denoiser"]="lib/vapoursynth/libvstrt.so lib/vapoursynth/libvsmigx.so lib/vapoursynth/libknlmeanscl.so lib/vapoursynth/libmvtools.so lib/vapoursynth/libremovegrain.so lib/vapoursynth/libctmf.so"
 
+# require_debian_pkgs <what> <pkg>...
+# Confirms apt packages the denoiser needs. They all live in
+# debian_system_deps, so the normal path is that this only verifies them. The
+# previous code ran a bare `apt install` mid-component, which fails for a user
+# running setup unprivileged -- and it was the very first step of the denoiser,
+# so the whole component died on it. Installing is still allowed when already
+# root; otherwise the error names the one command that fixes it.
+require_debian_pkgs() {
+    local what="$1"; shift
+    local missing=() p
+    for p in "$@"; do
+        dpkg -s "$p" &>/dev/null || missing+=("$p")
+    done
+    if [ "${#missing[@]}" -eq 0 ]; then
+        log_info "$what already installed."
+        return 0
+    fi
+    if [ "$EUID" -eq 0 ]; then
+        apt install -y "${missing[@]}" \
+            || { log_error "Failed to install $what (${missing[*]})"; return 1; }
+        return 0
+    fi
+    log_error "$what missing: ${missing[*]}. Run: sudo ./setup.sh --install system_deps"
+    return 1
+}
+
 # build_meson_vs_plugin <sources-name> <expected .so>
 # Builds one meson-based VapourSynth plugin from SOURCES into the prefix plugin
 # dir. Only the Debian/Ubuntu path calls this; Arch gets the same three plugins
@@ -106,7 +132,7 @@ install_denoiser() {
             pacman -S --needed --noconfirm opencl-icd-loader || { log_error "Failed to install opencl-icd-loader"; return 1; }
         fi
     else
-        apt install -y ocl-icd-opencl-dev || { log_error "Failed to install ocl-icd-opencl-dev"; return 1; }
+        require_debian_pkgs "OpenCL ICD loader" ocl-icd-opencl-dev opencl-headers || return 1
     fi
 
     # =========================================================================
@@ -549,7 +575,7 @@ for sigma in [15, 25, 50]:
         fi
         unset _missing _p
     else
-        apt install -y cmake ninja-build meson || { log_error "Failed to install build tools"; return 1; }
+        require_debian_pkgs "KNLMeansCL build deps" cmake ninja-build meson || return 1
     fi
 
     # =========================================================================
@@ -578,7 +604,7 @@ for sigma in [15, 25, 50]:
             pacman -S --needed --noconfirm boost || { log_error "Failed to install boost. Run: sudo pacman -S boost"; return 1; }
         fi
     else
-        apt install -y libboost-filesystem-dev libboost-system-dev || { log_error "Failed to install boost"; return 1; }
+        require_debian_pkgs "boost" libboost-filesystem-dev libboost-system-dev || return 1
     fi
 
     # =========================================================================

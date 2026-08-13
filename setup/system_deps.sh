@@ -141,6 +141,12 @@ debian_system_deps() {
         jq mediainfo mkvtoolnix mkvtoolnix-gui xclip opus-tools
         # Vulkan and VA-API (for FFVship and hardware decode)
         libvulkan-dev vulkan-tools libva-dev
+        # Denoiser component: OpenCL for KNLMeansCL, boost for vs-mlrt. The
+        # arch branch installs these from inside the denoiser, which needs root
+        # halfway through a component the user is running unprivileged. Asking
+        # for them here keeps every apt call in one transaction.
+        ocl-icd-opencl-dev opencl-headers
+        libboost-filesystem-dev libboost-system-dev
         # Performance
         libmimalloc-dev
     )
