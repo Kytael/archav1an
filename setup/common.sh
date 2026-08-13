@@ -245,7 +245,19 @@ set_native_build_flags() {
     # /usr/lib — the combination silently links system libs (e.g. ffms2
     # picking system libavcodec over the prefix build).
     export LDFLAGS="-L$VS_PREFIX/lib -flto -fuse-ld=lld"
-    export RUSTFLAGS="-C target-cpu=native -C opt-level=3"
+    # rustc links through `cc`, which is gcc. The cc crate builds a package's C
+    # dependencies with the CFLAGS above, so CC=clang plus -flto makes those
+    # objects LLVM bitcode, and GNU ld then refuses the resulting rlib:
+    # "liblibgit2_sys-*.rlib: error adding symbols: file format not recognized"
+    # while linking av1an's build script. Arch escapes this only by accident --
+    # its llvm package drops LLVMgold.so into /usr/lib/bfd-plugins, which GNU
+    # ld auto-loads. Ubuntu ships the same plugin as LLVMgold-18.so and ld does
+    # not pick it up. Link with the compiler that produced the bitcode instead
+    # of depending on a plugin filename.
+    export RUSTFLAGS="-C target-cpu=native -C opt-level=3 -C linker=clang -C link-arg=-fuse-ld=lld"
+    # Debian/Ubuntu keep their .pc files under /usr/lib/<triplet>/pkgconfig, so
+    # naming only /usr/lib/pkgconfig would drop them. pkg-config searches its
+    # built-in path as well, so this stays additive on both distros.
     export PKG_CONFIG_PATH="$VS_PREFIX/lib/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
     export LD_LIBRARY_PATH="$VS_PREFIX/lib:${LD_LIBRARY_PATH:-}"
     unset LIBRARY_PATH

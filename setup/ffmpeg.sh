@@ -6,7 +6,32 @@ if [ -z "$COMMON_SOURCED" ]; then
 fi
 
 SOURCES["ffmpeg:dav1d"]="https://code.videolan.org/videolan/dav1d.git|1.5.3"
-SOURCES["ffmpeg:nv-codec-headers"]="https://github.com/FFmpeg/nv-codec-headers.git|master"
+# Each nv-codec-headers release declares a minimum driver, and FFmpeg enforces
+# it at runtime rather than at build time: too-new headers compile cleanly and
+# then fail the first time anything touches NVENC, with "Driver does not
+# support the required nvenc API version. Required: 13.1 Found: 13.0". master
+# needs 610, which the 610.x hosts satisfy and a DGX Spark on NVIDIA's 580 does
+# not.
+#
+# Pick the newest release the installed driver satisfies, so a host on a
+# vendor-pinned driver gets working NVENC instead of a broken encoder. Hosts on
+# 610+ resolve to master and are unaffected. The minimums come from each tag's
+# own README. The 550 bound is really 550.54.14, so comparing majors treats an
+# older 550.x as good enough; that is the one imprecision here, and it only
+# affects drivers this fleet does not run.
+_nvcodec_ref_for_driver() {
+    local drv major
+    drv="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | tr -d '[:space:]')"
+    major="${drv%%.*}"
+    case "$major" in
+        ''|*[!0-9]*) echo master ;;          # no NVIDIA GPU; the value is unused
+        *) if   [ "$major" -ge 610 ]; then echo master
+           elif [ "$major" -ge 570 ]; then echo n13.0.19.1
+           else echo n12.2.72.0
+           fi ;;
+    esac
+}
+SOURCES["ffmpeg:nv-codec-headers"]="https://github.com/FFmpeg/nv-codec-headers.git|$(_nvcodec_ref_for_driver)"
 SOURCES["ffmpeg:ffmpeg"]="https://github.com/FFmpeg/FFmpeg.git|master"
 ARTIFACTS["ffmpeg"]="bin/ffmpeg bin/ffprobe lib/libdav1d.so"
 
