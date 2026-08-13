@@ -52,12 +52,23 @@ install_vapoursynth() {
     _vs_py_ver="$("$VENV_DIR/bin/python" -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
     log_info "VS R76 build: targeting Python $_vs_py_ver from $VENV_DIR (via $VENV_DIR/bin/meson)"
 
-    "$VENV_DIR/bin/meson" setup build \
+    # meson resolves cython with find_program, so it takes whatever PATH offers
+    # first. VapourSynth builds abi3 with -DPy_LIMITED_API, and Cython only
+    # supports the limited API from 3.1 on: Ubuntu 24.04 ships cython3 3.0.8,
+    # whose generated C++ reaches for PyCFunctionObject, PyASCIIObject and
+    # PyUnstable_Code_NewWithPosOnlyArgs, none of which exist under that macro.
+    # The build fails with 20 undeclared-identifier errors that name CPython
+    # internals and never mention Cython. python_libs already puts Cython 3.2.9
+    # in the venv, so put the venv ahead of PATH for the build. Arch is
+    # unaffected: its pacman cython is the same 3.2.9, so this only removes a
+    # silent dependency on the system version.
+    PATH="$VENV_DIR/bin:$PATH" "$VENV_DIR/bin/meson" setup build \
         --prefix="$VS_PREFIX" \
         --buildtype=release \
         -Dpython.platlibdir="lib/python${_vs_py_ver}/site-packages" \
         -Dpython.purelibdir="lib/python${_vs_py_ver}/site-packages" \
         || { cd "$ORIG_DIR"; log_error "VapourSynth meson setup failed"; return 1; }
+    log_info "VS R76 build: cython $(PATH="$VENV_DIR/bin:$PATH" cython --version 2>&1)"
     "$VENV_DIR/bin/meson" compile -C build \
         || { cd "$ORIG_DIR"; log_error "VapourSynth meson compile failed"; return 1; }
     "$VENV_DIR/bin/meson" install -C build \
