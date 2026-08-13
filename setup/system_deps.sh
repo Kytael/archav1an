@@ -92,9 +92,20 @@ install_system_deps_arch() {
 # candidate leaves the EP unloadable. Pick the newest 10.x build for the CUDA
 # major we actually have. Prints nothing when no such version exists.
 pick_tensorrt10_version() {
-    local cuda_major="$1"
-    apt-cache madison libnvinfer10 2>/dev/null \
-        | awk -v c="+cuda${cuda_major}" '$3 ~ /^10\./ && index($3, c) {print $3; exit}'
+    local cuda_ver="$1"                  # full release, e.g. 13.0
+    local cuda_major="${cuda_ver%%.*}"
+    local madison v
+    madison="$(apt-cache madison libnvinfer10 2>/dev/null)"
+    # Match the exact CUDA release first. A loose major match takes the newest
+    # 10.x for any 13.x, and on a CUDA 13.0 host that is 10.16.1.11+cuda13.2,
+    # whose libnvinfer-dev depends on libnvinfer-safe-headers-dev. That package
+    # is absent from the cuda13.0 line, so apt resolves it to the 11.x
+    # candidate and the whole transaction fails on a broken-packages error.
+    v="$(printf '%s\n' "$madison" \
+        | awk -v c="+cuda${cuda_ver}" '$3 ~ /^10\./ && index($3, c) {print $3; exit}')"
+    [ -n "$v" ] || v="$(printf '%s\n' "$madison" \
+        | awk -v c="+cuda${cuda_major}." '$3 ~ /^10\./ && index($3, c) {print $3; exit}')"
+    printf '%s' "$v"
 }
 
 install_system_deps_debian() {
@@ -145,16 +156,17 @@ install_system_deps_debian() {
         fi
 
         if [ -n "$nvcc_bin" ]; then
-            local cuda_major
-            cuda_major="$("$nvcc_bin" --version 2>/dev/null \
-                | sed -n 's/.*release \([0-9][0-9]*\)\..*/\1/p' | head -1)"
+            local cuda_ver cuda_major
+            cuda_ver="$("$nvcc_bin" --version 2>/dev/null \
+                | sed -n 's/.*release \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -1)"
+            cuda_major="${cuda_ver%%.*}"
             if [ -n "$cuda_major" ]; then
                 # cuDNN and TensorRT are what the BSVD onnxruntime path needs.
                 # aarch64 has no wheel for either, so apt is the only source;
                 # on x86 these are also the cheapest way to get them.
                 DEPS+=("libcudnn9-cuda-${cuda_major}")
                 local trt_ver
-                trt_ver="$(pick_tensorrt10_version "$cuda_major")"
+                trt_ver="$(pick_tensorrt10_version "$cuda_ver")"
                 if [ -n "$trt_ver" ]; then
                     # Every TensorRT package has to be pinned in ONE apt
                     # transaction. Installing the runtime here and the headers
