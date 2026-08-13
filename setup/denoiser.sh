@@ -248,12 +248,27 @@ install_denoiser() {
             cd "$ORIG_DIR"
 
             # 2e. Symlink trtexec for vsmlrt.py
+            #
+            # Only the AUR tensorrt puts trtexec on PATH, at /usr/sbin/trtexec.
+            # Debian's libnvinfer-bin installs it to /usr/src/tensorrt/bin,
+            # which is on no PATH, so a PATH-only probe reported it missing on a
+            # host that had just installed it. Without trtexec, vsmlrt rebuilds
+            # every TRT engine on every run instead of caching them.
             mkdir -p "$VS_PLUGIN_PATH/vsmlrt-cuda"
+            local _trtexec=""
             if command -v trtexec &>/dev/null; then
-                ln -sf "$(command -v trtexec)" "$VS_PLUGIN_PATH/vsmlrt-cuda/trtexec"
-                log_info "Symlinked trtexec to $VS_PLUGIN_PATH/vsmlrt-cuda/"
+                _trtexec="$(command -v trtexec)"
             else
-                log_warn "trtexec not found in PATH — vsmlrt TRT engine caching may not work"
+                local _c
+                for _c in /usr/src/tensorrt/bin/trtexec /usr/local/tensorrt/bin/trtexec; do
+                    [ -x "$_c" ] && { _trtexec="$_c"; break; }
+                done
+            fi
+            if [ -n "$_trtexec" ]; then
+                ln -sf "$_trtexec" "$VS_PLUGIN_PATH/vsmlrt-cuda/trtexec"
+                log_info "Symlinked trtexec ($_trtexec) to $VS_PLUGIN_PATH/vsmlrt-cuda/"
+            else
+                log_warn "trtexec not found — vsmlrt TRT engine caching may not work"
             fi
         fi
 
