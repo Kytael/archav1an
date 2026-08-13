@@ -45,6 +45,18 @@ _ffmpeg_configure() {
     local extra_ldflags="$2"
     export PKG_CONFIG_PATH="$VS_PREFIX/lib/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
+    # Record the prefix lib dir in the binaries and the shared libs. Without it
+    # the loader matches on soname alone and hands $VS_PREFIX/bin/ffmpeg the
+    # SYSTEM libavcodec.so.63, because distro ffmpeg carries the same soname.
+    # The binary still starts, so nothing looks wrong until a lazily-bound
+    # symbol that only the newer library defines is finally called: on
+    # 2026-08-12 that was av_bsf_graph_free, reached only when a bitstream
+    # filter graph is torn down. The mux wrote its whole output file and then
+    # exited 127, which read as a post-encode mystery for two runs. Every
+    # library built here gets the flag too, so the transitive
+    # libavformat -> libavcodec lookup resolves inside the prefix as well.
+    extra_ldflags="$extra_ldflags -Wl,-rpath,$VS_PREFIX/lib"
+
     # NVIDIA GPU accel: enable NVDEC+NVENC+CUDA if ffnvcodec headers and
     # a CUDA toolkit are present. Detected at configure time so CPU-only
     # machines still build.
