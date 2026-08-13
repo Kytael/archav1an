@@ -28,6 +28,18 @@ class Denoiser:
     window: int = 0
     margin: int = 32
     port: int = 0
+    # True when the remote does NOT hold the archive, so each clip must be
+    # copied to it. gpu1 reads the archive in place and leaves this false,
+    # which is what keeps 2.5 TB off a remote's root. A host that has only a
+    # GPU to offer still qualifies under spec 2 -- it contributes no storage
+    # and no encoding -- but it does cost one source transfer per clip.
+    stage_source: bool = False
+    # Where the checkout lives on the remote. dispatch defaults to
+    # ~/archav1an, which is gpu1's layout; gpu2 and gpu3 keep theirs under
+    # ~/reposetc/archav1an. Getting this wrong stages the clip into a
+    # directory that rsync happily creates and then runs `cd` into a tree with
+    # no dispatch in it, so the lane goes quiet instead of failing loudly.
+    root: str = ""
 
     @property
     def is_remote(self):
@@ -39,6 +51,11 @@ class EncodePool:
     host: str
     slots: int
     threads_per_slot: int
+    # How far past the core count the encoders may be booked. SVT-AV1 does not
+    # keep every thread of a slot busy, so a small overbook fills the gaps and
+    # raises total throughput. 1.0 means never exceed the core count, which is
+    # the safe default; a run that wants the overbook has to ask for it.
+    oversubscribe: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -63,7 +80,8 @@ def load_roster(path, core_count):
     enc = data.get("encode", {})
     encode = EncodePool(host=enc.get("host", "local"),
                         slots=int(enc.get("slots", 2)),
-                        threads_per_slot=int(enc.get("threads_per_slot", 16)))
+                        threads_per_slot=int(enc.get("threads_per_slot", 16)),
+                        oversubscribe=float(enc.get("oversubscribe", 1.0)))
     roster = Roster(denoisers=denoisers, encode=encode)
     _validate(roster, core_count)
     return roster
@@ -77,7 +95,9 @@ def _denoiser(entry):
                         enabled=bool(entry.get("enabled", True)),
                         window=int(entry.get("window", 0)),
                         margin=int(entry.get("margin", 32)),
-                        port=int(entry.get("port", 0)))
+                        port=int(entry.get("port", 0)),
+                        stage_source=bool(entry.get("stage_source", False)),
+                        root=entry.get("root", ""))
     except KeyError as e:
         raise RosterError(f"denoiser entry missing required key: {e}")
 
@@ -123,9 +143,27 @@ def _validate(roster, core_count):
     if len(ports) != len(set(ports)):
         raise RosterError("duplicate port between remote denoisers")
 
+    for d in roster.denoisers:
+        if d.root and not d.is_remote:
+            raise RosterError(
+                f"denoiser '{d.name}' sets root on a local host; root names the "
+                f"checkout on a REMOTE denoise host")
+        if d.stage_source and not d.is_remote:
+            raise RosterError(
+                f"denoiser '{d.name}' sets stage_source on a local host; the "
+                f"source is already local, so there is nothing to stage")
+
+    if roster.encode.oversubscribe < 1.0:
+        raise RosterError(
+            f"encode.oversubscribe is {roster.encode.oversubscribe}; it raises the "
+            f"thread ceiling, so it cannot be below 1.0")
+
     concurrent = min(roster.encode.slots, len(active))
     threads = concurrent * roster.encode.threads_per_slot
-    if threads > core_count:
+    ceiling = core_count * roster.encode.oversubscribe
+    if threads > ceiling:
         raise RosterError(
             f"roster would oversubscribe {core_count} cores: {concurrent} concurrent "
-            f"encoders x {roster.encode.threads_per_slot} threads = {threads}")
+            f"encoders x {roster.encode.threads_per_slot} threads = {threads}, above "
+            f"the ceiling of {ceiling:g} set by encode.oversubscribe "
+            f"{roster.encode.oversubscribe:g}")

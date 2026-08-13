@@ -91,3 +91,36 @@ def test_an_untiled_denoiser_gets_no_windowing_flags():
     argv, _ = build_command(LOCAL, ENCODE, staged="/t/x.MOV", out="/t/o.mkv",
                             remote_src=None, callback=None)
     assert "--bsvd-tile" not in argv and "--bsvd-window" not in argv
+
+
+def test_a_remote_without_the_archive_omits_remote_source():
+    """remote_src=None must drop the flag, not pass None as its value.
+
+    Appending None put it straight into argv and subprocess raised
+    TypeError('expected str, bytes or os.PathLike object, not NoneType'),
+    which the scheduler recorded as a per-clip failure on every remote lane.
+    """
+    d = Denoiser(name="gpu2_5070", host="gpu2", backend="trt", device=0,
+                 tiling="auto", window=500, margin=32, port=5301,
+                 stage_source=True, enabled=True)
+    argv, _ = build_command(d, ENCODE, staged="/t/x.MOV", out="/t/x-av1.mkv",
+                            remote_src=None, callback="10.0.0.10")
+    assert "--remote-source" not in argv
+    assert all(a is not None for a in argv)
+    assert "--remote-denoise" in argv and "gpu2" in argv
+
+
+def test_a_remote_root_is_forwarded_when_the_checkout_moves():
+    d = Denoiser(name="gpu2_5070", host="gpu2", backend="trt", device=0,
+                 tiling="auto", window=500, margin=32, port=5301,
+                 stage_source=True, root="~/reposetc/archav1an", enabled=True)
+    argv, _ = build_command(d, ENCODE, staged="/t/x.MOV", out="/t/x-av1.mkv",
+                            remote_src=None, callback="10.0.0.10")
+    assert argv[argv.index("--remote-root") + 1] == "~/reposetc/archav1an"
+
+
+def test_no_remote_root_flag_when_the_default_layout_applies():
+    argv, _ = build_command(REMOTE, ENCODE, staged="/t/x.MOV",
+                            out="/t/x-av1.mkv", remote_src="/mnt/media/a/x.MOV",
+                            callback="1.2.3.4")
+    assert "--remote-root" not in argv

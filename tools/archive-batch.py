@@ -72,7 +72,12 @@ def make_runner(encode):
             run(stage_cmd(SOURCE_HOST, clip.src, stage_dir))
             argv, env_overlay = build_command(
                 denoiser, encode, staged=staged, out=out,
-                remote_src=f"{ARCHIVE_ROOT}/{clip.src}" if denoiser.is_remote else None,
+                # None makes dispatch rsync the clip to the remote's
+                # Temp/_remote instead of reading it in place, which is the
+                # only mode a host without the archive can use.
+                remote_src=(f"{ARCHIVE_ROOT}/{clip.src}"
+                            if denoiser.is_remote and not denoiser.stage_source
+                            else None),
                 callback=CALLBACK_IP if denoiser.is_remote else None)
             env = dict(os.environ)
             env.update(env_overlay)

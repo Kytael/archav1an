@@ -82,6 +82,34 @@ def test_rejects_thread_oversubscription(tmp_path):
         load_roster(_write(tmp_path, text), core_count=32)
 
 
+def test_oversubscribe_defaults_to_one(tmp_path):
+    r = load_roster(_write(tmp_path, GOOD), core_count=32)
+    assert r.encode.oversubscribe == 1.0
+
+
+def test_oversubscribe_raises_the_thread_ceiling(tmp_path):
+    # 2 x 32 = 64 threads needs a ceiling of 2.0 on a 32-core box.
+    text = GOOD.replace("threads_per_slot = 16",
+                        "threads_per_slot = 32\noversubscribe = 2.0")
+    r = load_roster(_write(tmp_path, text), core_count=32)
+    assert r.encode.oversubscribe == 2.0
+
+
+def test_oversubscribe_still_has_a_ceiling(tmp_path):
+    # 1.25 permits 40 threads on 32 cores, so 64 must still be rejected.
+    text = GOOD.replace("threads_per_slot = 16",
+                        "threads_per_slot = 32\noversubscribe = 1.25")
+    with pytest.raises(RosterError, match="oversubscribe"):
+        load_roster(_write(tmp_path, text), core_count=32)
+
+
+def test_rejects_oversubscribe_below_one(tmp_path):
+    text = GOOD.replace("threads_per_slot = 16",
+                        "threads_per_slot = 16\noversubscribe = 0.5")
+    with pytest.raises(RosterError, match="cannot be below 1.0"):
+        load_roster(_write(tmp_path, text), core_count=32)
+
+
 def test_rejects_duplicate_names(tmp_path):
     text = GOOD.replace('name = "gpu1_4090"', 'name = "igpu"')
     with pytest.raises(RosterError, match="duplicate"):
@@ -209,3 +237,31 @@ def test_the_example_roster_is_valid():
     assert [d.name for d in roster.enabled()] == ["gpu1_4090", "igpu"]
     tiled = roster.denoisers[2]
     assert tiled.tiling == "auto" and tiled.window == 750 and tiled.margin >= 16
+
+
+def test_stage_source_defaults_off_so_gpu1_still_reads_in_place(tmp_path):
+    r = load_roster(_write(tmp_path, GOOD), core_count=32)
+    remote = [d for d in r.denoisers if d.name == "gpu1_4090"][0]
+    assert remote.stage_source is False
+
+
+def test_stage_source_is_read_for_a_remote_without_the_archive(tmp_path):
+    text = GOOD.replace("port = 5300\nenabled = true",
+                        "port = 5300\nstage_source = true\nenabled = true")
+    r = load_roster(_write(tmp_path, text), core_count=32)
+    remote = [d for d in r.denoisers if d.name == "gpu1_4090"][0]
+    assert remote.stage_source is True
+
+
+def test_rejects_stage_source_on_a_local_denoiser(tmp_path):
+    text = GOOD.replace('backend = "migraphx"',
+                        'backend = "migraphx"\nstage_source = true')
+    with pytest.raises(RosterError, match="stage_source"):
+        load_roster(_write(tmp_path, text), core_count=32)
+
+
+def test_rejects_root_on_a_local_denoiser(tmp_path):
+    text = GOOD.replace('backend = "migraphx"',
+                        'backend = "migraphx"\nroot = "~/elsewhere"')
+    with pytest.raises(RosterError, match="root"):
+        load_roster(_write(tmp_path, text), core_count=32)

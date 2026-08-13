@@ -20,6 +20,24 @@ tiling  = "none"
 port    = 5300
 enabled = true
 
+# A remote that does NOT hold the archive sets stage_source = true. dispatch
+# then rsyncs each clip to its Temp/_remote instead of reading it in place.
+# That is the only mode a GPU-only host can use, and it costs one source
+# transfer per clip. dispatch does not clean Temp/_remote up, so a long run
+# accumulates every clip that host processed -- watch its disk.
+#
+#   [[denoiser]]
+#   name         = "gpu2"
+#   host         = "gpu2"
+#   backend      = "trt"
+#   device       = 0
+#   tiling       = "auto"
+#   window       = 500
+#   margin       = 32
+#   port         = 5301
+#   stage_source = true
+#   enabled      = false
+
 # --- lane 2: encoder-host's Radeon 8060S iGPU -----------------------------------
 # 128 GB of unified memory holds the full-frame BSVD state, so this lane needs
 # no tiling and no windowing. It uses its own interpreter and vspipe, because
@@ -67,7 +85,13 @@ enabled = false
 # Encoder-host's encode ceiling is 18.2 fps and 2 slots reach it: one wide encoder
 # wastes a quarter of the machine, 2 gain 19%, 3 add another 0.5%. Rejected if
 # slots x threads_per_slot exceeds the core count.
+#
+# oversubscribe raises that ceiling by the given factor and defaults to 1.0.
+# SVT-AV1 leaves gaps in a slot's threads, so booking slightly past the core
+# count fills them. 1.25 on a 32-thread box permits 5 slots x 8 threads = 40.
+# It is opt-in because it trades per-clip latency for total throughput.
 [encode]
 host             = "local"
 slots            = 2
 threads_per_slot = 16
+oversubscribe    = 1.0

@@ -55,8 +55,16 @@ def build_command(denoiser, encode, staged, out, remote_src, callback):
                  "--bsvd-margin", str(denoiser.margin)]
 
     if denoiser.is_remote:
-        argv += ["--remote-denoise", denoiser.host,
-                 "--remote-source", remote_src,
-                 "--remote-port", str(denoiser.port),
+        argv += ["--remote-denoise", denoiser.host]
+        # dispatch defaults to ~/archav1an. Any host that keeps its checkout
+        # elsewhere must say so, or the remote half cds into the wrong tree.
+        if denoiser.root:
+            argv += ["--remote-root", denoiser.root]
+        # Omit the flag entirely when the remote has no copy of the archive:
+        # dispatch then stages the clip itself. Passing None here put a None
+        # into argv and subprocess rejected the whole command.
+        if remote_src:
+            argv += ["--remote-source", remote_src]
+        argv += ["--remote-port", str(denoiser.port),
                  "--remote-callback", callback]
     return argv, env

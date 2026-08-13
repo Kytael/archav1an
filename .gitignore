@@ -73,3 +73,6 @@ tools/optsig_pref/features.csv
 .archive-run/
 Temp/_stage/
 .archive-bench/
+# One directory per benchmark roster (.archive-bench-r1, -r2, ...): each holds
+# a manifest, a roster and a state file for one run, not shared configuration.
+.archive-bench-*/
