@@ -11,7 +11,58 @@ SOURCES["denoiser:vsmlrt-py"]="https://github.com/AmusementClub/vs-mlrt.git|mast
 SOURCES["denoiser:mvsfunc"]="https://github.com/HomeOfVapourSynthEvolution/mvsfunc.git|master"
 SOURCES["denoiser:havsfunc-legacy"]="https://github.com/HomeOfVapourSynthEvolution/havsfunc.git|r33"
 SOURCES["denoiser:scunet-weights"]="https://github.com/cszn/SCUNet/releases/download/v1.0|pinned"
+# The three SMDegrain plugins. Arch takes these from the AUR; Ubuntu has no
+# AUR, so it builds the same upstreams the AUR packages track. mvtools is
+# pinned to v29 to match Arch's vapoursynth-plugin-mvtools 29, and the other
+# two follow master because their Arch counterparts are -git packages.
+SOURCES["denoiser:mvtools"]="https://github.com/dubhater/vapoursynth-mvtools.git|v29"
+SOURCES["denoiser:removegrain"]="https://github.com/vapoursynth/vs-removegrain.git|master"
+SOURCES["denoiser:ctmf"]="https://github.com/HomeOfVapourSynthEvolution/VapourSynth-CTMF.git|master"
 ARTIFACTS["denoiser"]="lib/vapoursynth/libvstrt.so lib/vapoursynth/libvsmigx.so lib/vapoursynth/libknlmeanscl.so lib/vapoursynth/libmvtools.so lib/vapoursynth/libremovegrain.so lib/vapoursynth/libctmf.so"
+
+# build_meson_vs_plugin <sources-name> <expected .so>
+# Builds one meson-based VapourSynth plugin from SOURCES into the prefix plugin
+# dir. Only the Debian/Ubuntu path calls this; Arch gets the same three plugins
+# from the AUR.
+build_meson_vs_plugin() {
+    local name="$1" lib="$2"
+    local VS_PLUGIN_PATH
+    VS_PLUGIN_PATH="$(get_vs_plugin_path)"
+    mkdir -p "$VS_PLUGIN_PATH"
+
+    if [ -f "$VS_PLUGIN_PATH/$lib" ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
+        log_info "$name already installed."
+        return 0
+    fi
+
+    # Prefer the venv meson, as install_vapoursynth does, so every meson build
+    # in the prefix runs one version; fall back to whatever apt provided.
+    local MESON="$VENV_DIR/bin/meson"
+    [ -x "$MESON" ] || MESON="meson"
+
+    local ORIG_DIR="$(pwd)"
+    mkdir -p build_tmp && cd build_tmp || return 1
+    log_info "Compiling $name from source..."
+    clone_src denoiser "$name" "$name" || { cd "$ORIG_DIR"; return 1; }
+    cd "$name" || { cd "$ORIG_DIR"; log_error "Failed to cd into $name"; return 1; }
+
+    # --libdir is relative to --prefix, so this installs straight into
+    # $VS_PREFIX/lib/vapoursynth, which is what get_vs_plugin_path returns.
+    "$MESON" setup build --prefix="$VS_PREFIX" --libdir="lib/vapoursynth" \
+        --buildtype=release \
+        || { cd "$ORIG_DIR"; log_error "$name meson setup failed"; return 1; }
+    ninja -C build || { cd "$ORIG_DIR"; log_error "$name build failed"; return 1; }
+    ninja -C build install || { cd "$ORIG_DIR"; log_error "$name install failed"; return 1; }
+    cd "$ORIG_DIR"
+
+    # meson picks the installed name, so confirm it rather than assume it
+    # matches what ARTIFACTS expects.
+    if [ ! -f "$VS_PLUGIN_PATH/$lib" ]; then
+        log_error "$name built but $VS_PLUGIN_PATH/$lib is missing (present: $(ls "$VS_PLUGIN_PATH" 2>/dev/null | tr '\n' ' '))"
+        return 1
+    fi
+    log_success "$name installed to $VS_PLUGIN_PATH/$lib"
+}
 
 install_denoiser() {
     local VS_PLUGIN_PATH
@@ -363,7 +414,22 @@ install_denoiser() {
             log_info "Symlinked $_ctmf_src to $VS_PLUGIN_PATH/libctmf.so"
         fi
     else
-        log_warn "Debian/Ubuntu: install vapoursynth-mvtools, vapoursynth-removegrain, and vapoursynth-ctmf manually for --denoise-smdegrain support"
+        # All three build with meson, which is how their AUR packages build
+        # them too (arch-meson is meson plus distro defaults). A failure here
+        # costs --denoise-smdegrain and nothing else, so none of them aborts
+        # the component.
+        build_meson_vs_plugin mvtools libmvtools.so \
+            || log_warn "mvtools build failed (--denoise-smdegrain will not work)"
+        build_meson_vs_plugin removegrain libremovegrain.so \
+            || log_warn "removegrain build failed (SMDegrain chroma may not work)"
+        # CTMF still includes <VapourSynth.h>, the V3 API header, which neither
+        # our R76 build nor the distro package installs -- both apply
+        # meson.build's exclude_files rule. install_vapoursynth backfills the
+        # V3 headers into $VS_PREFIX/include/vapoursynth, so point the compiler
+        # at them, exactly as the arch branch does through paru's build env.
+        CPPFLAGS="-I$VS_PREFIX/include/vapoursynth ${CPPFLAGS:-}" \
+            build_meson_vs_plugin ctmf libctmf.so \
+            || log_warn "ctmf build failed (SMDegrain ContraSharpening may not work)"
     fi
 
     # Pre-download all SCUNet .pth model weights
