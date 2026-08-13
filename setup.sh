@@ -59,14 +59,11 @@ is_installed() {
                 pacman -Qi dav1d &> /dev/null && \
                 pacman -Qi mimalloc &> /dev/null
             else
-                # Same reasoning as the arch branch: check key packages, not
-                # just build-essential, so a newly added dep triggers a
-                # reinstall instead of reporting the component as done.
-                dpkg -s build-essential &> /dev/null && \
-                dpkg -s clang &> /dev/null && \
-                dpkg -s meson &> /dev/null && \
-                dpkg -s libdav1d-dev &> /dev/null && \
-                dpkg -s libmimalloc-dev &> /dev/null
+                # Ask the package list itself rather than testing a hand-picked
+                # sample. Sampling reports the component as done on any host
+                # that happens to have the sampled packages, so a dependency
+                # added later never gets installed.
+                [ -z "$(debian_system_deps_missing)" ]
             fi
             ;;
         "python_libs")

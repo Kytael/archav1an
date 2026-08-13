@@ -108,8 +108,15 @@ pick_tensorrt10_version() {
     printf '%s' "$v"
 }
 
-install_system_deps_debian() {
-    log_info "Installing build tools and libraries (apt)..."
+# Single source of truth for the Debian/Ubuntu package set. Prints one spec per
+# line; a spec is either a bare name or name=version for the pinned entries.
+#
+# is_installed and the installer both read this, so adding a dependency here is
+# enough for a host that already ran setup to pick it up. The previous design
+# hand-picked five packages for is_installed to test, which meant a host that
+# had those five reported the component as done and silently skipped everything
+# added later -- exactly how libssl-dev went uninstalled after being added.
+debian_system_deps() {
     local DEPS=(
         # Build tools
         build-essential cmake pkg-config autoconf automake libtool
@@ -145,7 +152,10 @@ install_system_deps_debian() {
         x86_64|i?86) DEPS+=(yasm nasm) ;;
     esac
 
-    detect_gpu
+    # Every emitter in here goes to stderr: this function's stdout IS the
+    # package list, and log_info writes to stdout, so an unredirected line
+    # would be parsed as a package name.
+    detect_gpu >&2
 
     if [ "$GPU_VENDOR" = "nvidia" ] || [ "$GPU_VENDOR" = "both" ]; then
         # Ubuntu's nvidia-cuda-toolkit is CUDA 12 and would fight a toolkit
@@ -157,7 +167,7 @@ install_system_deps_debian() {
         elif [ -x /usr/local/cuda/bin/nvcc ]; then
             nvcc_bin="/usr/local/cuda/bin/nvcc"
         else
-            log_info "No nvcc found; adding Ubuntu's nvidia-cuda-toolkit."
+            log_info "No nvcc found; adding Ubuntu's nvidia-cuda-toolkit." >&2
             DEPS+=(nvidia-cuda-toolkit)
         fi
 
@@ -181,29 +191,39 @@ install_system_deps_debian() {
                     # 11.x candidate and drag the runtime up with it, undoing
                     # the pin. The dev packages are small; the split is not
                     # worth the breakage.
-                    log_info "Pinning TensorRT to $trt_ver for the onnxruntime TRT EP."
+                    log_info "Pinning TensorRT to $trt_ver for the onnxruntime TRT EP." >&2
                     DEPS+=("libnvinfer10=$trt_ver" "libnvinfer-plugin10=$trt_ver"
                            "libnvinfer-dev=$trt_ver" "libnvinfer-headers-dev=$trt_ver"
                            "libnvinfer-plugin-dev=$trt_ver" "libnvinfer-headers-plugin-dev=$trt_ver")
                 else
-                    log_warn "No TensorRT 10.x build for CUDA $cuda_major in apt — --denoise-bsvd will fall back to the slower CUDA EP."
+                    log_warn "No TensorRT 10.x build for CUDA $cuda_major in apt — --denoise-bsvd will fall back to the slower CUDA EP." >&2
                 fi
             fi
         fi
     fi
 
-    # Precheck which DEPS are missing so a non-root invocation under
-    # FORCE_REINSTALL=1 does not uselessly hit apt install when everything is
-    # already there. A pinned entry (name=version) is checked by name alone;
-    # apt re-pins it when the installed version differs.
+    printf '%s\n' "${DEPS[@]}"
+}
+
+# Prints the specs from debian_system_deps that dpkg does not have. A pinned
+# entry (name=version) is tested by name alone; apt re-pins it when the
+# installed version differs.
+debian_system_deps_missing() {
+    local spec name
+    while IFS= read -r spec; do
+        [ -n "$spec" ] || continue
+        name="${spec%%=*}"
+        dpkg -s "$name" &>/dev/null || printf '%s\n' "$spec"
+    done < <(debian_system_deps)
+}
+
+install_system_deps_debian() {
+    log_info "Installing build tools and libraries (apt)..."
     local _missing=()
-    local _dep _name
-    for _dep in "${DEPS[@]}"; do
-        _name="${_dep%%=*}"
-        dpkg -s "$_name" &>/dev/null || _missing+=("$_dep")
-    done
+    mapfile -t _missing < <(debian_system_deps_missing)
+
     if [ "${#_missing[@]}" -eq 0 ]; then
-        log_info "All ${#DEPS[@]} system packages already installed; skipping apt install."
+        log_info "All system packages already installed; skipping apt install."
     else
         if [ "$EUID" -ne 0 ]; then
             log_error "Need root for apt install. Run: sudo apt install -y ${_missing[*]}"
