@@ -18,7 +18,10 @@ FFMPEG="$VS_PREFIX/bin/ffmpeg";   [ -x "$FFMPEG" ]  || FFMPEG="$(command -v ffmp
 FFPROBE="$VS_PREFIX/bin/ffprobe"; [ -x "$FFPROBE" ] || FFPROBE="$(command -v ffprobe)"
 [ -d "$VS_PREFIX/lib" ] && export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$VS_PREFIX/lib"
 SIGMAS="0.01 0.02 0.03 0.04 0.05 0.06 0.07 0.08"
-TMP=/home/user/archav1an/Temp/optsig_pref; mkdir -p "$TMP"
+# Derived, not hardcoded: this named one checkout on gpu1, so the script
+# wrote outside the repo on that host and nowhere useful on any other.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TMP="$ROOT/Temp/optsig_pref"; mkdir -p "$TMP"
 FAILS="$TMP/failures.txt"; : > "$FAILS"
 pkts() { "$FFPROBE" -v error -select_streams v:0 -count_packets \
   -show_entries stream=nb_read_packets -of csv=p=0 "$1" 2>/dev/null || echo 0; }
@@ -39,7 +42,7 @@ tail -n +2 "$WCSV" | while IFS=, read -r stem path nframes start length included
     fi
     echo "=== RENDER $stem sigma=$s -> $o ==="
     if CLIP_PATH="$path" WIN_START="$start" WIN_LEN="$length" BSVD_SIGMA="$s" FFMS_CACHE="$CACHE" \
-         "$VS" tools/optsig_pref/ladder.vpy - 2>"$TMP/${stem}_s${tag}.vspipe.log" | \
+         "$VS" "$ROOT/tools/optsig_pref/ladder.vpy" - 2>"$TMP/${stem}_s${tag}.vspipe.log" | \
          "$FFMPEG" -hide_banner -loglevel error -f rawvideo -pix_fmt gbrp -s "${W}x${H}" -r "$RATE" -i - \
            -c:v ffv1 -level 3 -y "$o"; then
       pk=$(pkts "$o")

@@ -1,20 +1,31 @@
 # tools/optsig_pref/ladder.vpy
-import os as _o, sys as _s
-_s.path.insert(0, "/opt/archav1an/venv/lib/python3.14/site-packages")
+import os as _o, sys as _s, glob as _g
+# Everything here used to be an absolute path to one checkout on one host:
+# the repo under /home/user, and a venv site-packages naming python3.14.
+# That made this script gpu1-only, and the version in the path would break on
+# any host whose venv python differs (Ubuntu 24.04 is 3.12). Derive both.
+# vspipe sets __file__ to the absolute script path, so the repo root is three
+# levels up from tools/optsig_pref/ladder.vpy.
+_ROOT = _o.path.dirname(_o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))))
+_PREFIX = _o.environ.get("VS_PREFIX", "/opt/archav1an")
+for _sp in sorted(_g.glob(_o.path.join(_PREFIX, "venv", "lib", "python3.*", "site-packages"))):
+    _s.path.insert(0, _sp)
 from vstools import vs, core, initialize_clip
 core.max_cache_size = 4096
-import glob as _g
-for _d in ("/usr/lib/vapoursynth", "/usr/local/lib/vapoursynth"):
+# The prefix plugin dir goes first: it holds the build that setup.sh made,
+# and the system dirs hold whatever the distro shipped.
+for _d in (_o.path.join(_PREFIX, "lib", "vapoursynth"),
+           "/usr/lib/vapoursynth", "/usr/local/lib/vapoursynth"):
     for _p in sorted(_g.glob(_o.path.join(_d, "*.so"))):
         try:
             core.std.LoadPlugin(_p)
         except vs.Error:
             pass
-_s.path.insert(0, "/home/user/archav1an/tools")
+_s.path.insert(0, _o.path.join(_ROOT, "tools"))
 from bsvd_vs_filter import build_bsvd_streaming
 CLIP = _o.environ["CLIP_PATH"]; ST = int(_o.environ["WIN_START"]); LN = int(_o.environ["WIN_LEN"])
 SIG = float(_o.environ["BSVD_SIGMA"]); CACHE = _o.environ["FFMS_CACHE"]
-ONNX = "/home/user/archav1an/models/bsvd_realpair_ep14_stateful_v2_dyn_fp16.onnx"
+ONNX = _o.path.join(_ROOT, "models", "bsvd_realpair_ep14_stateful_v2_dyn_fp16.onnx")
 LEAD = 32; a = max(ST - LEAD, 0); pre = ST - a
 src = core.ffms2.Source(source=CLIP, cachefile=CACHE)[a:ST + LN]
 src = initialize_clip(src)
