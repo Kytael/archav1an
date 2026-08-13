@@ -72,8 +72,7 @@ install_python_libs() {
 
     # Remove the pip-published vapoursynth stub which would shadow the source-built
     # R73 module that vapoursynth.sh wires via .pth.
-    log_info "Removing pip-installed vapoursynth stub (avoid R73 module shadow)..."
-    VIRTUAL_ENV="$VENV_DIR" uv pip uninstall vapoursynth || true
+    drop_pip_vapoursynth_stub
 
     # Report the venv's actual installed Python, not the target spec.
     local INSTALLED_PY

@@ -801,6 +801,12 @@ for sigma in [15, 25, 50]:
         fi
     done
 
+    # This component's pip installs (vsscunet and friends) depend on
+    # vapoursynth, so pip reinstalls the PyPI wheel that python_libs removed.
+    # It bundles its own core and shadows the source-built module, which shows
+    # up as "Python module version is R79 but the core library is R76".
+    drop_pip_vapoursynth_stub
+
     case "$GPU_VENDOR" in
         both)   log_success "Denoiser installed (CUDA+TensorRT libvstrt.so AND MIGraphX libvsmigx.so [best-effort], vsscunet, vsmlrt.py, onnxruntime-gpu, KNLMeansCL, BSVD assets staged)." ;;
         nvidia) log_success "Denoiser installed (PyTorch CUDA, vsscunet, TensorRT, libvstrt.so, vsmlrt.py, onnxruntime-gpu, KNLMeansCL, BSVD assets staged)." ;;

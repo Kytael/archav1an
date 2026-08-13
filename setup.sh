@@ -114,7 +114,17 @@ is_installed() {
         "denoiser")
             local knlm_path
             knlm_path="$(get_vs_plugin_path)"
+            # The three SMDegrain plugins are checked too. They are in
+            # ARTIFACTS but were not in this test, so a host that had
+            # KNLMeansCL, vsscunet and libvstrt.so reported the component as
+            # done and skipped it -- which is exactly what happened after the
+            # mvtools/removegrain/ctmf builds were fixed: setup declared the
+            # denoiser installed and never built them. Same sampling flaw as
+            # the old system_deps check.
             [ -f "$knlm_path/libknlmeanscl.so" ] && \
+            [ -f "$knlm_path/libmvtools.so" ] && \
+            [ -f "$knlm_path/libremovegrain.so" ] && \
+            [ -f "$knlm_path/libctmf.so" ] && \
             "$VENV_DIR/bin/pip" show vsscunet &> /dev/null && \
             { [ -f "$knlm_path/libvstrt.so" ] || [ -f "$knlm_path/libvsmigx.so" ]; }
             ;;

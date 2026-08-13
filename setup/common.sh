@@ -229,6 +229,26 @@ get_vs_plugin_path() {
     echo "$VS_PREFIX/lib/vapoursynth"
 }
 
+# The pip-published vapoursynth wheel bundles its own core and sits in the venv
+# ahead of the source-built module that vapoursynth.sh wires in through .pth.
+# When it wins, "import vapoursynth" warns "the VapourSynth Python module
+# version is R79 but the VapourSynth core library is R76" and Python-side code
+# talks to a different core than vspipe does.
+#
+# python_libs removes it, but any later pip install that depends on vapoursynth
+# -- vsscunet and friends, from the denoiser -- pulls it back, so the removal
+# has to run again after those.
+drop_pip_vapoursynth_stub() {
+    [ -x "$VENV_DIR/bin/pip" ] || return 0
+    "$VENV_DIR/bin/pip" show vapoursynth &>/dev/null || return 0
+    log_info "Removing pip-installed vapoursynth stub (it shadows the source-built module)..."
+    if command -v uv &>/dev/null; then
+        VIRTUAL_ENV="$VENV_DIR" uv pip uninstall vapoursynth >/dev/null 2>&1 && return 0
+    fi
+    "$VENV_DIR/bin/pip" uninstall -y vapoursynth >/dev/null 2>&1 \
+        || log_warn "Could not remove the pip vapoursynth stub; importing vapoursynth may report a core/module version mismatch."
+}
+
 # Virtual environment path for Python dependencies
 VENV_DIR="${VENV_DIR:-$VS_PREFIX/venv}"
 export VENV_DIR
