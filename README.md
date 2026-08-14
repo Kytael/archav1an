@@ -107,11 +107,11 @@ chmod +x setup.sh
 ./setup.sh --install A
 ```
 
-`setup.sh` prompts for sudo **once** at the start to create `/opt/archav1an/` and chown it to you; everything after that runs as your user. If `uv` (the Python venv/pip replacement) isn't installed, the script fetches Astral's official installer and drops it in `~/.local/bin`. No further sudo unless a system package is genuinely missing — in that case the script prints the exact `sudo pacman -S …` command and exits.
+`setup.sh` prompts for sudo **once** at the start to create `/opt/archav1an/` and chown it to you; everything after that runs as your user. If `uv` (the Python venv/pip replacement) isn't installed, the script fetches Astral's official installer and drops it in `~/.local/bin`. The only other step that needs root is installing distro packages, and `system_deps` escalates for the package manager itself — so a fresh host may prompt a second time, and an already-provisioned one will not prompt at all. Never run `setup.sh` under sudo to pre-empt this; see below.
 
 Or selectively:
 ```bash
-sudo ./setup.sh --install system_deps    # distro packages (the only step needing root)
+./setup.sh --install system_deps   # distro packages via pacman/apt (escalates itself)
 ./setup.sh --install python_libs   # uv venv at /opt/archav1an/venv
 ./setup.sh --install ffmpeg        # source-built ffmpeg w/ NVENC into prefix
 ./setup.sh --install vapoursynth   # VS R76 + FFMS2 + BestSource
@@ -121,7 +121,9 @@ sudo ./setup.sh --install system_deps    # distro packages (the only step needin
 
 The full target list is `system_deps python_libs svt_av1 ffmpeg vapoursynth av1an ffvship oxipng fssimu2 wwxd vszip subtext denoiser`. Dependencies resolve automatically, so naming a late component pulls in what it needs.
 
-`system_deps` is the one target that installs distro packages, and it is what the other components tell you to run when something is missing. On Arch the setup runs `pacman -Q <pkg>` before any `pacman -S`, so already-installed packages skip cleanly; anything it genuinely needs (most often `cudnn`, `tensorrt`, AUR `vapoursynth-plugin-ctmf-git`) fails with the exact `sudo pacman -S …` command to run. On Debian/Ubuntu it checks with `dpkg -s` and installs the missing set through apt, printing `sudo apt install -y …` if it was not started as root.
+`system_deps` is the one target that installs distro packages, and the only one that needs root. Do **not** run `setup.sh` under sudo to give it that: it escalates for the package manager by itself and stays as your user for everything else. A root-owned prefix leaves the venv unwritable afterwards, and `makepkg`/`paru` refuse to run as root at all.
+
+It checks first and escalates only if something is missing — `pacman -Qi` on Arch, `dpkg -s` on Debian/Ubuntu — so on an already-provisioned host the whole install runs with no package-manager prompt. AUR packages remain manual: `paru` is installed for you where it is a repo package, and named in a warning where it is not.
 
 **Activate the env to use vspipe / Python tools from your shell:**
 ```bash

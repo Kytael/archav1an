@@ -5,6 +5,30 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
+# Prints the prefix needed to run the package manager: empty when already root,
+# "sudo" otherwise. Fails only when neither applies.
+#
+# setup.sh runs as your user by design -- check_root() takes one sudo to create
+# $VS_PREFIX owned by you, and everything after that builds unprivileged. The
+# package installs below are the only other steps that need root, so they
+# escalate themselves rather than making the caller do it. Before this, a
+# non-root `--install A` on a fresh host aborted at the first component with a
+# copy-paste command, which made the documented one-command install work only
+# on a host that was already provisioned.
+#
+# Escalating the whole script instead would be worse, and used to be the rule
+# here: makepkg and paru refuse to run as root outright, uv and cargo live in
+# your home and vanish under sudo's $HOME, and a root-owned prefix leaves the
+# venv unwritable for every later run.
+pkg_manager_sudo() {
+    [ "$EUID" -eq 0 ] && return 0
+    if command -v sudo &>/dev/null; then
+        echo sudo
+        return 0
+    fi
+    return 1
+}
+
 install_system_deps_arch() {
     log_info "Installing build tools and libraries (pacman)..."
     local DEPS=(
@@ -55,16 +79,18 @@ install_system_deps_arch() {
         log_info "All ${#DEPS[@]} system packages already installed; skipping pacman -S."
     else
         log_info "Installing ${#_missing[@]} missing system packages via pacman -S: ${_missing[*]}"
-        if [ "$EUID" -ne 0 ]; then
-            log_error "Need root for pacman -S. Run: sudo pacman -S --needed --noconfirm ${_missing[*]}"
+        local _sudo
+        if ! _sudo="$(pkg_manager_sudo)"; then
+            log_error "Need root for pacman -S, and sudo is not installed. Run as root, or: pacman -S --needed --noconfirm ${_missing[*]}"
             return 1
         fi
+        [ -n "$_sudo" ] && log_info "Escalating for pacman only (sudo may prompt); the rest of setup stays as $USER."
         # Sync + full upgrade only when we actually need to install something:
         # installing against a stale db (or after a bare -Sy) is the classic
         # Arch partial-upgrade hazard.
         log_info "Updating system packages..."
-        pacman -Syu --noconfirm || { log_error "pacman -Syu failed"; return 1; }
-        pacman -S --needed --noconfirm "${_missing[@]}" || { log_error "Failed to install system dependencies via pacman"; return 1; }
+        $_sudo pacman -Syu --noconfirm || { log_error "pacman -Syu failed"; return 1; }
+        $_sudo pacman -S --needed --noconfirm "${_missing[@]}" || { log_error "Failed to install system dependencies via pacman"; return 1; }
     fi
 
     # AUR helper. denoiser.sh installs three AUR packages (tensorrt,
@@ -75,9 +101,11 @@ install_system_deps_arch() {
     # needed. paru itself IS a repo package on CachyOS; on plain Arch it is not,
     # and bootstrapping it means a makepkg build we do not do unattended.
     if ! command -v paru &>/dev/null; then
-        if pacman -Si paru &>/dev/null && [ "$EUID" -eq 0 ]; then
+        local _sudo_paru
+        _sudo_paru="$(pkg_manager_sudo)" || _sudo_paru=""
+        if pacman -Si paru &>/dev/null && { [ "$EUID" -eq 0 ] || [ -n "$_sudo_paru" ]; }; then
             log_info "Installing AUR helper paru..."
-            pacman -S --needed --noconfirm paru \
+            $_sudo_paru pacman -S --needed --noconfirm paru \
                 || log_warn "Failed to install paru — AUR packages in the denoiser component will be skipped"
         else
             log_warn "AUR helper 'paru' not found and not in the repos. Install it before setup.sh --install denoiser, or that component skips its AUR packages: git clone https://aur.archlinux.org/paru.git && cd paru && makepkg -si"
@@ -255,14 +283,16 @@ install_system_deps_debian() {
     if [ "${#_missing[@]}" -eq 0 ]; then
         log_info "All system packages already installed; skipping apt install."
     else
-        if [ "$EUID" -ne 0 ]; then
-            log_error "Need root for apt install. Run: sudo apt install -y ${_missing[*]}"
+        local _sudo
+        if ! _sudo="$(pkg_manager_sudo)"; then
+            log_error "Need root for apt install, and sudo is not installed. Run as root, or: apt install -y ${_missing[*]}"
             return 1
         fi
+        [ -n "$_sudo" ] && log_info "Escalating for apt only (sudo may prompt); the rest of setup stays as $USER."
         log_info "Updating apt..."
-        apt update || { log_error "apt update failed"; return 1; }
+        $_sudo apt update || { log_error "apt update failed"; return 1; }
         log_info "Installing ${#_missing[@]} missing system packages: ${_missing[*]}"
-        apt install -y "${_missing[@]}" || { log_error "Failed to install system dependencies via apt"; return 1; }
+        $_sudo apt install -y "${_missing[@]}" || { log_error "Failed to install system dependencies via apt"; return 1; }
         ldconfig
     fi
 
