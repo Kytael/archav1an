@@ -135,19 +135,28 @@ def verdict(utils, cpus, tops, cores):
     mean_util = sum(utils) / len(utils)
     mean_cpu = sum(cpus) / len(cpus)
     mean_top = sum(tops) / len(tops)
+
+    # Order matters. A saturated single thread is the finding even when the
+    # card is rarely at a hard zero: gpu4 measured 67% mean utilisation with
+    # only 7% of samples idle, and calling that "mixed" buried the fact that
+    # one core sat at 77% mean and touched 100%. Test the thread first.
+    if mean_top > 70 and mean_util < 85:
+        return (f"VERDICT: single-thread bound. One core averages {mean_top:.0f}% "
+                f"(peak in the table above) while the card averages {mean_util:.0f}%. "
+                f"Total CPU is only {mean_cpu / 100:.1f} of {cores} cores, so the "
+                f"machine is idle and one serialised stage is pacing the GPU. Look at "
+                f"the per-frame work between inference calls, not at the card.")
     if idle_frac > 0.25:
-        why = (f"VERDICT: starved. The card is idle {idle_frac * 100:.0f}% of the time. "
-               f"CPU is {mean_cpu / 100:.1f} of {cores} cores")
-        if mean_top > 70:
-            return why + (f", with one core at {mean_top:.0f}% -- a serialised "
-                          f"stage between inference calls is the limit, not the GPU.")
-        return why + (", and no single core is saturated either, so the stall is a "
-                      "wait (I/O, transport, or a synchronous copy), not compute.")
+        return (f"VERDICT: starved. The card is idle {idle_frac * 100:.0f}% of the "
+                f"time and no single core is saturated ({mean_top:.0f}% hottest), so "
+                f"the stall is a wait -- I/O, transport, or a synchronous copy -- "
+                f"rather than compute.")
     if mean_util > 80:
         return (f"VERDICT: GPU-bound at {mean_util:.0f}% mean utilisation. This lane is "
                 f"at its card's ceiling; only a faster card or a cheaper model helps.")
-    return (f"VERDICT: mixed. {mean_util:.0f}% mean utilisation with the card idle "
-            f"{idle_frac * 100:.0f}% of the time. Worth a longer sample before acting.")
+    return (f"VERDICT: mixed. {mean_util:.0f}% mean utilisation, card idle "
+            f"{idle_frac * 100:.0f}%, hottest core {mean_top:.0f}%. Nothing dominates; "
+            f"sample for longer before acting.")
 
 
 def host_cores(host):
