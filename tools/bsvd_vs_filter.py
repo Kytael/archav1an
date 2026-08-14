@@ -268,7 +268,8 @@ def build_bsvd_streaming(source_clip: vs.VideoNode, *,
     clip feeds SMDegrain's `prefilter=` and motion search requests frames
     [n-tr, n+tr]) is served from an LRU output cache of size `cache_size`
     frames. Entries are stored in the engine's dtype (float16 when fp16=True,
-    lossless): ~11.9 MiB/frame at 1080p, so ~760 MiB at the default 64
+    lossless) in page-locked buffers, so the LRU is also the D2H destination
+    pool: ~11.9 MiB/frame at 1080p, so ~760 MiB at the default 64
     (float32 doubles that; 4K is ~4x). A cache miss
     that would require seeking BACKWARD past the cache window triggers a full
     streamer reset and replay from frame 0 — correct but slow; log to stderr.
@@ -303,14 +304,37 @@ def build_bsvd_streaming(source_clip: vs.VideoNode, *,
     # Cache in the engine's dtype — fp16 entries are lossless for an fp16
     # engine and halve the footprint; the float32 upcast happens at plane
     # write time in selector().
-    cache_dtype = np.float16 if torch_dtype == torch.float16 else np.float32
+    #
+    # The entries are views onto PINNED buffers recycled through a free list,
+    # not fresh host allocations. `.cpu()` allocates a new host array per frame
+    # and the LRU then holds it, so the D2H destination is host memory the
+    # process has not faulted in. On a unified-memory device that is not a small
+    # tax: the same 11.87 MiB copy runs at 56 GB/s into a pinned or already
+    # resident destination and at 0.12 GB/s into cold pageable pages, and
+    # cudaHostRegister on those same pages restores full speed. Measured in the
+    # lane on gpu4 (GB10) 2026-08-14: 92.9 ms per frame, 28% of a 311.7 ms
+    # frame, and the whole of the lane's unexplained GPU idle. Replacing it with
+    # this pool took 900 frames from 273.6 s to 195.4 s (3.29 -> 4.61 fps) with
+    # byte-identical output, and mean GPU utilisation from 66% to 91%.
+    # It is not NVIDIA-specific: the same pattern on the Radeon 8060S (gfx1151,
+    # ROCm 7.2) measures 2.96 ms pageable against 0.21 ms pinned. On a discrete
+    # card it is a wash (2070S: 4.56 ms vs 4.38 ms), so the pool is
+    # unconditional rather than gated on the device.
+    def _new_buffer():
+        return torch.empty((3, H, W), dtype=torch_dtype, pin_memory=True)
+
+    pool: 'list' = []                       # free pinned buffers
+    held: 'dict[int, torch.Tensor]' = {}    # output_idx -> the buffer its entry views
 
     def _store_output(out_tensor, output_idx):
-        arr = out_tensor.clamp(0, 1).squeeze(0).cpu().numpy().astype(cache_dtype, copy=False)
-        cache[output_idx] = arr
+        buf = pool.pop() if pool else _new_buffer()
+        buf.copy_(out_tensor.clamp(0, 1).squeeze(0))
+        held[output_idx] = buf
+        cache[output_idx] = buf.numpy()
         cache.move_to_end(output_idx)
         while len(cache) > cache_size:
-            cache.popitem(last=False)
+            evicted, _ = cache.popitem(last=False)
+            pool.append(held.pop(evicted))
 
     # Reusable pinned staging buffer for the upload. The helper this replaced
     # built a fresh 24.9 MB float32 array with np.stack every frame and then
@@ -364,6 +388,8 @@ def build_bsvd_streaming(source_clip: vs.VideoNode, *,
         print(f"[bsvd-vs] cache-miss reset, replaying 0..{target_output + 2 * shift_num}",
               file=sys.stderr)
         streamer.reset()
+        pool.extend(held.values())
+        held.clear()
         cache.clear()
         # The in-flight request belongs to the old position, and replay starts
         # from 0. Dropping it here stops _feed_one consuming a stale frame.
