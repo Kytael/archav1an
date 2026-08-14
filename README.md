@@ -2,6 +2,8 @@
 
 This guide explains how to set up and run Auto-Boost-Av1an on Linux (Arch-based distros like CachyOS, and Ubuntu/Debian).
 
+Both x86_64 and arm64 are supported. On arm64 the setup skips the x86-only assemblers, builds the VapourSynth plugins from source where no distro package exists, and takes TensorRT from apt — no index publishes an arm64 TensorRT wheel.
+
 ---
 
 ## Which Script Should I Choose?
@@ -109,14 +111,17 @@ chmod +x setup.sh
 
 Or selectively:
 ```bash
+sudo ./setup.sh --install system_deps    # distro packages (the only step needing root)
 ./setup.sh --install python_libs   # uv venv at /opt/archav1an/venv
 ./setup.sh --install ffmpeg        # source-built ffmpeg w/ NVENC into prefix
 ./setup.sh --install vapoursynth   # VS R76 + FFMS2 + BestSource
-./setup.sh --install denoiser      # SCUNet/SMDegrain/RVRT/STA-SUNet plugins
+./setup.sh --install denoiser      # BSVD/SCUNet/SMDegrain/RVRT/STA-SUNet plugins + models
 ./setup.sh --install wwxd vszip subtext  # core VS plugins
 ```
 
-The setup runs `pacman -Q <pkg>` before any `pacman -S` so already-installed system packages skip cleanly. Packages it genuinely needs to install (most often `cudnn`, `tensorrt`, AUR `vapoursynth-plugin-ctmf-git`) will fail with a clear message telling you the exact `sudo pacman -S ...` command to run — install those manually and re-run.
+The full target list is `system_deps python_libs svt_av1 ffmpeg vapoursynth av1an ffvship oxipng fssimu2 wwxd vszip subtext denoiser`. Dependencies resolve automatically, so naming a late component pulls in what it needs.
+
+`system_deps` is the one target that installs distro packages, and it is what the other components tell you to run when something is missing. On Arch the setup runs `pacman -Q <pkg>` before any `pacman -S`, so already-installed packages skip cleanly; anything it genuinely needs (most often `cudnn`, `tensorrt`, AUR `vapoursynth-plugin-ctmf-git`) fails with the exact `sudo pacman -S …` command to run. On Debian/Ubuntu it checks with `dpkg -s` and installs the missing set through apt, printing `sudo apt install -y …` if it was not started as root.
 
 **Activate the env to use vspipe / Python tools from your shell:**
 ```bash
@@ -160,8 +165,6 @@ pacman -Qkk vapoursynth     # must report "0 altered files"
 pacman -Qo /opt/archav1an/bin/vspipe   # must say "No package owns ..."
 ```
 ## Usage
-
-### 3. Usage
 
 1.  Place your source files (e.g., `.mkv` or `.mp4`) into the `Input/` folder.
     *   *Note: The script will create this folder automatically if it doesn't exist.*
@@ -207,7 +210,6 @@ We include an `audio-encoding/` folder for batch audio conversion workflows:
 | Script | Description |
 |--------|-------------|
 | `encode-ac3-audio.sh` | Converts audio tracks to **AC3** (Dolby Digital) - for legacy devices |
-| `encode-eac3-audio.sh` | Converts audio tracks to **EAC3** (Dolby Digital Plus) - recommended |
 | `encode-eac3-audio.sh` | Converts audio tracks to **EAC3** (Dolby Digital Plus) - recommended |
 | `encode-opus-audio.sh` | Converts audio tracks to **Opus** - best quality/size ratio |
 
@@ -256,6 +258,17 @@ Edit `prefilter/settings.txt` to customize filter settings.
 *Requirements:*
 - For NVIDIA scripts: NVEncC installed and in PATH
 - For x265 scripts: VapourSynth with placebo plugin, x265
+
+## Reference docs
+
+Longer write-ups live in `docs/`:
+
+| Doc | Covers |
+|-----|--------|
+| [lp-and-encoder-parallelism.md](docs/lp-and-encoder-parallelism.md) | `--lp` is a level in [0, 6], not a thread count. Measured fps/memory per level, what `--lp 0` picks from the core count, and how many encoder slots to run |
+| [split-host-denoise.md](docs/split-host-denoise.md) | Rationale and measurements behind `--remote-denoise` |
+| [vapoursynth-isolation.md](docs/vapoursynth-isolation.md) | How the `/opt/archav1an` prefix keeps its VapourSynth from colliding with the distro's |
+| [framebuffer-warning.md](docs/framebuffer-warning.md) | The VapourSynth "framebuffer" message at the end of a run, and why it is not a leak |
 
 ## Troubleshooting
 
