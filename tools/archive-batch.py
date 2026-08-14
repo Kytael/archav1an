@@ -7,6 +7,7 @@ the design notes, which are not part of this tree
 """
 import json
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -101,6 +102,30 @@ def run_dispatch(argv, env, timeout):
     return proc.poll(), True
 
 
+def clear_remote_stage(denoiser, clip):
+    """Drop the copy dispatch rsynced to a GPU-only host.
+
+    dispatch stages into Temp/_remote and never clears it, so a host that takes
+    a fifth of this 2.46 TiB archive keeps about 300 GB of sources it has
+    already finished with, and one that takes more can fill its disk part-way
+    through a run that is meant to last weeks. gpu1 is unaffected: it holds the
+    archive and reads in place, so nothing is staged there at all.
+
+    Best effort. A clip that encoded and published correctly must not be
+    recorded as failed because a cleanup ssh timed out.
+    """
+    root = denoiser.root or "~/archav1an"
+    name = os.path.basename(clip.src)
+    remote = f"{root}/Temp/_remote/{shlex.quote(name)}"
+    try:
+        subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
+                        denoiser.host, f"rm -f {remote}"],
+                       capture_output=True, timeout=60)
+    except (subprocess.SubprocessError, OSError) as exc:
+        print(f"[archive-batch] could not clear {denoiser.host}:{remote}: {exc!r}",
+              file=sys.stderr)
+
+
 def make_runner(encode):
     def runner(clip, denoiser):
         stage_dir = os.path.join(STAGE_ROOT, denoiser.name)
@@ -154,6 +179,8 @@ def make_runner(encode):
                 if os.path.exists(path):
                     os.remove(path)
             shutil.rmtree(temp_dir, ignore_errors=True)
+            if denoiser.is_remote and denoiser.stage_source:
+                clear_remote_stage(denoiser, clip)
 
         wall = time.monotonic() - started
         return True, wall, (clip.frames / wall if wall else 0.0), size, ""

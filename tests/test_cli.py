@@ -177,3 +177,47 @@ def test_the_kill_reaches_children_not_just_the_dispatch():
     time.sleep(0.5)
     survivors = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True)
     assert survivors.stdout.strip() == "", f"grandchild survived: {survivors.stdout}"
+
+
+def test_remote_stage_is_cleared_for_a_gpu_only_host(monkeypatch):
+    cli = _load_cli()
+    calls = []
+    monkeypatch.setattr(cli.subprocess, "run",
+                        lambda cmd, **kw: calls.append(cmd) or _done())
+    from tools.archive_batch.manifest import Clip
+    from tools.archive_batch.roster import Denoiser
+    d = Denoiser(name="gpu4", host="gpu4", backend="trt", device=0,
+                 tiling="none", enabled=True, stage_source=True,
+                 root="/home/user/reposetc/ubuntav1an")
+    clip = Clip(src="SetA/2003/event-b/MVI_0068.MOV", rel_dir="SetA/2003/event-b",
+                stem="MVI_0068", size=1, frames=100)
+    cli.clear_remote_stage(d, clip)
+    assert len(calls) == 1
+    cmd = calls[0]
+    assert cmd[0] == "ssh" and "gpu4" in cmd
+    # The path must be the remote's own root, not this host's, and the basename
+    # must be quoted: archive folders and clips can carry spaces.
+    assert "/home/user/reposetc/ubuntav1an/Temp/_remote/" in cmd[-1]
+    assert "MVI_0068.MOV" in cmd[-1]
+
+
+def test_a_failed_cleanup_does_not_raise(monkeypatch):
+    # The cleanup runs in the runner's finally, so an exception here would turn
+    # a clip that encoded and published correctly into a recorded failure.
+    cli = _load_cli()
+
+    def boom(cmd, **kw):
+        raise cli.subprocess.TimeoutExpired(cmd, 60)
+
+    monkeypatch.setattr(cli.subprocess, "run", boom)
+    from tools.archive_batch.manifest import Clip
+    from tools.archive_batch.roster import Denoiser
+    d = Denoiser(name="gpu2", host="gpu2", backend="trt", device=0,
+                 tiling="auto", enabled=True, stage_source=True, root="/r")
+    cli.clear_remote_stage(d, Clip(src="a/b.MOV", rel_dir="a", stem="b",
+                                   size=1, frames=1))
+
+
+def _done():
+    import subprocess as _sp
+    return _sp.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
