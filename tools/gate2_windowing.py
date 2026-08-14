@@ -178,6 +178,17 @@ def main():
     worst = int(per_frame.argmax())
     print(f"\n[gate2] worst frame {worst} (window join at "
           f"{args.window * round(worst / args.window)}), diff {per_frame[worst]:.3e}")
+
+    # The whole point of this gate is the bit-identical claim, so measuring it
+    # and then exiting 0 regardless makes it a report, not a gate. A change that
+    # regresses the seam logic must fail something.
+    if identical != n:
+        print(f"\n[gate2] FAIL: {n - identical} of {n} frames differ from the "
+              f"whole-clip render. Windowing is not bit-identical at "
+              f"window={args.window}, margin={args.margin}.")
+        return 1
+    print(f"\n[gate2] PASS: all {n} frames are bit-identical to the whole-clip "
+          f"render.")
     return 0
 
 

@@ -23,6 +23,13 @@ RETRY_WINDOW_S = 1800.0
 BASE_DELAY_S = 5.0
 MAX_DELAY_S = 300.0
 
+# rsync exit codes that mean "this transfer will never succeed", as opposed to
+# "the host is unreachable right now". 23 is a partial transfer due to an error
+# (a source path that does not exist gives this), 24 a source file that vanished
+# between the manifest probe and the copy. Retrying either for the full window
+# and then declaring an outage stops every lane over one deleted file.
+PERMANENT_CODES = frozenset({23, 24})
+
 
 class TransferError(Exception):
     """A transfer could not even be attempted."""
@@ -30,6 +37,10 @@ class TransferError(Exception):
 
 class TransferOutage(TransferError):
     """The retry window expired: the source host is down, not the clip bad."""
+
+
+class TransferFailed(TransferError):
+    """This clip cannot be transferred. Other clips are unaffected."""
 
 
 def stage_cmd(host, rel_src, dest_dir):
@@ -67,6 +78,8 @@ def run(cmd, timeout=3600, retry_window=RETRY_WINDOW_S,
             if proc.returncode == 0:
                 return proc
             reason = f"{cmd[0]} failed ({proc.returncode}): {proc.stderr.strip()}"
+            if proc.returncode in PERMANENT_CODES:
+                raise TransferFailed(reason)
 
         if clock() >= deadline:
             raise TransferOutage(f"{reason} -- gave up after {retry_window:.0f}s")

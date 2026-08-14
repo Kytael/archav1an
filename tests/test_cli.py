@@ -1,4 +1,8 @@
 import importlib.util
+import os
+import subprocess
+import tempfile
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -125,3 +129,51 @@ def _roster_stub():
     return Roster(denoisers=(Denoiser(name="d", host="local", backend="trt",
                                       device=0, tiling="none", enabled=True),),
                   encode=EncodePool(host="local", slots=1, lp_level=6))
+
+
+def test_dispatch_timeout_scales_with_clip_length():
+    cli = _load_cli()
+    short, long = cli.dispatch_timeout(1000), cli.dispatch_timeout(50000)
+    assert long > short > cli.DISPATCH_FLOOR_S
+    # The slowest rostered denoiser is about 4.4 fps, so the budget must stay
+    # well clear of a clip that is merely slow rather than hung.
+    assert short >= 1000 / 4.4 * 4
+    assert long >= 50000 / 4.4 * 4
+
+
+def test_a_clip_with_no_frame_count_gets_the_ceiling_not_the_floor():
+    cli = _load_cli()
+    # frames==0 means the manifest probe failed, not that the clip is empty.
+    # Handing it the floor would kill a 30-minute clip that is encoding fine.
+    assert cli.dispatch_timeout(0) == cli.DISPATCH_UNKNOWN_S
+    assert cli.dispatch_timeout(0) > cli.dispatch_timeout(50000)
+
+
+def test_a_hung_dispatch_is_killed_and_reported():
+    cli = _load_cli()
+    # sleep ignores SIGTERM's default only when trapped; a bare sleep dies on
+    # SIGTERM, so this proves the group kill lands and run_dispatch returns.
+    rc, timed_out = cli.run_dispatch(["sleep", "60"], dict(os.environ), timeout=1.0)
+    assert timed_out is True
+    assert rc != 0
+
+
+def test_a_dispatch_that_finishes_in_time_is_not_killed():
+    cli = _load_cli()
+    rc, timed_out = cli.run_dispatch(["true"], dict(os.environ), timeout=30.0)
+    assert (rc, timed_out) == (0, False)
+
+
+def test_the_kill_reaches_children_not_just_the_dispatch():
+    cli = _load_cli()
+    # A real hang is a stuck vspipe or ssh under the dispatch, so killing only
+    # the direct child leaves the lane blocked. Mark the grandchild with a
+    # unique argument and check nothing carrying it survives.
+    marker = tempfile.mkdtemp() + "/archive-batch-killtest"
+    open(marker, "w").close()
+    argv = ["sh", "-c", "tail -f %s & wait" % marker]
+    _rc, timed_out = cli.run_dispatch(argv, dict(os.environ), timeout=1.0)
+    assert timed_out is True
+    time.sleep(0.5)
+    survivors = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True)
+    assert survivors.stdout.strip() == "", f"grandchild survived: {survivors.stdout}"

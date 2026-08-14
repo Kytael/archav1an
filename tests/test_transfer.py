@@ -2,8 +2,9 @@ import subprocess
 
 import pytest
 from tools.archive_batch import transfer
-from tools.archive_batch.transfer import (TransferError, TransferOutage,
-                                          publish_cmd, run, stage_cmd)
+from tools.archive_batch.transfer import (TransferError, TransferFailed,
+                                          TransferOutage, publish_cmd, run,
+                                          stage_cmd)
 
 
 class _FakeClock:
@@ -96,6 +97,31 @@ def test_run_caps_the_backoff_delay(monkeypatch):
     with pytest.raises(TransferOutage):
         run(["rsync", "a", "b"], retry_window=3600.0, sleep=clock.sleep, clock=clock)
     assert max(clock.slept) == transfer.MAX_DELAY_S
+
+
+def test_a_missing_source_fails_the_clip_without_retrying(monkeypatch):
+    clock = _FakeClock()
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        return _proc(23, "rsync: link_stat \"...\" failed: No such file or directory")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(TransferFailed, match="No such file"):
+        run(["rsync", "a", "b"], sleep=clock.sleep, clock=clock)
+    assert len(calls) == 1, "a permanent failure must not be retried"
+    assert clock.slept == []
+
+
+def test_a_permanent_failure_is_not_an_outage(monkeypatch):
+    # The distinction is the whole point: an outage winds the run down, and one
+    # deleted source file must not do that to the other lanes.
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: _proc(24, "vanished"))
+    with pytest.raises(TransferFailed):
+        run(["rsync", "a", "b"], sleep=lambda s: None, clock=lambda: 0.0)
+    assert not issubclass(TransferFailed, TransferOutage)
+    assert issubclass(TransferFailed, TransferError)
 
 
 def test_run_treats_a_timeout_as_a_retryable_failure(monkeypatch):

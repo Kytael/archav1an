@@ -36,6 +36,20 @@ ROSTER = os.path.join(RUN_DIR, "denoisers.toml")
 STAGE_ROOT = os.path.join(REPO, "Temp", "_stage")
 CALLBACK_IP = "10.0.0.10"     # encoder-host LAN address; tailscale caps at 1.5 Gbps
 
+# Every transfer is already bounded, so the dispatch call was the one unbounded
+# wait in the run: a deadlocked vspipe or a half-open ssh holds its lane until
+# somebody notices, which over 15 unattended days means it never gets noticed.
+# The budget is deliberately loose. It only has to catch a hang, and a false
+# kill spends one of the clip's two attempts. The slowest rostered denoiser
+# measures about 4.4 fps at 1080p, so budgeting one frame per second leaves more
+# than four times the margin even before the floor.
+DISPATCH_FLOOR_S = 3600.0
+DISPATCH_FPS_FLOOR = 1.0
+# Clip length spans seconds to tens of minutes, so a clip whose frame count did not
+# parse must fall back to the ceiling. The floor would kill a long clip that is
+# encoding correctly.
+DISPATCH_UNKNOWN_S = 86400.0
+
 
 def log_tail(temp_dir, stem, lines=6, limit=600):
     """Last few lines of whatever the dispatch logged for this clip.
@@ -53,6 +67,38 @@ def log_tail(temp_dir, stem, lines=6, limit=600):
         if tail:
             return f"{suffix[1:]}: " + " | ".join(tail[-lines:])[:limit]
     return ""
+
+
+def dispatch_timeout(frames):
+    if frames <= 0:
+        return DISPATCH_UNKNOWN_S
+    return DISPATCH_FLOOR_S + frames / DISPATCH_FPS_FLOOR
+
+
+def run_dispatch(argv, env, timeout):
+    """Run one dispatch. Return (returncode, timed_out).
+
+    start_new_session puts dispatch and everything it spawns -- vspipe, ssh, the
+    encoder -- into one process group, so the kill reaches whichever child is
+    actually stuck. Killing the dispatch alone would leave them running and the
+    lane would stay blocked anyway.
+    """
+    proc = subprocess.Popen(argv, cwd=REPO, env=env, start_new_session=True)
+    try:
+        return proc.wait(timeout=timeout), False
+    except subprocess.TimeoutExpired:
+        pass
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(proc.pid, sig)
+        except OSError:
+            break       # the group is already gone
+        try:
+            proc.wait(timeout=30)
+            break
+        except subprocess.TimeoutExpired:
+            continue
+    return proc.poll(), True
 
 
 def make_runner(encode):
@@ -81,10 +127,15 @@ def make_runner(encode):
                 callback=CALLBACK_IP if denoiser.is_remote else None)
             env = dict(os.environ)
             env.update(env_overlay)
-            proc = subprocess.run(argv, cwd=REPO, env=env)
-            if proc.returncode != 0 or not os.path.exists(out):
-                why = (f"dispatch exit {proc.returncode}" if proc.returncode
-                       else "dispatch exit 0 but no output file")
+            budget = dispatch_timeout(clip.frames)
+            rc, timed_out = run_dispatch(argv, env, budget)
+            if timed_out or rc != 0 or not os.path.exists(out):
+                if timed_out:
+                    why = f"dispatch hung: killed after {budget:.0f}s"
+                elif rc:
+                    why = f"dispatch exit {rc}"
+                else:
+                    why = "dispatch exit 0 but no output file"
                 # Read the log before the finally below deletes temp_dir.
                 tail = log_tail(temp_dir, clip.stem)
                 return False, time.monotonic() - started, 0.0, 0, \
