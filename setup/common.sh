@@ -156,11 +156,53 @@ find_pacman_vs_plugin() {
     return 1
 }
 
+# Authenticate once, up front, for every privileged step this run will take.
+#
+# Exactly two things need root: creating $VS_PREFIX owned by you, and letting
+# the package manager install missing distro packages. Both are decidable
+# before any work starts, so decide them here and take a single `sudo -v`.
+# Every later escalation then hits sudo's credential cache and stays silent.
+#
+# The point is the failure mode as much as the prompt count. Authentication
+# happens at second zero, so a wrong password or a user not in sudoers aborts
+# immediately rather than after a long build. On a provisioned host nothing is
+# missing, so this returns without prompting at all.
+#
+# Caveat: a sudoers policy with timestamp_timeout=0 disables the cache, and
+# then each escalation prompts again. Nothing here can prevent that.
+preflight_sudo() {
+    [ "$EUID" -eq 0 ] && return 0
+
+    local _reasons=()
+    if [ -n "$VS_PREFIX" ] && [ ! -w "$VS_PREFIX" ]; then
+        _reasons+=("create $VS_PREFIX owned by $USER")
+    fi
+    # system_deps_missing needs DISTRO_FAMILY, and on Arch a GPU_VENDOR too, so
+    # the caller runs check_distro and detect_gpu before this.
+    if declare -F system_deps_missing >/dev/null && [ -n "$(system_deps_missing)" ]; then
+        _reasons+=("install missing distro packages")
+    fi
+    [ "${#_reasons[@]}" -eq 0 ] && return 0
+
+    local _why="${_reasons[0]}${_reasons[1]:+ and ${_reasons[1]}}"
+    if ! command -v sudo &>/dev/null; then
+        log_error "This run needs root to $_why, but sudo is not installed. Re-run as root."
+        return 1
+    fi
+
+    log_info "This run needs root once, to $_why."
+    log_info "Authenticating now so nothing prompts part-way through the build."
+    if ! sudo -v; then
+        log_error "sudo authentication failed — aborting before any work is done."
+        return 1
+    fi
+}
+
 check_root() {
     # If the user owns $VS_PREFIX (set in this file above), they don't need
     # sudo for builds that land inside the prefix. Individual install tasks
     # that genuinely need root (e.g. install_system_deps invoking pacman)
-    # will fail with a clear permission error if invoked without sudo.
+    # escalate for that one command; preflight_sudo has already authenticated.
     if [ "$EUID" -eq 0 ]; then
         return 0
     fi
@@ -171,7 +213,7 @@ check_root() {
     # Prefix doesn't exist (or isn't writable by us). The only step that
     # needs root is creating it with the right owner; do that here so
     # plain `./setup.sh --install A` works as the first command.
-    log_info "Bootstrapping $VS_PREFIX (one-time sudo prompt; the rest of setup runs as $USER)..."
+    log_info "Bootstrapping $VS_PREFIX (the rest of setup runs as $USER)..."
     if sudo install -d -o "$USER" -g "$USER" "$VS_PREFIX"; then
         log_success "Created $VS_PREFIX owned by $USER."
         return 0

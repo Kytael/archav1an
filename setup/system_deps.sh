@@ -29,8 +29,11 @@ pkg_manager_sudo() {
     return 1
 }
 
-install_system_deps_arch() {
-    log_info "Installing build tools and libraries (pacman)..."
+# The pacman package list, one per line. Extracted from install_system_deps_arch
+# so the preflight can ask what is missing without installing anything, the way
+# debian_system_deps() already allows on the apt side. Quiet on purpose: it runs
+# during the preflight, where progress logging would be noise.
+arch_system_deps() {
     local DEPS=(
         # Build tools
         base-devel cmake pkgconf autoconf automake libtool
@@ -50,31 +53,54 @@ install_system_deps_arch() {
         mimalloc
     )
 
-    # Detect GPU and add appropriate packages
-    detect_gpu
+    # This function's stdout IS the package list, so detect_gpu's logging must
+    # not land in it. Skip the probe entirely when the caller already ran it,
+    # and send it to stderr otherwise.
+    [ -n "$GPU_VENDOR" ] || detect_gpu >&2
 
     if [ "$GPU_VENDOR" = "nvidia" ] || [ "$GPU_VENDOR" = "both" ]; then
-        log_info "Adding NVIDIA CUDA packages..."
         DEPS+=(cuda)
     fi
 
     if [ "$GPU_VENDOR" = "amd" ] || [ "$GPU_VENDOR" = "both" ]; then
         # Check if hipcc is already available (e.g., from opencl-amd or opencl-amd-dev)
-        if command -v hipcc &> /dev/null || [ -f "/opt/rocm/bin/hipcc" ]; then
-            log_info "AMD HIP compiler (hipcc) already available, skipping ROCm HIP install."
-        else
-            log_info "Adding AMD ROCm/HIP packages..."
+        if ! command -v hipcc &> /dev/null && [ ! -f "/opt/rocm/bin/hipcc" ]; then
             DEPS+=(hip-runtime-amd)
         fi
     fi
+
+    printf '%s\n' "${DEPS[@]}"
+}
+
+arch_system_deps_missing() {
+    local _dep
+    while read -r _dep; do
+        [ -n "$_dep" ] || continue
+        pacman -Qi "$_dep" &>/dev/null || printf '%s\n' "$_dep"
+    done < <(arch_system_deps)
+}
+
+# Which distro packages are missing, whichever family this is. Prints nothing
+# when the host is already provisioned, which is what lets the preflight stay
+# silent and prompt-free there.
+system_deps_missing() {
+    if [ "$DISTRO_FAMILY" = "arch" ]; then
+        arch_system_deps_missing
+    else
+        debian_system_deps_missing
+    fi
+}
+
+install_system_deps_arch() {
+    log_info "Installing build tools and libraries (pacman)..."
 
     # Precheck which DEPS are missing so non-root invocations don't
     # uselessly hit pacman -S (which requires sudo) when everything is
     # already installed — the common case under FORCE_REINSTALL=1.
     local _missing=()
-    for _dep in "${DEPS[@]}"; do
-        pacman -Qi "$_dep" &>/dev/null || _missing+=("$_dep")
-    done
+    mapfile -t _missing < <(arch_system_deps_missing)
+    local DEPS=()
+    mapfile -t DEPS < <(arch_system_deps)
     if [ "${#_missing[@]}" -eq 0 ]; then
         log_info "All ${#DEPS[@]} system packages already installed; skipping pacman -S."
     else

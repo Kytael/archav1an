@@ -589,10 +589,26 @@ for arg in "$@"; do
     fi
 done
 
-check_root
 check_distro
-setup_wsl2_cuda
 detect_gpu
+
+# Only the commands that build something need the prefix or root. check_root
+# used to run unconditionally here, so `./setup.sh --help` asked for a password
+# on any host whose prefix was not already user-writable.
+#
+# Order matters within the branch: preflight_sudo asks what still needs
+# installing, which needs the distro family and (on Arch) the GPU vendor, and it
+# must authenticate before check_root spends the first sudo. One prompt, at
+# second zero, or an immediate abort.
+case "${1:-}" in
+    -h|--help|--uninstall) : ;;
+    *)
+        preflight_sudo || exit 1
+        check_root
+        ;;
+esac
+
+setup_wsl2_cuda
 
 # Filter out -y/--yes from positional args
 ARGS=()
