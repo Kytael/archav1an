@@ -126,15 +126,22 @@ install_system_deps_arch() {
     # install these: they are AUR-only, which is the whole reason a helper is
     # needed. paru itself IS a repo package on CachyOS; on plain Arch it is not,
     # and bootstrapping it means a makepkg build we do not do unattended.
-    if ! command -v paru &>/dev/null; then
-        local _sudo_paru
-        _sudo_paru="$(pkg_manager_sudo)" || _sudo_paru=""
-        if pacman -Si paru &>/dev/null && { [ "$EUID" -eq 0 ] || [ -n "$_sudo_paru" ]; }; then
-            log_info "Installing AUR helper paru..."
-            $_sudo_paru pacman -S --needed --noconfirm paru \
-                || log_warn "Failed to install paru — AUR packages in the denoiser component will be skipped"
+    if [ -z "$(aur_helper)" ]; then
+        local _sudo_aur _cand=""
+        _sudo_aur="$(pkg_manager_sudo)" || _sudo_aur=""
+        # paru first, then yay: either drives the three AUR packages the
+        # denoiser needs, and a host that already has one should not be told to
+        # install the other. Neither is in the official Arch repos -- CachyOS
+        # packages both, which is the only reason this can be automated at all.
+        for _c in paru yay; do
+            pacman -Si "$_c" &>/dev/null && { _cand="$_c"; break; }
+        done
+        if [ -n "$_cand" ] && { [ "$EUID" -eq 0 ] || [ -n "$_sudo_aur" ]; }; then
+            log_info "Installing AUR helper $_cand..."
+            $_sudo_aur pacman -S --needed --noconfirm "$_cand" \
+                || log_warn "Failed to install $_cand — AUR packages in the denoiser component will be skipped"
         else
-            log_warn "AUR helper 'paru' not found and not in the repos. Install it before setup.sh --install denoiser, or that component skips its AUR packages: git clone https://aur.archlinux.org/paru.git && cd paru && makepkg -si"
+            log_warn "No AUR helper (paru or yay) found, and neither is in the repos. Install one before setup.sh --install denoiser, or that component skips its AUR packages: git clone https://aur.archlinux.org/paru.git && cd paru && makepkg -si"
         fi
     fi
 
@@ -224,7 +231,20 @@ debian_system_deps() {
         # Ubuntu's nvidia-cuda-toolkit is CUDA 12 and would fight a toolkit
         # already installed from NVIDIA's own repo (DGX OS ships CUDA 13).
         # Only ask for it when the host has no nvcc at all.
-        local nvcc_bin=""
+        #
+        # It has to stay in the list once installed, though, or this function
+        # has no fixed point: run 1 finds no nvcc and installs the toolkit, run
+        # 2 then finds the nvcc that toolkit provides, takes the branch below,
+        # and asks for libcudnn9-cuda-12 -- which lives only in NVIDIA's own apt
+        # repo. On a host without that repo the package can never arrive, so
+        # system_deps_missing never empties and every run asks for root again.
+        #
+        # Distro toolkit present also tells us NVIDIA's repo is NOT configured
+        # (a host with that repo takes its CUDA from /usr/local/cuda instead),
+        # so cuDNN and TensorRT are unreachable here and asking is pointless.
+        # The BSVD lane falls back to the CUDA EP, which the denoiser reports.
+        local nvcc_bin="" _distro_cuda=0
+        dpkg -s nvidia-cuda-toolkit &>/dev/null && _distro_cuda=1
         if command -v nvcc &>/dev/null; then
             nvcc_bin="nvcc"
         elif [ -x /usr/local/cuda/bin/nvcc ]; then
@@ -234,7 +254,10 @@ debian_system_deps() {
             DEPS+=(nvidia-cuda-toolkit)
         fi
 
-        if [ -n "$nvcc_bin" ]; then
+        if [ "$_distro_cuda" -eq 1 ]; then
+            DEPS+=(nvidia-cuda-toolkit)
+            log_info "CUDA comes from Ubuntu's nvidia-cuda-toolkit; skipping cuDNN/TensorRT (NVIDIA's apt repo is not configured)." >&2
+        elif [ -n "$nvcc_bin" ]; then
             local cuda_ver cuda_major
             cuda_ver="$("$nvcc_bin" --version 2>/dev/null \
                 | sed -n 's/.*release \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -1)"

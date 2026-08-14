@@ -198,6 +198,17 @@ preflight_sudo() {
     fi
 }
 
+# Prints the AUR helper to drive, or nothing when the host has none. paru and
+# yay take the same -S --needed --noconfirm arguments the denoiser uses, so
+# either works and whichever is installed wins.
+aur_helper() {
+    local _h
+    for _h in paru yay; do
+        command -v "$_h" &>/dev/null && { echo "$_h"; return 0; }
+    done
+    return 1
+}
+
 check_root() {
     # If the user owns $VS_PREFIX (set in this file above), they don't need
     # sudo for builds that land inside the prefix. Individual install tasks

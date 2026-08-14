@@ -126,6 +126,10 @@ install_denoiser() {
     else
         _aur_user="$USER"
     fi
+    # Which AUR helper this host has, if any. paru and yay take identical
+    # arguments for what we do, so either drives the three AUR packages below.
+    local _aur
+    _aur="$(aur_helper)" || _aur=""
 
     # =========================================================================
     # 1. OpenCL runtime (required by KNLMeansCL)
@@ -187,12 +191,12 @@ install_denoiser() {
                 [ -x "$_d/nvcc" ] && { _cuda_bin="$_d"; break; }
             done
             if [ -z "$_aur_user" ] || [ "$_aur_user" = "root" ]; then
-                log_warn "Cannot build AUR package 'tensorrt' as root. Set SUDO_USER or run: sudo -u <user> paru -S tensorrt"
+                log_warn "Cannot build AUR package 'tensorrt' as root. Set SUDO_USER or run: sudo -u <user> ${_aur:-paru} -S tensorrt"
                 _have_sys_trt=0
-            elif ! command -v paru &>/dev/null; then
-                # system_deps.sh installs paru; this only catches a host that
-                # skipped that component or lost the package since.
-                log_warn "AUR helper 'paru' not found — cannot install the system tensorrt. Run: setup.sh --install system_deps"
+            elif [ -z "$_aur" ]; then
+                # system_deps.sh installs an AUR helper; this only catches a
+                # host that skipped that component or lost the package since.
+                log_warn "No AUR helper (paru or yay) — cannot install the system tensorrt. Run: setup.sh --install system_deps"
                 _have_sys_trt=0
             else
                 log_info "Installing tensorrt from AUR as $_aur_user (this may take a while)..."
@@ -200,7 +204,7 @@ install_denoiser() {
                 sudo -u "$_aur_user" env \
                     PATH="${_cuda_bin:+$_cuda_bin:}${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}" \
                     CUDAToolkit_ROOT="${_cuda_bin%/bin}" \
-                    paru -S --needed --noconfirm tensorrt \
+                    "$_aur" -S --needed --noconfirm tensorrt \
                     || { log_warn "Failed to install tensorrt from AUR"; _have_sys_trt=0; }
             fi
         else
@@ -419,10 +423,10 @@ install_denoiser() {
 
         if ! pacman -Qi vapoursynth-plugin-removegrain &>/dev/null && ! pacman -Qi vapoursynth-plugin-removegrain-git &>/dev/null; then
             if [ -z "$_aur_user" ] || [ "$_aur_user" = "root" ]; then
-                log_warn "Cannot install vapoursynth-plugin-removegrain-git as root. Run manually: sudo -u <user> paru -S vapoursynth-plugin-removegrain-git"
+                log_warn "Cannot install vapoursynth-plugin-removegrain-git as root. Run manually: sudo -u <user> ${_aur:-paru} -S vapoursynth-plugin-removegrain-git"
             else
                 log_info "Installing vapoursynth-plugin-removegrain-git from AUR as $_aur_user..."
-                sudo -u "$_aur_user" paru -S --needed --noconfirm vapoursynth-plugin-removegrain-git || \
+                sudo -u "$_aur_user" "$_aur" -S --needed --noconfirm vapoursynth-plugin-removegrain-git || \
                     log_warn "Failed to install vapoursynth-plugin-removegrain-git (SMDegrain chroma may not work)"
             fi
         else
@@ -444,12 +448,12 @@ install_denoiser() {
         # can be dropped.
         if ! pacman -Qi vapoursynth-plugin-ctmf-git &>/dev/null; then
             if [ -z "$_aur_user" ] || [ "$_aur_user" = "root" ]; then
-                log_warn "Cannot install vapoursynth-plugin-ctmf-git as root. Run manually: sudo -u <user> paru -S vapoursynth-plugin-ctmf-git"
+                log_warn "Cannot install vapoursynth-plugin-ctmf-git as root. Run manually: sudo -u <user> ${_aur:-paru} -S vapoursynth-plugin-ctmf-git"
             else
                 log_info "Installing vapoursynth-plugin-ctmf-git from AUR as $_aur_user (with V3-header CPPFLAGS bridge)..."
                 sudo -u "$_aur_user" \
                     CPPFLAGS="-I$VS_PREFIX/include/vapoursynth ${CPPFLAGS:-}" \
-                    paru -S --needed --noconfirm vapoursynth-plugin-ctmf-git || \
+                    "$_aur" -S --needed --noconfirm vapoursynth-plugin-ctmf-git || \
                         log_warn "Failed to install vapoursynth-plugin-ctmf-git (SMDegrain ContraSharpening may not work)"
             fi
         else
