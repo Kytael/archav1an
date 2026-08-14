@@ -97,6 +97,9 @@ build_meson_vs_plugin() {
 }
 
 install_denoiser() {
+    # vsrvrt goes in through uv further down, and this target is reachable
+    # without install_python_libs ever running.
+    ensure_uv || return 1
     local VS_PLUGIN_PATH
     VS_PLUGIN_PATH="$(get_vs_plugin_path)"
     mkdir -p "$VS_PLUGIN_PATH"

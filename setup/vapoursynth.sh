@@ -16,6 +16,11 @@ install_vapoursynth() {
         return 0
     fi
 
+    # meson and ninja go into the venv through uv below. A host whose venv
+    # already exists never runs install_python_libs, which was the only caller
+    # of ensure_uv, so --update reached the uv call with nothing to run.
+    ensure_uv || return 1
+
     log_info "Compiling VapourSynth from source with native optimizations into $VS_PREFIX..."
     set_native_build_flags
 

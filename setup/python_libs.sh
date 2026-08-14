@@ -84,6 +84,7 @@ install_python_libs() {
 # same package set (used by ./setup.sh --update; a no-op when all current).
 update_python_libs() {
     [ -d "$VENV_DIR" ] || { log_warn "venv missing — run --install python_libs instead."; return 1; }
+    ensure_uv || return 1
     log_info "Upgrading python_libs packages in venv..."
     VIRTUAL_ENV="$VENV_DIR" uv pip install -U \
             vsjetpack numpy scipy rich vstools psutil anitopy pyperclip requests \
@@ -97,6 +98,13 @@ uninstall_python_libs() {
     log_info "Uninstalling Python Libraries..."
 
     if [ -d "$VENV_DIR" ]; then
+        # Unlike the install paths, a missing uv must not abort an uninstall:
+        # the caller wants things gone, and refusing to proceed leaves more
+        # behind than doing what it can.
+        if ! ensure_uv; then
+            log_warn "uv unavailable — leaving the venv packages in place. Delete $VENV_DIR by hand to remove them."
+            return 0
+        fi
         VIRTUAL_ENV="$VENV_DIR" uv pip uninstall \
             vsjetpack numpy scipy rich vstools psutil anitopy pyperclip \
             requests requests_toolbelt natsort colorama Cython \
