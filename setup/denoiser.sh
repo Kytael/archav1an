@@ -538,45 +538,101 @@ for sigma in [15, 25, 50]:
     if [ "$GPU_VENDOR" = "nvidia" ] || [ "$GPU_VENDOR" = "both" ]; then
         # onnxruntime-gpu ships CUDA + TensorRT EPs (the latter is what we use
         # for BSVD V2 stateful streaming).
-        "$VENV_DIR/bin/pip" install -U onnxruntime-gpu \
+        #
+        # aarch64 has NO onnxruntime-gpu wheel on PyPI, and none on
+        # pypi.nvidia.com either — a plain install dies with "No matching
+        # distribution found" and leaves BSVD broken behind a warning. SBSA
+        # hosts (DGX Spark / GB10) get it from NVIDIA's jetson-ai-lab devpi
+        # index, which also mirrors upstream PyPI, so it is safe as --index-url
+        # rather than an extra index. Override with ORT_INDEX_URL for another
+        # route (jp6/cu126, jp6/cu128, jp6/cu129, sbsa/dev).
+        local _ort_index=""
+        if [ "$(uname -m)" = "aarch64" ]; then
+            _ort_index="${ORT_INDEX_URL:-https://pypi.jetson-ai-lab.io/sbsa/cu130}"
+            log_info "aarch64 host — sourcing onnxruntime-gpu from $_ort_index"
+        fi
+        "$VENV_DIR/bin/pip" install -U ${_ort_index:+--index-url "$_ort_index"} onnxruntime-gpu \
             || log_warn "Failed to install onnxruntime-gpu — --denoise-bsvd will fail at dispatch"
 
-        # TensorRT RUNTIME for the ORT TRT EP. onnxruntime-gpu's provider .so
-        # (libonnxruntime_providers_tensorrt.so) hard-links libnvinfer.so.10 and
-        # libnvonnxparser.so.10 (TensorRT *10*). The EP is LISTED by ORT regardless,
-        # so dispatch's ctypes.util.find_library("nvinfer") sees the system AUR
-        # `tensorrt` (now 11.x → soname .so.11), picks the TRT EP, then the
-        # InferenceSession dies at create with "libnvinfer.so.10 => not found".
-        # Fix: install the TRT-10 runtime libs (py-agnostic wheel — ORT needs only
-        # the .so's, not the cp-specific python bindings) INTO the managed venv and
-        # register them with the dynamic loader, so both ORT's dlopen and dispatch's
-        # find_library("nvinfer") resolve .so.10 with no manual LD_LIBRARY_PATH.
-        # Pinned <11 to match the provider soname (the system 11.x libs are left
-        # untouched for the vstrt/SCUNet + standalone-engine paths that use them).
-        log_info "Installing TensorRT 10 runtime libs for the onnxruntime TRT EP (BSVD)..."
-        local _trt_libdir=""
-        if "$VENV_DIR/bin/pip" install -U 'tensorrt-cu12-libs<11'; then
-            _trt_libdir="$("$VENV_DIR/bin/python" -c "import tensorrt_libs,os;print(os.path.dirname(tensorrt_libs.__file__))" 2>/dev/null)"
+        # TensorRT RUNTIME for the ORT TRT EP. The required major is NOT a
+        # constant. onnxruntime-gpu's provider .so hard-links one specific
+        # libnvinfer soname, and which one depends on the ORT build pip happened
+        # to resolve — the install above is unbounded, and aarch64 lags x86 by
+        # several minors (1.24 vs 1.28 across this fleet, both wanting 10). Get
+        # it from the ELF instead of hardcoding it. A wrong major does not fail
+        # loudly: the EP is still LISTED by ORT, so dispatch's
+        # ctypes.util.find_library("nvinfer") selects it, and the InferenceSession
+        # then dies at create with "libnvinfer.so.N => not found". Note that
+        # tensorrt-cu12-libs is already past 11.x on PyPI, so an unbounded
+        # install is actively wrong for an ORT that wants 10.
+        local _prov _soname _trt_major=""
+        _prov="$(echo "$VENV_DIR"/lib/python3.*/site-packages/onnxruntime/capi/libonnxruntime_providers_tensorrt.so)"
+        if [ -f "$_prov" ]; then
+            _soname="$(readelf -d "$_prov" 2>/dev/null | grep -o 'libnvinfer\.so\.[0-9]*' | head -1)"
+            # binutils is not guaranteed; grep -a reads the DT_NEEDED string out
+            # of the ELF directly. ldd is wrong here — it tries to RESOLVE, so it
+            # reports "not found" for exactly the case we are trying to detect.
+            [ -n "$_soname" ] || _soname="$(grep -ao 'libnvinfer\.so\.[0-9]*' "$_prov" 2>/dev/null | head -1)"
+            _trt_major="${_soname##*.}"
         fi
-        # The ORT provider needs libcudnn.so.9 as well as libnvinfer.so.10, and
-        # registering only the tensorrt dir leaves the session dying on cudnn.
-        # Arch hosts get it from pacman `cudnn` in /usr/lib, but that package is
-        # not universal, and torch already pulls a copy into the venv. Register
-        # both dirs so the EP does not depend on which of the two is present.
-        local _cudnn_libdir
-        _cudnn_libdir="$(echo "$VENV_DIR"/lib/python3.*/site-packages/nvidia/cudnn/lib)"
-        [ -f "$_cudnn_libdir/libcudnn.so.9" ] || _cudnn_libdir=""
-        if [ -n "$_trt_libdir" ] && [ -f "$_trt_libdir/libnvinfer.so.10" ]; then
-            if { [ "$EUID" -eq 0 ] || [ -w /etc/ld.so.conf.d ]; } \
-               && printf '%s\n' "$_trt_libdir" ${_cudnn_libdir:+"$_cudnn_libdir"} \
-                    > /etc/ld.so.conf.d/archav1an-tensorrt.conf 2>/dev/null \
-               && ldconfig 2>/dev/null; then
-                log_success "BSVD TRT EP wired: libnvinfer.so.10 installed + registered on the loader path ($_trt_libdir${_cudnn_libdir:+, $_cudnn_libdir})."
-            else
-                log_warn "BSVD TRT EP: libnvinfer.so.10 installed at $_trt_libdir but not registered globally (need root). Run --denoise-bsvd with:  LD_LIBRARY_PATH=$_trt_libdir${_cudnn_libdir:+:$_cudnn_libdir}:\$LD_LIBRARY_PATH"
-            fi
+        case "$_trt_major" in ''|*[!0-9]*) _trt_major="" ;; esac
+
+        # "Already provided" has to mean provided by the SYSTEM, not by the wheel
+        # a previous run of this function installed into the venv and registered
+        # in ld.so.conf.d. Anything under $VENV_DIR is ours, so ignore it — or a
+        # re-run reads its own handiwork, takes the skip branch, and never
+        # notices that the required major has changed.
+        local _sys_infer="" _sys_parser=""
+        if [ -n "$_trt_major" ]; then
+            _sys_infer="$(ldconfig -p 2>/dev/null \
+                | awk -v m="libnvinfer.so.${_trt_major}" '$1 == m {print $NF}' \
+                | grep -v "^${VENV_DIR}/" | head -1)"
+            _sys_parser="$(ldconfig -p 2>/dev/null \
+                | awk -v m="libnvonnxparser.so.${_trt_major}" '$1 == m {print $NF}' \
+                | grep -v "^${VENV_DIR}/" | head -1)"
+        fi
+
+        local _trt_libdir=""
+        if [ -z "$_trt_major" ]; then
+            log_warn "BSVD TRT EP: could not read the TensorRT soname from the onnxruntime provider — skipping the TensorRT runtime install. --denoise-bsvd will fall back to the slower CUDA EP."
+        elif [ -n "$_sys_infer" ] && [ -n "$_sys_parser" ]; then
+            # DGX OS ships coinstallable libnvinfer10/libnvinfer11 from apt, so an
+            # SBSA host already satisfies the provider and needs neither the wheel
+            # nor an ld.so.conf.d entry. Arch cannot do this: the AUR `tensorrt`
+            # package holds exactly one major at a time, which is the whole reason
+            # the wheel path below exists.
+            log_success "BSVD TRT EP: system already provides TensorRT ${_trt_major} ($_sys_infer) — no wheel needed."
         else
-            log_warn "BSVD TRT EP: could not install libnvinfer.so.10 (tensorrt-cu12-libs<11). --denoise-bsvd will fall back to the slower CUDA EP."
+            # Install the runtime libs (py-agnostic wheel — ORT needs only the
+            # .so's, not the cp-specific python bindings) INTO the managed venv and
+            # register them with the dynamic loader, so both ORT's dlopen and
+            # dispatch's find_library("nvinfer") resolve with no manual
+            # LD_LIBRARY_PATH. The system libs are left untouched for the
+            # vstrt/SCUNet + standalone-engine paths that use them.
+            log_info "Installing TensorRT ${_trt_major} runtime libs for the onnxruntime TRT EP (BSVD)..."
+            if "$VENV_DIR/bin/pip" install -U "tensorrt-cu12-libs>=${_trt_major},<$((_trt_major + 1))"; then
+                _trt_libdir="$("$VENV_DIR/bin/python" -c "import tensorrt_libs,os;print(os.path.dirname(tensorrt_libs.__file__))" 2>/dev/null)"
+            fi
+            # The ORT provider needs libcudnn.so.9 as well as libnvinfer, and
+            # registering only the tensorrt dir leaves the session dying on cudnn.
+            # Arch hosts get it from pacman `cudnn` in /usr/lib, but that package is
+            # not universal, and torch already pulls a copy into the venv. Register
+            # both dirs so the EP does not depend on which of the two is present.
+            local _cudnn_libdir
+            _cudnn_libdir="$(echo "$VENV_DIR"/lib/python3.*/site-packages/nvidia/cudnn/lib)"
+            [ -f "$_cudnn_libdir/libcudnn.so.9" ] || _cudnn_libdir=""
+            if [ -n "$_trt_libdir" ] && [ -f "$_trt_libdir/libnvinfer.so.${_trt_major}" ]; then
+                if { [ "$EUID" -eq 0 ] || [ -w /etc/ld.so.conf.d ]; } \
+                   && printf '%s\n' "$_trt_libdir" ${_cudnn_libdir:+"$_cudnn_libdir"} \
+                        > /etc/ld.so.conf.d/archav1an-tensorrt.conf 2>/dev/null \
+                   && ldconfig 2>/dev/null; then
+                    log_success "BSVD TRT EP wired: libnvinfer.so.${_trt_major} installed + registered on the loader path ($_trt_libdir${_cudnn_libdir:+, $_cudnn_libdir})."
+                else
+                    log_warn "BSVD TRT EP: libnvinfer.so.${_trt_major} installed at $_trt_libdir but not registered globally (need root). Run --denoise-bsvd with:  LD_LIBRARY_PATH=$_trt_libdir${_cudnn_libdir:+:$_cudnn_libdir}:\$LD_LIBRARY_PATH"
+                fi
+            else
+                log_warn "BSVD TRT EP: could not install libnvinfer.so.${_trt_major} (tensorrt-cu12-libs>=${_trt_major},<$((_trt_major + 1))). --denoise-bsvd will fall back to the slower CUDA EP."
+            fi
         fi
     fi
 
