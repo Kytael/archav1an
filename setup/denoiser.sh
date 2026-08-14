@@ -541,15 +541,39 @@ for sigma in [15, 25, 50]:
         #
         # aarch64 has NO onnxruntime-gpu wheel on PyPI, and none on
         # pypi.nvidia.com either — a plain install dies with "No matching
-        # distribution found" and leaves BSVD broken behind a warning. SBSA
-        # hosts (DGX Spark / GB10) get it from NVIDIA's jetson-ai-lab devpi
-        # index, which also mirrors upstream PyPI, so it is safe as --index-url
-        # rather than an extra index. Override with ORT_INDEX_URL for another
-        # route (jp6/cu126, jp6/cu128, jp6/cu129, sbsa/dev).
+        # distribution found" and leaves BSVD broken behind a warning. NVIDIA's
+        # jetson-ai-lab devpi is the only index that publishes one. It also
+        # mirrors upstream PyPI, so it is safe as --index-url rather than an
+        # extra index, and the aarch64 dependency builds then come from it too.
+        #
+        # The route is NOT derivable by string-building "sbsa/cu$ver": the sbsa
+        # namespace carries cu130 only, while the CUDA 12.x routes live under
+        # jp6 (JetPack 6, Jetson). Worse, a wrong route cannot be caught by HTTP
+        # status — devpi inherits root/pypi, so EVERY route name answers 200 and
+        # silently proxies PyPI (sbsa/cu999 included). Probe for a real aarch64
+        # wheel instead and take the first route that has one.
         local _ort_index=""
         if [ "$(uname -m)" = "aarch64" ]; then
-            _ort_index="${ORT_INDEX_URL:-https://pypi.jetson-ai-lab.io/sbsa/cu130}"
-            log_info "aarch64 host — sourcing onnxruntime-gpu from $_ort_index"
+            if [ -n "$ORT_INDEX_URL" ]; then
+                _ort_index="$ORT_INDEX_URL"
+                log_info "aarch64 host — using ORT_INDEX_URL: $_ort_index"
+            else
+                local _cu _r _routes=()
+                _cu="$( { command -v nvcc >/dev/null && nvcc --version || /usr/local/cuda/bin/nvcc --version; } 2>/dev/null \
+                    | sed -n 's/.*release \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1\2/p' | head -1)"
+                [ -n "$_cu" ] && _routes+=("sbsa/cu${_cu}" "jp6/cu${_cu}")
+                _routes+=("sbsa/cu130")
+                for _r in "${_routes[@]}"; do
+                    if "$VENV_DIR/bin/python" -c 'import sys, urllib.request
+try: sys.exit(0 if b"aarch64" in urllib.request.urlopen("https://pypi.jetson-ai-lab.io/%s/onnxruntime-gpu/" % sys.argv[1], timeout=15).read() else 1)
+except Exception: sys.exit(1)' "$_r" 2>/dev/null; then
+                        _ort_index="https://pypi.jetson-ai-lab.io/${_r}"
+                        log_info "aarch64 host — sourcing onnxruntime-gpu from $_ort_index"
+                        break
+                    fi
+                done
+                [ -n "$_ort_index" ] || log_warn "aarch64 host — no jetson-ai-lab route publishes an aarch64 onnxruntime-gpu wheel (tried ${_routes[*]}). Set ORT_INDEX_URL to override. The install below will fail."
+            fi
         fi
         "$VENV_DIR/bin/pip" install -U ${_ort_index:+--index-url "$_ort_index"} onnxruntime-gpu \
             || log_warn "Failed to install onnxruntime-gpu — --denoise-bsvd will fail at dispatch"
@@ -602,6 +626,12 @@ for sigma in [15, 25, 50]:
             # package holds exactly one major at a time, which is the whole reason
             # the wheel path below exists.
             log_success "BSVD TRT EP: system already provides TensorRT ${_trt_major} ($_sys_infer) — no wheel needed."
+        elif [ "$(uname -m)" = "aarch64" ]; then
+            # No index publishes an aarch64 TensorRT wheel. tensorrt-cu12-libs is
+            # sdist-only there and dies at metadata generation, so attempting the
+            # install below would only produce a confusing pip traceback. The
+            # system TensorRT is the sole source on this architecture.
+            log_warn "BSVD TRT EP: no system libnvinfer.so.${_trt_major}, and no aarch64 TensorRT wheel exists. Install the system TensorRT (libnvinfer${_trt_major}) from your distro. --denoise-bsvd will fall back to the slower CUDA EP."
         else
             # Install the runtime libs (py-agnostic wheel — ORT needs only the
             # .so's, not the cp-specific python bindings) INTO the managed venv and
