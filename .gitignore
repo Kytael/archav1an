@@ -76,3 +76,20 @@ Temp/_stage/
 # One directory per benchmark roster (.archive-bench-r1, -r2, ...): each holds
 # a manifest, a roster and a state file for one run, not shared configuration.
 .archive-bench-*/
+# Same for a scoped test run. Its manifest holds the archive's real filenames
+# and folder names, which are personal, and the repo is public.
+.archive-test-*/
+
+# Source footage. Never commit the archive itself: a `git add -A` swept two
+# clips (1.3 GB) into a commit on 2026-08-14. It was caught before the push,
+# but the repo is public, so the guard belongs here rather than in a habit.
+SetB/
+setb/
+*.MOV
+*.mov
+*.MP4
+*.mp4
+*.avi
+*.AVI
+*.mkv
+*.MKV

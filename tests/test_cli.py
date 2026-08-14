@@ -42,7 +42,8 @@ def test_make_runner_takes_the_encode_pool_rather_than_reading_it():
     """
     import inspect
     cli = _load_cli()
-    assert list(inspect.signature(cli.make_runner).parameters) == ["encode"]
+    params = list(inspect.signature(cli.make_runner).parameters)
+    assert params[0] == "encode", "the encode pool must be handed in, not read"
     src = inspect.getsource(cli.make_runner)
     assert "_roster()" not in src, "runner must not re-read the roster per clip"
 
@@ -278,3 +279,52 @@ def test_log_tail_without_a_recognised_cause_still_returns_the_tail(tmp_path):
 def test_log_tail_is_empty_when_there_is_no_log(tmp_path):
     cli = _load_cli()
     assert cli.log_tail(str(tmp_path), "nothing") == ""
+
+
+def test_tracing_is_off_unless_asked_for():
+    """A trace costs an ssh and a CSV per clip. The 15-day run should not pay
+    for one it did not ask for."""
+    import inspect
+    cli = _load_cli()
+    assert inspect.signature(cli.make_runner).parameters["trace"].default is False
+
+
+def test_remote_sampler_runs_unbuffered(monkeypatch, tmp_path):
+    """Without -u the remote python block-buffers into the ssh pipe, and closing
+    the channel throws the whole trace away. The first version wrote 0 rows."""
+    import types
+    cli = _load_cli()
+    monkeypatch.setattr(cli, "RUN_DIR", str(tmp_path))
+    seen = {}
+
+    class FakeProc:
+        pid = 1
+        stdin = types.SimpleNamespace(write=lambda _self, *_a: None, close=lambda *_a: None)
+
+    def fake_popen(argv, **kwargs):
+        seen["argv"] = argv
+        proc = FakeProc()
+        proc.stdin = types.SimpleNamespace(write=lambda *_a: None,
+                                           close=lambda *_a: None)
+        return proc
+
+    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    cli.start_trace(types.SimpleNamespace(name="n", host="h", is_remote=True),
+                    types.SimpleNamespace(stem="s"), 60)
+    remote = seen["argv"][-1]
+    assert remote.startswith("python3 -u -"), remote
+
+
+def test_a_failed_trace_does_not_fail_the_clip(monkeypatch, tmp_path):
+    """A lost diagnostic costs nothing. A lost clip costs an hour of encoding."""
+    import types
+    cli = _load_cli()
+    monkeypatch.setattr(cli, "RUN_DIR", str(tmp_path))
+
+    def boom(*_a, **_k):
+        raise OSError("no ssh here")
+
+    monkeypatch.setattr(cli.subprocess, "Popen", boom)
+    assert cli.start_trace(types.SimpleNamespace(name="n", host="h", is_remote=True),
+                           types.SimpleNamespace(stem="s"), 60) is None
+    cli.stop_trace(None)      # must also tolerate the None it just returned

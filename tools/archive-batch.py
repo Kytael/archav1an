@@ -57,6 +57,12 @@ DISPATCH_FPS_FLOOR = 1.0
 # encoding correctly.
 DISPATCH_UNKNOWN_S = 86400.0
 
+SAMPLER = os.path.join(REPO, "tools", "host-sampler.py")
+# Sampling every quarter second rather than every second because the thing worth
+# catching is a lane whose GPU swings between 0 and 96% inside one second. A
+# one-second sample averages that away into a healthy-looking number.
+TRACE_INTERVAL_MS = 250
+
 
 # The first line matching one of these is the root cause; everything after a
 # CUDA fault is the teardown cascade, which is what a plain tail captures.
@@ -151,7 +157,77 @@ def clear_remote_stage(denoiser, clip):
               file=sys.stderr)
 
 
-def make_runner(encode):
+def start_trace(denoiser, clip, budget):
+    """Sample the denoise host for the length of one dispatch. None if off.
+
+    The rate in the state file says a lane was slow. It never says why, and by
+    the time a clip finishes the evidence is gone. This writes one CSV per clip
+    per lane while the work is happening, so "was the run traced?" has an answer
+    that is not "no".
+
+    The sampler runs on the host being sampled, so a remote lane gets the script
+    piped over ssh rather than run from the remote checkout: the trace must not
+    depend on that checkout being current, which is exactly the condition you
+    are most likely to be debugging.
+
+    Never fatal. A failed trace loses a diagnostic; a failed clip loses an hour.
+    """
+    trace_dir = os.path.join(RUN_DIR, "trace")
+    csv = os.path.join(trace_dir, f"{denoiser.name}-{clip.stem}.csv")
+    args = ["--interval-ms", str(TRACE_INTERVAL_MS),
+            # Bound it by the dispatch budget as well as by the kill below. An
+            # ssh that dies leaves the remote python orphaned, and an orphan
+            # sampling every 250 ms for a day is worse than no sampler at all.
+            "--max-seconds", str(int(budget) + 60),
+            "--pid-of", "vspipe -c y4m"]
+    try:
+        os.makedirs(trace_dir, exist_ok=True)
+        handle = open(csv, "wb")
+        if denoiser.is_remote:
+            with open(SAMPLER, "rb") as fh:
+                script = fh.read()
+            # -u matters more than it looks: stdout is a pipe, so without it the
+            # remote python block-buffers and the whole trace is still sitting
+            # in an 8 KB buffer when the ssh channel closes. That loses the file
+            # silently -- the first version of this wrote a zero-row CSV.
+            proc = subprocess.Popen(
+                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
+                 denoiser.host, "python3 -u - " + " ".join(shlex.quote(a) for a in args)],
+                stdin=subprocess.PIPE, stdout=handle, stderr=subprocess.DEVNULL,
+                start_new_session=True)
+            proc.stdin.write(script)
+            proc.stdin.close()
+        else:
+            proc = subprocess.Popen([sys.executable, SAMPLER] + args,
+                                    stdout=handle, stderr=subprocess.DEVNULL,
+                                    start_new_session=True)
+        return proc, handle
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"[archive-batch] trace for {denoiser.name} did not start: {exc!r}",
+              file=sys.stderr)
+        return None
+
+
+def stop_trace(trace):
+    """SIGTERM the sampler so it flushes, then let the file close."""
+    if trace is None:
+        return
+    proc, handle = trace
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+    handle.close()
+
+
+def make_runner(encode, trace=False):
     def runner(clip, denoiser):
         stage_dir = os.path.join(STAGE_ROOT, denoiser.name)
         os.makedirs(stage_dir, exist_ok=True)
@@ -181,9 +257,13 @@ def make_runner(encode):
             env = dict(os.environ)
             env.update(env_overlay)
             budget = dispatch_timeout(clip.frames)
+            tracer = start_trace(denoiser, clip, budget) if trace else None
             _t = time.monotonic()
-            rc, timed_out = run_dispatch(argv, env, budget)
-            phases["work_s"] = time.monotonic() - _t
+            try:
+                rc, timed_out = run_dispatch(argv, env, budget)
+            finally:
+                phases["work_s"] = time.monotonic() - _t
+                stop_trace(tracer)
             if timed_out or rc != 0 or not os.path.exists(out):
                 if timed_out:
                     why = f"dispatch hung: killed after {budget:.0f}s"
@@ -340,8 +420,14 @@ def main():
               f"sources left by an interrupted run")
 
     started = time.monotonic()
-    scheduler = Scheduler(todo, _roster, make_runner(roster.encode), STATE,
-                          prior_failures=state.failures)
+    # An env var rather than a flag, to match RUN_DIR and CALLBACK_IP: this tool
+    # is always launched with an env prefix already.
+    trace = os.environ.get("ARCHIVE_TRACE", "") not in ("", "0")
+    if trace:
+        print(f"[archive-batch] tracing to {os.path.join(RUN_DIR, 'trace')}, "
+              f"one CSV per clip per lane")
+    scheduler = Scheduler(todo, _roster, make_runner(roster.encode, trace=trace),
+                          STATE, prior_failures=state.failures)
 
     def on_signal(signum, _frame):
         # Restore the default so a second press aborts at once; the first press
