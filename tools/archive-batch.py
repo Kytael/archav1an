@@ -7,6 +7,7 @@ the design notes, which are not part of this tree
 """
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -57,21 +58,40 @@ DISPATCH_FPS_FLOOR = 1.0
 DISPATCH_UNKNOWN_S = 86400.0
 
 
-def log_tail(temp_dir, stem, lines=6, limit=600):
-    """Last few lines of whatever the dispatch logged for this clip.
+# The first line matching one of these is the root cause; everything after a
+# CUDA fault is the teardown cascade, which is what a plain tail captures.
+_ROOT_CAUSE = re.compile(
+    r"CUDA failure|Failed to retrieve frame|RuntimeError|MyelinCheckException|"
+    r"out of memory|Traceback|Segmentation fault|Killed|assert|"
+    r"Error in execution|No such file|Permission denied", re.I)
+
+
+def log_tail(temp_dir, stem, lines=4, limit=600):
+    """What the dispatch logged for this clip, root cause first.
 
     The remote log is the useful one: a split-host failure is almost always the
     denoise half, and its stderr never reaches this process.
+
+    A plain tail is the wrong end of the file. An illegal memory access inside
+    TensorRT emits one line naming the frame that failed and then thirty lines
+    of destructor errors, so the last six lines are always the cascade and never
+    the cause. Observed on gpu2 2026-08-14: the record said only "Error Code 1
+    ... in deallocate", and the line that mattered -- which frame, which
+    failure -- had scrolled past. Lead with the first matching line, then the
+    real tail for context.
     """
     for suffix in ("_remote.log", "_vspipe.log", "_netstream.log"):
         path = os.path.join(temp_dir, f"{stem}{suffix}")
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                tail = [ln.strip() for ln in fh.read().splitlines() if ln.strip()]
+                body = [ln.strip() for ln in fh.read().splitlines() if ln.strip()]
         except OSError:
             continue
-        if tail:
-            return f"{suffix[1:]}: " + " | ".join(tail[-lines:])[:limit]
+        if not body:
+            continue
+        cause = next((ln for ln in body if _ROOT_CAUSE.search(ln)), None)
+        parts = ([f"CAUSE: {cause}"] if cause else []) + body[-lines:]
+        return f"{suffix[1:]}: " + " | ".join(parts)[:limit]
     return ""
 
 

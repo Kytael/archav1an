@@ -241,3 +241,40 @@ def test_a_failed_cleanup_does_not_raise(monkeypatch):
 def _done():
     import subprocess as _sp
     return _sp.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+
+def test_log_tail_leads_with_the_root_cause_not_the_teardown(tmp_path):
+    """A CUDA fault emits one useful line then a cascade of destructor errors.
+
+    Tailing the file therefore captures only the cascade. gpu2's record on
+    2026-08-14 said just "Error Code 1 ... in deallocate", and the line naming
+    the frame that actually failed had scrolled past.
+    """
+    cli = _load_cli()
+    d = tmp_path / "MVI_1"
+    d.mkdir()
+    (d / "MVI_1_remote.log").write_text("\n".join([
+        "[dispatch] vspipe (BSVD-V2-ORT-TRT)",
+        "Error: Failed to retrieve frame 500 with error:",
+        "RuntimeError: CUDA failure 700: an illegal memory access was encountered",
+    ] + [f"ERROR [defaultAllocator.cpp::deallocate::91] Error Code 1 #{i}"
+         for i in range(30)]))
+    out = cli.log_tail(str(d), "MVI_1")
+    assert "CAUSE:" in out
+    assert "frame 500" in out, f"root cause missing from: {out}"
+    # and it still carries the tail for context
+    assert "deallocate" in out
+
+
+def test_log_tail_without_a_recognised_cause_still_returns_the_tail(tmp_path):
+    cli = _load_cli()
+    d = tmp_path / "MVI_2"
+    d.mkdir()
+    (d / "MVI_2_remote.log").write_text("line one\nline two\nline three\n")
+    out = cli.log_tail(str(d), "MVI_2")
+    assert "line three" in out and "CAUSE:" not in out
+
+
+def test_log_tail_is_empty_when_there_is_no_log(tmp_path):
+    cli = _load_cli()
+    assert cli.log_tail(str(tmp_path), "nothing") == ""
