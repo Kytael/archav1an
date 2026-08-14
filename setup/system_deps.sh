@@ -239,12 +239,13 @@ debian_system_deps() {
         # repo. On a host without that repo the package can never arrive, so
         # system_deps_missing never empties and every run asks for root again.
         #
-        # Distro toolkit present also tells us NVIDIA's repo is NOT configured
-        # (a host with that repo takes its CUDA from /usr/local/cuda instead),
-        # so cuDNN and TensorRT are unreachable here and asking is pointless.
-        # The BSVD lane falls back to the CUDA EP, which the denoiser reports.
-        local nvcc_bin="" _distro_cuda=0
-        dpkg -s nvidia-cuda-toolkit &>/dev/null && _distro_cuda=1
+        # Whether cuDNN and TensorRT are reachable is a question about the
+        # REPOS, so ask that directly rather than inferring it from which
+        # toolkit is installed. Ubuntu ships neither library at any version;
+        # they exist only in NVIDIA's CUDA repo, which `--install nvidia_repo`
+        # adds. Without it the BSVD lane falls back to the slower CUDA EP.
+        local nvcc_bin="" _nv_repo=0
+        nvidia_cuda_repo_present && _nv_repo=1
         if command -v nvcc &>/dev/null; then
             nvcc_bin="nvcc"
         elif [ -x /usr/local/cuda/bin/nvcc ]; then
@@ -254,9 +255,12 @@ debian_system_deps() {
             DEPS+=(nvidia-cuda-toolkit)
         fi
 
-        if [ "$_distro_cuda" -eq 1 ]; then
-            DEPS+=(nvidia-cuda-toolkit)
-            log_info "CUDA comes from Ubuntu's nvidia-cuda-toolkit; skipping cuDNN/TensorRT (NVIDIA's apt repo is not configured)." >&2
+        if [ "$_nv_repo" -eq 0 ]; then
+            # Keep the distro toolkit in the list once installed, or this
+            # function has no fixed point: run 1 installs it, run 2 then sees
+            # its nvcc, asks for libcudnn9, and never stops asking.
+            dpkg -s nvidia-cuda-toolkit &>/dev/null && DEPS+=(nvidia-cuda-toolkit)
+            log_info "NVIDIA's CUDA repo is not configured; skipping cuDNN/TensorRT. For the BSVD TensorRT EP run: ./setup.sh --install nvidia_repo" >&2
         elif [ -n "$nvcc_bin" ]; then
             local cuda_ver cuda_major
             cuda_ver="$("$nvcc_bin" --version 2>/dev/null \

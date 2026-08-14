@@ -123,7 +123,21 @@ The full target list is `system_deps python_libs svt_av1 ffmpeg vapoursynth av1a
 
 `system_deps` is the one target that installs distro packages, and the only one that needs root. Do **not** run `setup.sh` under sudo to give it that: it escalates for the package manager by itself and stays as your user for everything else. A root-owned prefix leaves the venv unwritable afterwards, and `makepkg`/`paru` refuse to run as root at all.
 
-It checks first and escalates only if something is missing — `pacman -Qi` on Arch, `dpkg -s` on Debian/Ubuntu — so on an already-provisioned host the whole install runs with no package-manager prompt. AUR packages remain manual: `paru` is installed for you where it is a repo package, and named in a warning where it is not.
+It checks first and escalates only if something is missing — `pacman -Qi` on Arch, `dpkg -s` on Debian/Ubuntu — so on an already-provisioned host the whole install runs with no package-manager prompt. AUR packages remain manual: `paru` or `yay` is installed for you where one is a repo package (CachyOS has both; plain Arch has neither), and named in a warning where it is not.
+
+### cuDNN and TensorRT on Debian/Ubuntu
+
+Ubuntu ships **no cuDNN and no TensorRT at any version**, and its `nvidia-cuda-toolkit` is CUDA 12.0. The BSVD denoise path wants cuDNN 9 and TensorRT 10 for the onnxruntime TensorRT EP, so on Debian/Ubuntu those come from NVIDIA's own CUDA repository or not at all. Without it `--denoise-bsvd` still works, on the slower CUDA EP, and setup says so.
+
+Adding that repo is a separate, opt-in target. It is **not** part of `--install A`, because it installs a third-party repository and signing key:
+
+```bash
+./setup.sh --install nvidia_repo
+```
+
+It installs NVIDIA's `cuda-keyring`, refreshes apt, installs `cuda-toolkit`, then re-runs `system_deps` to pick up cuDNN and TensorRT. It deliberately installs `cuda-toolkit` rather than the `cuda` metapackage, which would pull `cuda-drivers` and can replace a working display driver. On WSL2 it selects NVIDIA's `wsl-ubuntu` repo, which carries no driver packages — the GPU driver there belongs to Windows, and installing a Linux one breaks CUDA.
+
+Arch needs none of this: cuDNN comes from pacman and TensorRT from the AUR, both already handled.
 
 **Activate the env to use vspipe / Python tools from your shell:**
 ```bash

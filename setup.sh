@@ -15,6 +15,7 @@ trap 'stty sane 2>/dev/null' EXIT
 source "$SETUP_DIR/common.sh"
 COMMON_SOURCED=true
 source "$SETUP_DIR/system_deps.sh"
+source "$SETUP_DIR/nvidia_repo.sh"
 source "$SETUP_DIR/python_libs.sh"
 source "$SETUP_DIR/ffmpeg.sh"
 source "$SETUP_DIR/vapoursynth.sh"
@@ -44,6 +45,9 @@ DEPENDENCIES["wwxd"]="vapoursynth"
 DEPENDENCIES["vszip"]="vapoursynth"
 DEPENDENCIES["subtext"]="vapoursynth ffmpeg"
 DEPENDENCIES["denoiser"]="vapoursynth python_libs system_deps"
+# Opt-in only: deliberately absent from ALL_TOOLS, so `--install A` never adds
+# a third-party apt repo and signing key on the user's behalf.
+DEPENDENCIES["nvidia_repo"]=""
 
 # Helper: Check if a tool is installed
 is_installed() {
@@ -127,6 +131,9 @@ is_installed() {
             [ -f "$knlm_path/libctmf.so" ] && \
             "$VENV_DIR/bin/pip" show vsscunet &> /dev/null && \
             { [ -f "$knlm_path/libvstrt.so" ] || [ -f "$knlm_path/libvsmigx.so" ]; }
+            ;;
+        "nvidia_repo")
+            nvidia_cuda_repo_present
             ;;
         *) return 1 ;;
     esac
@@ -216,6 +223,7 @@ run_installer() {
         "vszip") install_vszip ;;
         "subtext") install_subtext ;;
         "denoiser") install_denoiser ;;
+        "nvidia_repo") install_nvidia_repo ;;
         *) log_error "Unknown module: $1"; exit 1 ;;
     esac
 }
@@ -331,6 +339,7 @@ uninstall_tool() {
     
     case "$target_tool" in
         "system_deps") uninstall_system_deps ;;
+        "nvidia_repo") uninstall_nvidia_repo ;;
         "python_libs") uninstall_python_libs ;;
         "ffmpeg") uninstall_ffmpeg ;;
         "vapoursynth") uninstall_vapoursynth ;;
