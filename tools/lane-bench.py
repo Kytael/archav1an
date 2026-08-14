@@ -79,11 +79,17 @@ def parse_csv(text):
         if len(parts) < 6:
             continue
         try:
-            rows.append(dict(t=float(parts[0]),
-                             util=float(parts[1]) if parts[1] else None,
-                             power=float(parts[2]) if parts[2] else None,
-                             clock=float(parts[3]) if parts[3] else None,
-                             cpu=float(parts[4]), top=float(parts[5])))
+            row = dict(t=float(parts[0]),
+                       util=float(parts[1]) if parts[1] else None,
+                       power=float(parts[2]) if parts[2] else None,
+                       clock=float(parts[3]) if parts[3] else None,
+                       cpu=float(parts[4]), top=float(parts[5]))
+            # Thread columns are newer than the first CSV layout; a sampler that
+            # predates them must still parse rather than yield nothing.
+            if len(parts) >= 10:
+                row.update(pcpu=float(parts[6]), pthread=float(parts[7]),
+                           pbusy=int(parts[8]), pthreads=int(parts[9]))
+            rows.append(row)
         except ValueError:
             continue
     return rows
@@ -114,49 +120,63 @@ def report(rows, host, cores, fps, frames, wall, interval=0.25):
     if powers:
         lines.append(f"  GPU power     mean {sum(powers) / len(powers):5.1f} W   "
                      f"peak {max(powers):5.1f} W")
+    pthreads = [r["pthread"] for r in rows if "pthread" in r]
+    pcpus = [r["pcpu"] for r in rows if "pcpu" in r]
+    pbusy = [r["pbusy"] for r in rows if "pbusy" in r]
     lines += [
         f"  CPU busy      mean {sum(cpus) / len(cpus):6.0f}% of {cores * 100}%  "
         f"({sum(cpus) / len(cpus) / 100:.1f} of {cores} cores)",
-        f"  CPU hottest   mean {sum(tops) / len(tops):5.1f}%   peak {max(tops):5.1f}%  "
-        f"on a single core",
+    ]
+    if pthreads:
+        nthr = max((r.get("pthreads", 0) for r in rows), default=0)
+        lines += [
+            f"  denoise proc  mean {sum(pcpus) / len(pcpus):6.0f}% across {nthr} threads",
+            f"  hottest THREAD mean {sum(pthreads) / len(pthreads):5.1f}%  "
+            f"peak {max(pthreads):5.1f}%   "
+            f"threads >5%: mean {sum(pbusy) / len(pbusy):.1f}",
+        ]
+    lines += [
+        f"  (hottest CORE  mean {sum(tops) / len(tops):5.1f}% -- max over {cores} "
+        f"cores, biased high; not thread evidence)",
         "",
         f"  GPU util over time (each cell is the WORST sample in its bucket)",
         f"  |{sparkline(utils)}|",
         f"  0s{' ' * 56}{rows[-1]['t']:.0f}s",
         "",
-        "  " + verdict(utils, cpus, tops, cores),
+        "  " + verdict(utils, cpus, pthreads, cores),
         "",
     ]
     return "\n".join(lines)
 
 
-def verdict(utils, cpus, tops, cores):
+def verdict(utils, cpus, pthreads, cores):
+    """Classify the lane. `pthreads` is the busiest THREAD of the denoise
+    process per sample -- not the busiest core, which is a max over many noisy
+    cores and reads high whenever work merely migrates."""
     idle_frac = len([u for u in utils if u < 10]) / len(utils)
     mean_util = sum(utils) / len(utils)
     mean_cpu = sum(cpus) / len(cpus)
-    mean_top = sum(tops) / len(tops)
+    hot = sum(pthreads) / len(pthreads) if pthreads else None
 
-    # Order matters. A saturated single thread is the finding even when the
-    # card is rarely at a hard zero: gpu4 measured 67% mean utilisation with
-    # only 7% of samples idle, and calling that "mixed" buried the fact that
-    # one core sat at 77% mean and touched 100%. Test the thread first.
-    if mean_top > 70 and mean_util < 85:
-        return (f"VERDICT: single-thread bound. One core averages {mean_top:.0f}% "
-                f"(peak in the table above) while the card averages {mean_util:.0f}%. "
-                f"Total CPU is only {mean_cpu / 100:.1f} of {cores} cores, so the "
-                f"machine is idle and one serialised stage is pacing the GPU. Look at "
-                f"the per-frame work between inference calls, not at the card.")
-    if idle_frac > 0.25:
-        return (f"VERDICT: starved. The card is idle {idle_frac * 100:.0f}% of the "
-                f"time and no single core is saturated ({mean_top:.0f}% hottest), so "
-                f"the stall is a wait -- I/O, transport, or a synchronous copy -- "
-                f"rather than compute.")
+    if hot is None:
+        return (f"VERDICT: {mean_util:.0f}% mean GPU utilisation, card idle "
+                f"{idle_frac * 100:.0f}%. No thread data -- re-run with a sampler "
+                f"that has --pid-of to tell serialisation from waiting.")
+    if hot > 70 and mean_util < 85:
+        return (f"VERDICT: single-thread bound. The busiest thread averages "
+                f"{hot:.0f}% while the card averages {mean_util:.0f}%. One "
+                f"serialised stage is pacing the GPU; look at the per-frame work "
+                f"between inference calls.")
     if mean_util > 80:
         return (f"VERDICT: GPU-bound at {mean_util:.0f}% mean utilisation. This lane is "
                 f"at its card's ceiling; only a faster card or a cheaper model helps.")
-    return (f"VERDICT: mixed. {mean_util:.0f}% mean utilisation, card idle "
-            f"{idle_frac * 100:.0f}%, hottest core {mean_top:.0f}%. Nothing dominates; "
-            f"sample for longer before acting.")
+    # Nothing saturated anywhere. This is the interesting case and the one that
+    # was previously misread as single-thread bound.
+    return (f"VERDICT: waiting, not computing. The card averages {mean_util:.0f}% and "
+            f"the busiest thread only {hot:.0f}%, with the whole host at "
+            f"{mean_cpu / 100:.1f} of {cores} cores. Nothing is saturated, so the lane "
+            f"is blocked -- a synchronous device copy, transport, or encoder back "
+            f"pressure. Chase the blocking call, not more parallelism.")
 
 
 def host_cores(host):
