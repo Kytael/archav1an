@@ -157,8 +157,16 @@ class Scheduler:
         started = time.monotonic()
         raised = False
         reason = ""
+        phases = {}
         try:
-            ok, wall_s, fps, out_bytes, reason = self.runner(clip, denoiser)
+            result = self.runner(clip, denoiser)
+            # A runner may report the stage/work/publish split or not. Tests and
+            # any older caller return five fields; accept both rather than make
+            # the timing breakdown a hard part of the contract.
+            if len(result) == 6:
+                ok, wall_s, fps, out_bytes, reason, phases = result
+            else:
+                ok, wall_s, fps, out_bytes, reason = result
         except TransferOutage as exc:
             # Staging and publishing both target the source host, so this stops
             # every denoiser, not just this one. Put the clip back untouched and
@@ -185,7 +193,10 @@ class Scheduler:
                           Record(src=clip.src, status="done" if ok else "failed",
                                  denoiser=denoiser.name, wall_s=round(wall_s, 2),
                                  fps=round(fps, 2), out_bytes=out_bytes,
-                                 reason="" if ok else reason))
+                                 reason="" if ok else reason,
+                                 stage_s=round(phases.get("stage_s", 0.0), 2),
+                                 work_s=round(phases.get("work_s", 0.0), 2),
+                                 publish_s=round(phases.get("publish_s", 0.0), 2)))
         except Exception as exc:
             # Losing the state file loses resume, so stop the run out loud rather
             # than let workers die one by one with nothing written down.

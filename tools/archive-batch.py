@@ -35,7 +35,12 @@ MANIFEST = os.path.join(RUN_DIR, "manifest-raw.tsv")
 STATE = os.path.join(RUN_DIR, "state.jsonl")
 ROSTER = os.path.join(RUN_DIR, "denoisers.toml")
 STAGE_ROOT = os.path.join(REPO, "Temp", "_stage")
-CALLBACK_IP = "10.0.0.10"     # encoder-host LAN address; tailscale caps at 1.5 Gbps
+# encoder-host's LAN address; tailscale caps at 1.5 Gbps. Overridable because the
+# remotes reach this host by different routes in different setups, and because
+# 127.0.0.1 plus a reverse ssh tunnel per lane is the way to run without opening
+# a firewall port -- measured at 244 MB/s to gpu4, well above what any lane
+# produces.
+CALLBACK_IP = os.environ.get("ARCHIVE_CALLBACK_IP") or "10.0.0.10"
 
 # Every transfer is already bounded, so the dispatch call was the one unbounded
 # wait in the run: a deadlocked vspipe or a half-open ssh holds its lane until
@@ -137,10 +142,13 @@ def make_runner(encode):
         shutil.rmtree(temp_dir, ignore_errors=True)
 
         started = time.monotonic()
+        phases = dict(stage_s=0.0, work_s=0.0, publish_s=0.0)
         staged = staged_path(stage_dir, clip.src)
         out = os.path.join(stage_dir, f"{clip.stem}-av1.mkv")
         try:
+            _t = time.monotonic()
             run(stage_cmd(SOURCE_HOST, clip.src, stage_dir))
+            phases["stage_s"] = time.monotonic() - _t
             argv, env_overlay = build_command(
                 denoiser, encode, staged=staged, out=out,
                 # None makes dispatch rsync the clip to the remote's
@@ -153,7 +161,9 @@ def make_runner(encode):
             env = dict(os.environ)
             env.update(env_overlay)
             budget = dispatch_timeout(clip.frames)
+            _t = time.monotonic()
             rc, timed_out = run_dispatch(argv, env, budget)
+            phases["work_s"] = time.monotonic() - _t
             if timed_out or rc != 0 or not os.path.exists(out):
                 if timed_out:
                     why = f"dispatch hung: killed after {budget:.0f}s"
@@ -164,8 +174,10 @@ def make_runner(encode):
                 # Read the log before the finally below deletes temp_dir.
                 tail = log_tail(temp_dir, clip.stem)
                 return False, time.monotonic() - started, 0.0, 0, \
-                    f"{why}. {tail}".strip()
+                    f"{why}. {tail}".strip(), phases
+            _t = time.monotonic()
             run(publish_cmd(SOURCE_HOST, out, clip.rel_dir))
+            phases["publish_s"] = time.monotonic() - _t
             size = os.path.getsize(out)
         except TransferOutage:
             # The host is down, not the clip bad. Let the scheduler requeue it
@@ -173,7 +185,7 @@ def make_runner(encode):
             raise
         except TransferError as exc:
             print(f"[archive-batch] {clip.src}: {exc}", file=sys.stderr)
-            return False, time.monotonic() - started, 0.0, 0, str(exc)
+            return False, time.monotonic() - started, 0.0, 0, str(exc), phases
         finally:
             for path in (staged, out):
                 if os.path.exists(path):
@@ -183,7 +195,7 @@ def make_runner(encode):
                 clear_remote_stage(denoiser, clip)
 
         wall = time.monotonic() - started
-        return True, wall, (clip.frames / wall if wall else 0.0), size, ""
+        return True, wall, (clip.frames / wall if wall else 0.0), size, "", phases
     return runner
 
 
@@ -210,7 +222,16 @@ def sweep_stage_root():
 
 
 def per_denoiser_rates(state_path):
-    """Achieved fps and clip count per denoiser, from the run state (spec 7.2)."""
+    """Per denoiser: (clips, fps including overhead, fps excluding it).
+
+    Two rates because they answer different questions. The first divides by the
+    whole clip's wall clock, so it is the rate the archive actually drains at
+    and the one that predicts a finish date. The second divides by the dispatch
+    alone, so it is how fast that denoiser and encoder pair really is, with the
+    source copy in and the result copy out taken out. A lane that stages every
+    source across the network can differ a lot between the two, and only the
+    gap tells you whether to buy a faster card or a faster link.
+    """
     rates = {}
     try:
         with open(state_path, "r", encoding="utf-8") as fh:
@@ -222,14 +243,18 @@ def per_denoiser_rates(state_path):
                 if row.get("status") != "done":
                     continue
                 name = row.get("denoiser", "?")
-                clips, frames, wall = rates.get(name, (0, 0.0, 0.0))
+                clips, frames, wall, work = rates.get(name, (0, 0.0, 0.0, 0.0))
+                # fps*wall recovers the frame count the record does not store.
                 rates[name] = (clips + 1,
                                frames + row.get("fps", 0.0) * row.get("wall_s", 0.0),
-                               wall + row.get("wall_s", 0.0))
+                               wall + row.get("wall_s", 0.0),
+                               work + row.get("work_s", 0.0))
     except OSError:
         return {}
-    return {name: (clips, frames / wall if wall else 0.0)
-            for name, (clips, frames, wall) in rates.items()}
+    return {name: (clips,
+                   frames / wall if wall else 0.0,
+                   frames / work if work else 0.0)
+            for name, (clips, frames, wall, work) in rates.items()}
 
 
 def format_summary(done, failed, failures, elapsed_s, state_path=None):
@@ -241,9 +266,20 @@ def format_summary(done, failed, failures, elapsed_s, state_path=None):
     rates = per_denoiser_rates(state_path) if state_path else {}
     if rates:
         lines.append("")
+        lines.append(f"  {'lane':<12} {'clips':>5}  {'fps':>7}  {'fps':>7}")
+        lines.append(f"  {'':<12} {'':>5}  {'(total)':>7}  {'(work)':>7}")
+        pool_total = pool_work = 0.0
         for name in sorted(rates):
-            clips, fps = rates[name]
-            lines.append(f"  {name:<12} {clips:>5} clips  {fps:6.2f} fps")
+            clips, fps, work_fps = rates[name]
+            pool_total += fps
+            pool_work += work_fps
+            lines.append(f"  {name:<12} {clips:>5}  {fps:7.2f}  {work_fps:7.2f}")
+        lines.append(f"  {'-' * 34}")
+        # The pool figure is the sum of the lanes, which is what the encoder
+        # actually has to absorb. It is not a measurement of the encoder.
+        lines.append(f"  {'pool':<12} {done:>5}  {pool_total:7.2f}  {pool_work:7.2f}")
+        lines.append("  (total) includes staging the source in and publishing the "
+                     "result out; (work) is the dispatch alone.")
     if failures:
         lines.append("")
         lines.append("FAILED CLIPS")

@@ -103,7 +103,7 @@ def gpu_sample(host):
 
 def read_state(path):
     """(per-denoiser stats, done, failed, last N failures)."""
-    per = defaultdict(lambda: dict(clips=0, frames=0.0, wall=0.0, bytes=0))
+    per = defaultdict(lambda: dict(clips=0, frames=0.0, wall=0.0, work=0.0, bytes=0))
     done = failed = 0
     recent = []
     try:
@@ -119,6 +119,9 @@ def read_state(path):
                     d = per[name]
                     d["clips"] += 1
                     d["wall"] += row.get("wall_s", 0.0)
+                    # work_s is the dispatch alone, so frames/work is the lane's
+                    # rate with staging and publishing taken out.
+                    d["work"] += row.get("work_s", 0.0)
                     # fps*wall recovers the frame count the record does not store.
                     d["frames"] += row.get("fps", 0.0) * row.get("wall_s", 0.0)
                     d["bytes"] += row.get("out_bytes", 0)
@@ -154,16 +157,18 @@ def render(roster, total):
     else:
         out.append(f"clips: {done} done, {failed} failed")
     out.append("")
-    out.append(f"{'lane':<12} {'host':<9} {'clips':>6} {'fps':>7}   "
+    out.append(f"{'lane':<12} {'host':<9} {'clips':>6} {'fps':>7} {'work':>7}   "
                f"{'GPU avg':>7} {'range':>9}  {'W':>5}  {'VRAM':>11}")
-    out.append("-" * 88)
+    out.append("-" * 96)
 
-    pool_fps = 0.0
+    pool_fps = pool_work = 0.0
     for name in sorted(roster):
         host, enabled = roster[name]
-        st = per.get(name, dict(clips=0, frames=0.0, wall=0.0))
+        st = per.get(name, dict(clips=0, frames=0.0, wall=0.0, work=0.0))
         fps = st["frames"] / st["wall"] if st["wall"] else 0.0
+        work_fps = st["frames"] / st["work"] if st.get("work") else 0.0
         pool_fps += fps
+        pool_work += work_fps
         g = gpu_sample(host)
         if g is None:
             gpu_txt = f"{'--':>7} {'unreachable':>9}  {'--':>5}  {'--':>11}"
@@ -173,12 +178,14 @@ def render(roster, total):
             gpu_txt = (f"{g['util']:>6.0f}% {g['low']:>3.0f}-{g['peak']:>3.0f}% "
                        f"{g['power']:>5.0f}  {vram:>11}")
         flag = "" if enabled else " (off)"
-        out.append(f"{name + flag:<12} {host:<9} {st['clips']:>6} {fps:>7.2f}   {gpu_txt}")
+        out.append(f"{name + flag:<12} {host:<9} {st['clips']:>6} {fps:>7.2f} "
+                   f"{work_fps:>7.2f}   {gpu_txt}")
         if g is not None:
-            out.append(f"{'':<12} {'':<9} {'':>6} {'':>7}   [{bar(g['util'])}]")
+            out.append(f"{'':<12} {'':<9} {'':>6} {'':>7} {'':>7}   [{bar(g['util'])}]")
 
-    out.append("-" * 88)
-    out.append(f"{'pool':<12} {'':<9} {done:>6} {pool_fps:>7.2f}")
+    out.append("-" * 96)
+    out.append(f"{'pool':<12} {'':<9} {done:>6} {pool_fps:>7.2f} {pool_work:>7.2f}")
+    out.append("fps includes staging and publishing; work is the dispatch alone.")
     if recent:
         out.append("")
         out.append("recent failures")

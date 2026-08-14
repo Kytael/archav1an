@@ -27,6 +27,16 @@ class Record:
     # Exit code plus the tail of the denoiser's log (spec 6). Without it a
     # failure three days into an unattended run cannot be diagnosed at all.
     reason: str = ""
+    # wall_s covers the whole clip, so the fps derived from it is the rate the
+    # archive actually drains at -- staging and publishing included. That is the
+    # number that predicts when the run finishes, but it is not the number that
+    # says how fast a denoiser is, and the two can differ by a lot on a lane
+    # that copies every source across the network. Record the split so both
+    # questions can be answered from the same file. Defaulted, so records
+    # written before this existed still load.
+    stage_s: float = 0.0
+    work_s: float = 0.0
+    publish_s: float = 0.0
 
 
 @dataclass(frozen=True)

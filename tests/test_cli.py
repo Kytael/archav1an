@@ -69,18 +69,35 @@ def test_per_denoiser_rates_are_frame_weighted(tmp_path):
     rows = [
         # 100 frames in 10s and 900 frames in 90s -> 1000 frames / 100s = 10 fps
         dict(src="a", status="done", denoiser="igpu", wall_s=10.0, fps=10.0,
-             out_bytes=1, reason=""),
+             out_bytes=1, reason="", work_s=5.0),
         dict(src="b", status="done", denoiser="igpu", wall_s=90.0, fps=10.0,
-             out_bytes=1, reason=""),
+             out_bytes=1, reason="", work_s=45.0),
         dict(src="c", status="done", denoiser="gpu1_4090", wall_s=10.0, fps=20.0,
-             out_bytes=1, reason=""),
+             out_bytes=1, reason="", work_s=10.0),
         dict(src="d", status="failed", denoiser="igpu", wall_s=1.0, fps=0.0,
-             out_bytes=0, reason="boom"),
+             out_bytes=0, reason="boom", work_s=0.5),
     ]
     p.write_text("\n".join(_json.dumps(r) for r in rows) + "\n")
     rates = cli.per_denoiser_rates(str(p))
-    assert rates["igpu"] == (2, 10.0)
-    assert rates["gpu1_4090"] == (1, 20.0)
+    # 1000 frames over 100 s of wall clock, but only 50 s of dispatch: the
+    # overhead-free rate is double, which is the point of recording both.
+    assert rates["igpu"] == (2, 10.0, 20.0)
+    # A lane with no staging cost reads the same either way.
+    assert rates["gpu1_4090"] == (1, 20.0, 20.0)
+
+
+def test_rates_survive_records_written_before_the_split_existed():
+    """work_s defaults to 0; the work rate must read 0, not divide by zero."""
+    import json as _json
+    import tempfile as _tf
+
+    cli = _load_cli()
+    path = _tf.mkdtemp() + "/old.jsonl"
+    with open(path, "w") as fh:
+        fh.write(_json.dumps(dict(src="a", status="done", denoiser="igpu",
+                                  wall_s=10.0, fps=5.0, out_bytes=1,
+                                  reason="")) + "\n")
+    assert cli.per_denoiser_rates(path)["igpu"] == (1, 5.0, 0.0)
 
 
 def test_summary_reports_each_denoiser(tmp_path):
@@ -90,9 +107,12 @@ def test_summary_reports_each_denoiser(tmp_path):
     p = tmp_path / "state.jsonl"
     p.write_text(_json.dumps(dict(src="a", status="done", denoiser="igpu",
                                   wall_s=10.0, fps=5.0, out_bytes=1,
-                                  reason="")) + "\n")
+                                  reason="", work_s=4.0)) + "\n")
     out = cli.format_summary(1, 0, [], 36.0, state_path=str(p))
-    assert "igpu" in out and "5.00 fps" in out
+    assert "igpu" in out
+    # 50 frames in 10 s of wall clock and 4 s of dispatch.
+    assert "5.00" in out and "12.50" in out
+    assert "pool" in out
 
 
 def test_an_incomplete_run_exits_nonzero(tmp_path, monkeypatch):
