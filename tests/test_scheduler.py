@@ -4,7 +4,7 @@ from tools.archive_batch.manifest import Clip
 from tools.archive_batch.roster import Denoiser, EncodePool, Roster
 from tools.archive_batch.scheduler import Scheduler
 
-ENCODE = EncodePool(host="local", slots=2, threads_per_slot=16)
+ENCODE = EncodePool(host="local", slots=2, lp_level=6)
 D1 = Denoiser(name="a", host="local", backend="migraphx", device=0, tiling="none", enabled=True)
 D2 = Denoiser(name="b", host="local", backend="migraphx", device=0, tiling="none", enabled=True)
 D2_OFF = Denoiser(name="b", host="local", backend="migraphx", device=0,
@@ -182,7 +182,7 @@ def test_slots_cap_concurrency(tmp_path):
         return True, 1.0, 1.0, 1, ""
 
     one_slot = Roster(denoisers=(D1, D2),
-                      encode=EncodePool(host="local", slots=1, threads_per_slot=16))
+                      encode=EncodePool(host="local", slots=1, lp_level=6))
     s = Scheduler(_clips(6), lambda: one_slot, runner, state_path=tmp_path / "state.jsonl")
     s.run()
     assert live["max"] == 1
