@@ -19,7 +19,12 @@ install_av1an() {
 
     ensure_rust || return 1
 
-    cargo install --git https://github.com/rust-av/Av1an.git --bin av1an || { log_error "Failed to install av1an via cargo"; return 1; }
+    # --force because the copy below is deleted from ~/.cargo/bin afterwards
+    # while cargo's .crates.toml still records av1an as installed. Whether
+    # cargo notices the missing file and rebuilds is its business, not
+    # something to depend on: reaching this line already means a build was
+    # wanted (install_av1an returns early otherwise).
+    cargo install --force --git https://github.com/rust-av/Av1an.git --bin av1an || { log_error "Failed to install av1an via cargo"; return 1; }
 
     local _av1an_sha
     _av1an_sha=$(git ls-remote https://github.com/rust-av/Av1an.git refs/heads/master 2>/dev/null | cut -f1)

@@ -19,7 +19,7 @@ install_oxipng() {
 
     ensure_rust || return 1
 
-    cargo install oxipng || { log_error "Failed to install oxipng via cargo"; return 1; }
+    cargo install --force oxipng || { log_error "Failed to install oxipng via cargo"; return 1; }  # see install_av1an
 
     if [ -f "$HOME/.cargo/bin/oxipng" ]; then
         cp "$HOME/.cargo/bin/oxipng" "$VS_PREFIX/bin/oxipng"
