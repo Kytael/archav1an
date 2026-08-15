@@ -190,6 +190,20 @@ EOF
         else
             log_warn "Could not pre-write vapoursynth.toml. First vspipe call may need 'python -m vapoursynth config' run manually."
         fi
+
+        # That file is per-user, under $HOME. A `sudo ./setup.sh` writes it to
+        # /root/.config and the person who owns the machine gets none: on
+        # spark2 both vspipe and av1an then failed with "Python executable and
+        # library path couldn't be determined", on an install that had just
+        # reported success. Write it for the invoking user as well. -H because
+        # sudo keeps the caller's HOME otherwise, which is the whole bug.
+        if [ "$EUID" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && command -v sudo &>/dev/null; then
+            if sudo -H -u "$SUDO_USER" "$VENV_DIR/bin/python" -m vapoursynth config &>/dev/null; then
+                log_info "Wrote the same vapoursynth.toml entry for $SUDO_USER."
+            else
+                log_warn "Could not write vapoursynth.toml for $SUDO_USER. Run as that user: $VENV_DIR/bin/python -m vapoursynth config"
+            fi
+        fi
     fi
 
     # 2. FFMS2
