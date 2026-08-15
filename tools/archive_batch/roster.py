@@ -4,6 +4,8 @@ A denoiser is data, not code, so adding a host is a config entry. Encoding is
 never remote: a remote host contributes a GPU and nothing else (spec 2, 5.2).
 """
 import tomllib
+import re
+
 from dataclasses import dataclass
 
 
@@ -11,6 +13,11 @@ from dataclasses import dataclass
 # reproduce a whole-clip run. Proven by gate 2 at margin 32.
 MIN_MARGIN = 16
 TILING_MODES = {"none", "auto"}
+# An explicit tile, "HxW" or a bare square size, as parse_tile_arg() in
+# bsvd_windowed.py reads it. Only usable since engines are named for the shape
+# that built them: before that, two tile sizes resolved to one cache file and
+# the second silently evicted the first.
+TILE_RE = re.compile(r"^\d+x\d+$|^\d+$")
 
 
 class RosterError(Exception):
@@ -119,10 +126,10 @@ def _validate(roster):
     # coherent: a margin below the model's 16 frames of future context cannot
     # reproduce a whole-clip run, and an unknown tiling mode has no tile size.
     for d in roster.denoisers:
-        if d.tiling not in TILING_MODES:
+        if d.tiling not in TILING_MODES and not TILE_RE.match(d.tiling):
             raise RosterError(
                 f"denoiser '{d.name}' has tiling '{d.tiling}'; expected one of "
-                f"{sorted(TILING_MODES)}")
+                f"{sorted(TILING_MODES)}, an explicit 'HxW', or a square size")
         if d.tiling != "none":
             if d.window < 1:
                 raise RosterError(

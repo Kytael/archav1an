@@ -17,7 +17,10 @@ BSVD_SIGMA = "0.05"
 # cover 16:9 evenly -- 576 does 1.28x the frame's pixels at 1080p, and a
 # bigger square is worse, not better -- so auto picks 1096x976 there, 1.03x,
 # and never returns a tile the card cannot hold.
-TILE_FOR = {"auto": "auto"}
+#
+# An explicit "HxW" or square size is passed through unchanged. That was
+# unusable until engines were named for the shape that built them, because two
+# tile sizes shared one cache file and each switch silently rebuilt it.
 ENCODER_PARAMS = ("--tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 "
                   "--sharpness 1 --tf-strength 2 --variance-boost-strength 1 "
                   "--variance-octile 7 --enable-dlf 2")
@@ -50,7 +53,7 @@ def build_command(denoiser, encode, staged, out, remote_src, callback):
     if denoiser.tiling != "none":
         # Cards that cannot hold the full-frame BSVD state run tile-sequential
         # and windowed, so memory is one window rather than one clip (spec 5.5).
-        argv += ["--bsvd-tile", str(TILE_FOR[denoiser.tiling]),
+        argv += ["--bsvd-tile", str(denoiser.tiling),
                  "--bsvd-window", str(denoiser.window),
                  "--bsvd-margin", str(denoiser.margin)]
 

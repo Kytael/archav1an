@@ -252,3 +252,35 @@ def test_rejects_root_on_a_local_denoiser(tmp_path):
                         'backend = "migraphx"\nroot = "~/elsewhere"')
     with pytest.raises(RosterError, match="root"):
         load_roster(_write(tmp_path, text))
+
+
+def test_an_explicit_tile_is_accepted(tmp_path):
+    """Safe since engines are named per shape; before, tiles clobbered one cache."""
+    p = tmp_path / "r.toml"
+    p.write_text(_toml(tiling="1112x992"))
+    assert load_roster(p).denoisers[0].tiling == "1112x992"
+
+
+def test_a_bare_square_tile_is_accepted(tmp_path):
+    p = tmp_path / "r.toml"
+    p.write_text(_toml(tiling="512"))
+    assert load_roster(p).denoisers[0].tiling == "512"
+
+
+def test_a_malformed_tile_is_rejected(tmp_path):
+    p = tmp_path / "r.toml"
+    p.write_text(_toml(tiling="huge"))
+    with pytest.raises(RosterError, match="tiling"):
+        load_roster(p)
+
+
+def test_an_explicit_tile_reaches_the_dispatch_command():
+    """TILE_FOR mapped only 'auto', so any explicit tile raised KeyError."""
+    from tools.archive_batch.dispatch_cmd import build_command
+    from tools.archive_batch.roster import Denoiser, EncodePool
+    d = Denoiser(name="t", host="local", backend="trt", device=0,
+                 tiling="1112x992", window=750, margin=32, enabled=True)
+    argv, _ = build_command(d, EncodePool(host="local", slots=1, lp_level=6),
+                            "in.mov", "out.mkv", None, "127.0.0.1")
+    assert "--bsvd-tile" in argv
+    assert argv[argv.index("--bsvd-tile") + 1] == "1112x992"

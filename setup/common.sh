@@ -566,6 +566,18 @@ record_src() {
     echo "${name}|${url}|${ref}|${commit}" >> "$mf"
 }
 
+# record_system_src <component> <name> <pkg> <version>
+# For a source the distro supplies rather than one we clone. On Arch the three
+# SMDegrain plugins come from pacman and the AUR, so nothing was ever cloned
+# and nothing was ever recorded -- and src_update_status then reported
+# "no install record" for all three forever, which made the whole denoiser
+# component read UNKNOWN on a machine where it was correctly installed.
+# The entry is marked with the ref "system" so the status check knows there is
+# no upstream commit to compare against.
+record_system_src() {
+    record_src "$1" "$2" "system:$3" system "$4"
+}
+
 # clone_src <component> <name> <destdir> [extra git-clone args...]
 # Fresh shallow clone of SOURCES[component:name] into destdir + manifest record.
 clone_src() {
@@ -619,6 +631,13 @@ src_update_status() {
             continue
         fi
         IFS='|' read -r _ rec_url rec_ref rec_commit <<< "$line"
+        # A distro-supplied source has no upstream commit to compare, so the
+        # url/ref check below would call it UPDATE on every run. The package
+        # manager owns its currency; report what is installed and move on.
+        if [ "$rec_ref" = "system" ]; then
+            echo "$name|OK|${rec_url#system:} $rec_commit"
+            continue
+        fi
         if [ "$url" != "$rec_url" ] || [ "$ref" != "$rec_ref" ]; then
             echo "$name|UPDATE|pin changed: $rec_ref -> $ref"
             rc=1

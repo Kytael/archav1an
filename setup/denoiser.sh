@@ -49,6 +49,22 @@ require_debian_pkgs() {
 # Builds one meson-based VapourSynth plugin from SOURCES into the prefix plugin
 # dir. Only the Debian/Ubuntu path calls this; Arch gets the same three plugins
 # from the AUR.
+# record_pacman_plugin <manifest-name> <resolved .so path>
+# The arch branch installs these three from pacman and the AUR, so unlike the
+# meson branch below it never calls clone_src and never writes a manifest
+# record. src_update_status then reported "no install record" for all three
+# forever, which is what made the whole denoiser component read UNKNOWN on a
+# machine where it was correctly installed. Record what pacman actually
+# supplied, so the status check can report it instead of guessing.
+record_pacman_plugin() {
+    local name="$1" src="$2" owner ver
+    [ -n "$src" ] || return 0
+    owner="$(pacman -Qoq "$src" 2>/dev/null | head -n 1)"
+    [ -n "$owner" ] || return 0
+    ver="$(pacman -Q "$owner" 2>/dev/null | awk '{print $2}')"
+    record_system_src denoiser "$name" "$owner" "${ver:-unknown}"
+}
+
 build_meson_vs_plugin() {
     local name="$1" lib="$2"
     local VS_PLUGIN_PATH
@@ -422,6 +438,7 @@ install_denoiser() {
         if [ -n "$_mvtools_src" ]; then
             ln -sf "$_mvtools_src" "$VS_PLUGIN_PATH/libmvtools.so"
             log_info "Symlinked $_mvtools_src to $VS_PLUGIN_PATH/libmvtools.so"
+            record_pacman_plugin mvtools "$_mvtools_src"
         fi
 
         if ! pacman -Qi vapoursynth-plugin-removegrain &>/dev/null && ! pacman -Qi vapoursynth-plugin-removegrain-git &>/dev/null; then
@@ -439,6 +456,7 @@ install_denoiser() {
         if [ -n "$_rg_src" ]; then
             ln -sf "$_rg_src" "$VS_PLUGIN_PATH/libremovegrain.so"
             log_info "Symlinked $_rg_src to $VS_PLUGIN_PATH/libremovegrain.so"
+            record_pacman_plugin removegrain "$_rg_src"
         fi
 
         # CTMF — median filter needed by ContraSharpening in havsfunc.
@@ -466,6 +484,7 @@ install_denoiser() {
         if [ -n "$_ctmf_src" ]; then
             ln -sf "$_ctmf_src" "$VS_PLUGIN_PATH/libctmf.so"
             log_info "Symlinked $_ctmf_src to $VS_PLUGIN_PATH/libctmf.so"
+            record_pacman_plugin ctmf "$_ctmf_src"
         fi
     else
         # All three build with meson, which is how their AUR packages build
