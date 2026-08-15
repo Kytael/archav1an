@@ -722,6 +722,15 @@ check_linkage() {
     local component=$1 rc=0 a path missing
     local ldpath="$VS_PREFIX/lib"
     [ -d /usr/lib/wsl/lib ] && ldpath="$ldpath:/usr/lib/wsl/lib"
+    # libvsscript.so lives only inside the VapourSynth package dir, and
+    # vapoursynth.sh must not symlink it out (dladdr + vapoursynth.toml; see
+    # the comment there). vspipe finds it at runtime through its own $ORIGIN
+    # rpath, but $VS_PREFIX/bin/vspipe is a symlink, so ldd expands $ORIGIN to
+    # bin/ and reports the library missing -- a healthy vapoursynth came back
+    # BROKEN and every sweep offered to rebuild it. Arch hid this too: pacman
+    # leaves /usr/lib/libvsscript.so behind for ldd to find.
+    local _vs_pkg
+    _vs_pkg=$(vs_pkg_dir) && ldpath="$ldpath:$_vs_pkg"
     for a in ${ARTIFACTS[$component]:-}; do
         path="$VS_PREFIX/$a"
         [ -e "$path" ] || continue
@@ -733,6 +742,21 @@ check_linkage() {
         fi
     done
     return $rc
+}
+
+# vs_pkg_dir — where VapourSynth R76 installs itself, or nothing if absent.
+#
+# Anchored on the venv's Python version rather than a glob, for the reason
+# setup/vapoursynth.sh:100 gives: a venv rebuilt at a new Python leaves the
+# prior install_dir behind, and the stale one would name the wrong build.
+# activate-venv.sh repeats this rather than calling it, because that file is
+# sourced standalone and does not read this one.
+vs_pkg_dir() {
+    [ -x "$VENV_DIR/bin/python" ] || return 1
+    local d
+    d="$VS_PREFIX/lib/$("$VENV_DIR/bin/python" -c 'import sys;print("python%d.%d" % sys.version_info[:2])' 2>/dev/null)/site-packages/vapoursynth"
+    [ -d "$d" ] || return 1
+    printf '%s\n' "$d"
 }
 
 # vs_core_ok — can the prefix Python import the VapourSynth core at all?
