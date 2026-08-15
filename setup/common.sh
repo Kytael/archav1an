@@ -67,6 +67,44 @@ ensure_uv() {
     return 1
 }
 
+# Make cargo usable, not merely present, for the components built from crates.
+#
+# `command -v cargo` is not the test it looks like. rustup installs a proxy at
+# ~/.cargo/bin/cargo (and /usr/bin/cargo when it comes from a distro package)
+# that carries no toolchain of its own, so cargo answers on PATH from the
+# moment rustup exists and every invocation then fails with "rustup could not
+# choose a version of cargo to run, because one wasn't specified explicitly,
+# and no default is configured". A fresh host hit that at the first cargo
+# build, having skipped the install branch because cargo was "already there".
+ensure_rust() {
+    [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
+    export PATH="$HOME/.cargo/bin:$PATH"
+
+    if ! command -v cargo &> /dev/null; then
+        if command -v pacman &> /dev/null; then
+            local _sudo
+            _sudo=$(pkg_manager_sudo) || { log_error "Rust is missing and neither root nor sudo is available to install it."; return 1; }
+            $_sudo pacman -S --needed --noconfirm rust || { log_error "Failed to install Rust"; return 1; }
+        else
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y || { log_error "Failed to install Rust via rustup"; return 1; }
+        fi
+        [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
+        export PATH="$HOME/.cargo/bin:$PATH"
+    fi
+
+    # Cheapest command that a toolchain-less proxy fails.
+    if ! cargo --version &> /dev/null; then
+        if ! command -v rustup &> /dev/null; then
+            log_error "cargo is on PATH but does not run, and rustup is not there to repair it. Reinstall Rust."
+            return 1
+        fi
+        log_info "rustup has no default toolchain; installing stable."
+        rustup default stable || { log_error "'rustup default stable' failed; set a toolchain by hand and re-run."; return 1; }
+        cargo --version &> /dev/null || { log_error "cargo still does not run after 'rustup default stable'."; return 1; }
+    fi
+    return 0
+}
+
 # Pick a host C++ compiler that the installed nvcc accepts.
 #
 # nvcc trails gcc by roughly 6-12 months on major releases. Distros ship

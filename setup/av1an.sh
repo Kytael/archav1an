@@ -17,17 +17,7 @@ install_av1an() {
     log_info "Compiling av1an from source with native optimizations..."
     set_native_build_flags
 
-    # Ensure Rust is available
-    if ! command -v cargo &> /dev/null; then
-        if command -v pacman &> /dev/null; then
-            pacman -S --needed --noconfirm rust || { log_error "Failed to install Rust"; return 1; }
-        else
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y || { log_error "Failed to install Rust via rustup"; return 1; }
-            source "$HOME/.cargo/env"
-        fi
-    fi
-    [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
-    export PATH="$HOME/.cargo/bin:$PATH"
+    ensure_rust || return 1
 
     cargo install --git https://github.com/rust-av/Av1an.git --bin av1an || { log_error "Failed to install av1an via cargo"; return 1; }
 
