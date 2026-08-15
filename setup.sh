@@ -9,7 +9,9 @@ BASE_DIR="$(dirname "$(realpath "$0")")"
 SETUP_DIR="$BASE_DIR/setup"
 
 # Restore terminal settings on exit (builds/read -n 1 can leave terminal in raw mode)
-trap 'stty sane 2>/dev/null' EXIT
+# On exit, not at the end of the happy path: a run that stops early still has
+# to leave the prefix owned by the person who will use it.
+trap 'stty sane 2>/dev/null; declare -F restore_prefix_ownership >/dev/null && restore_prefix_ownership' EXIT
 
 # Source all modules
 source "$SETUP_DIR/common.sh"
@@ -54,21 +56,13 @@ is_installed() {
     local tool=$1
     case "$tool" in
         "system_deps")
-            if [ "$DISTRO_FAMILY" = "arch" ]; then
-                # Check for key packages, not just base-devel, so newly added deps trigger reinstall
-                pacman -Qi base-devel &> /dev/null && \
-                pacman -Qi pkgconf &> /dev/null && \
-                pacman -Qi clang &> /dev/null && \
-                pacman -Qi meson &> /dev/null && \
-                pacman -Qi dav1d &> /dev/null && \
-                pacman -Qi mimalloc &> /dev/null
-            else
-                # Ask the package list itself rather than testing a hand-picked
-                # sample. Sampling reports the component as done on any host
-                # that happens to have the sampled packages, so a dependency
-                # added later never gets installed.
-                [ -z "$(debian_system_deps_missing)" ]
-            fi
+            # Ask the package list itself rather than testing a hand-picked
+            # sample. Sampling reports the component as done on any host that
+            # happens to have the sampled packages, so a dependency added later
+            # never gets installed. The Arch side used to sample six packages
+            # for this reason and had the same blind spot the Debian comment
+            # describes; both families now ask the same question.
+            [ -z "$(system_deps_missing)" ]
             ;;
         "python_libs")
             [ -d "$VENV_DIR" ] && "$VENV_DIR/bin/pip" show vsjetpack &> /dev/null
@@ -159,6 +153,23 @@ get_status_icon() {
 update_check() {
     local component=$1 network=${2:-1}
     if ! is_installed "$component"; then
+        # "Not installed" and "installed but no longer complete" are different
+        # answers, and only the first one is none of a sweep's business.
+        # system_deps is a package list: a host holding 196 of 202 specs, or
+        # holding a pinned package at the wrong version, is out of date -- which
+        # is exactly what --update exists to fix. Reported as MISSING it was
+        # printed and skipped, so a TensorRT pin that had drifted sat there
+        # sweep after sweep while the denoiser built against the wrong headers.
+        if [ "$component" = "system_deps" ]; then
+            local _short _n _total
+            _short=$(system_deps_missing)
+            _n=$(printf '%s\n' "$_short" | grep -c .)
+            _total=$( { [ "$DISTRO_FAMILY" = "arch" ] && arch_system_deps || debian_system_deps; } | grep -c .)
+            if [ "$_n" -gt 0 ] && [ "$_n" -lt "$_total" ]; then
+                echo "$component|UPDATE|$_n of $_total package specs unsatisfied: $(printf '%s' "$_short" | tr '\n' ' ' | cut -c1-70)"
+                return 0
+            fi
+        fi
         echo "$component|MISSING|not installed"
         return 0
     fi

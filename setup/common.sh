@@ -247,6 +247,32 @@ aur_helper() {
     return 1
 }
 
+# Hand $VS_PREFIX back to the user who ran sudo.
+#
+# check_root returns early on EUID 0, so under `sudo ./setup.sh` the prefix is
+# created by whichever component reaches it first -- as root. Everything after
+# that assumes it is yours: the venv is pip-installed into on later runs and
+# --update rewrites the manifest, both unprivileged. spark2 ended a successful
+# `sudo ./setup.sh --install A -y` with 21k root-owned files under the prefix.
+#
+# Refusing to run as root would be the wrong fix. sudo's credential cache
+# expires (15 minutes by default) and the denoiser wants root for
+# /etc/ld.so.conf.d an hour into a full build, so a root run is the honest way
+# to start something and walk away. Fix the result instead of the invocation.
+restore_prefix_ownership() {
+    [ "$EUID" -eq 0 ] || return 0
+    [ -n "${SUDO_USER:-}" ] || return 0
+    [ -d "${VS_PREFIX:-}" ] || return 0
+    # -quit on the first hit: this runs on every exit, and the common case is a
+    # tree that is already entirely the user's.
+    [ -n "$(find "$VS_PREFIX" ! -user "$SUDO_USER" -print -quit 2>/dev/null)" ] || return 0
+    local _grp
+    _grp="$(id -gn "$SUDO_USER" 2>/dev/null || printf '%s' "$SUDO_USER")"
+    log_info "Returning $VS_PREFIX to $SUDO_USER:$_grp (this run was root)."
+    chown -R "$SUDO_USER:$_grp" "$VS_PREFIX" \
+        || log_warn "Could not chown $VS_PREFIX to $SUDO_USER; later unprivileged runs will fail to write it."
+}
+
 check_root() {
     # If the user owns $VS_PREFIX (set in this file above), they don't need
     # sudo for builds that land inside the prefix. Individual install tasks
