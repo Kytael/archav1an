@@ -89,6 +89,14 @@ class BSVDOrtStreamingV2:
         self.skip_chs = [3, lyr0, lyr1]
         f1, f2 = lyr1 // FOLD_DIV, lyr2 // FOLD_DIV
 
+        # Neither EP puts the input shape in its cache key, so a 1096x976 tile
+        # and a full 1920x1080 frame land on the same file: the second session
+        # overwrites the first, and every switch between tile sizes pays a
+        # full rebuild while looking like a cache hit. Name the artefact for
+        # the shape that built it so the two coexist.
+        self.cache_tag = (f"{variant}_{self.H}x{self.W}_b{self.B}"
+                          f"_{'fp16' if fp16 else 'fp32'}")
+
         sess_opts = ort.SessionOptions()
         sess_opts.log_severity_level = 3
         if self.ep == 'TRT':
@@ -98,6 +106,7 @@ class BSVDOrtStreamingV2:
             provider_options = [
                 {'device_id': device_id, 'trt_fp16_enable': fp16,
                  'trt_engine_cache_enable': True, 'trt_engine_cache_path': cache,
+                 'trt_engine_cache_prefix': self.cache_tag,
                  'trt_max_workspace_size': 4 * 1024 * 1024 * 1024},
                 {'device_id': device_id}, {}]
             self._io_device_type = 'cuda'
@@ -106,7 +115,11 @@ class BSVDOrtStreamingV2:
             # Strix at 1080p — cache next to the ONNX like the TRT engines.
             # ORT >=1.23 exposes a single EP-managed migraphx_model_cache_dir
             # (the older save/load_compiled_model option pairs are gone).
-            cache = trt_cache_dir or str(Path(self.onnx_path).parent / 'migx_cache')
+            # MIGraphX has no cache-prefix option, so the shape goes in the
+            # directory name instead.
+            cache = str(Path(trt_cache_dir
+                             or Path(self.onnx_path).parent / 'migx_cache')
+                        / self.cache_tag)
             Path(cache).mkdir(exist_ok=True, parents=True)
             provider_options = [
                 {'device_id': device_id, 'migraphx_fp16_enable': fp16,
