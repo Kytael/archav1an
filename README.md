@@ -1,6 +1,14 @@
-# Auto-Boost-Av1an for Linux
+# archav1an
 
-This guide explains how to set up and run Auto-Boost-Av1an on Linux (Arch-based distros like CachyOS, and Ubuntu/Debian).
+Neural video denoising and AV1 encoding, on one machine or spread across several.
+
+This started as a Linux port of Auto-Boost-Av1an, and its per-scene CRF boosting is still the core of the two-pass scripts below. Three things have grown around it since:
+
+- **Neural denoising** with BSVD or STA-SUNet, running inside VapourSynth through ONNX Runtime — TensorRT on NVIDIA, MIGraphX on AMD. Tiled and windowed modes let cards without enough memory for a full 1080p frame still run the model.
+- **Split-host denoising**, where the denoiser runs on a remote GPU and streams frames back over the network to whichever machine encodes. The two do not have to be the same machine, or the same vendor.
+- **Batch processing** of a whole archive across several GPUs at once, with a per-clip scheduler, resume after interruption, and per-lane throughput accounting.
+
+This guide explains how to set it up and run it on Linux (Arch-based distros like CachyOS, and Ubuntu/Debian).
 
 Both x86_64 and arm64 are supported. On arm64 the setup skips the x86-only assemblers, builds the VapourSynth plugins from source where no distro package exists, and takes TensorRT from apt — no index publishes an arm64 TensorRT wheel.
 
