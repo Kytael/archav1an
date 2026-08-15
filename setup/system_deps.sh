@@ -157,15 +157,28 @@ pick_tensorrt10_version() {
     local cuda_major="${cuda_ver%%.*}"
     local madison v
     madison="$(apt-cache madison libnvinfer10 2>/dev/null)"
-    # Match the exact CUDA release first. A loose major match takes the newest
-    # 10.x for any 13.x, and on a CUDA 13.0 host that is 10.16.1.11+cuda13.2,
-    # whose libnvinfer-dev depends on libnvinfer-safe-headers-dev. That package
-    # is absent from the cuda13.0 line, so apt resolves it to the 11.x
-    # candidate and the whole transaction fails on a broken-packages error.
+    # Newest 10.x built for this CUDA major. A +cuda13.2 build runs on a CUDA
+    # 13.0 toolkit: CUDA minor version compatibility is the point of the 13.x
+    # line, and the driver floor is the major's, which 580.173.02 clears.
+    #
+    # This used to demand an exact release match, which pinned a CUDA 13.0 host
+    # to 10.14.1.48 because the newer builds carry +cuda13.2. The reason was
+    # that 10.16.1.11's libnvinfer-dev depends on libnvinfer-safe-headers-dev
+    # and the transaction failed -- but that was rule 2 below being broken, not
+    # a property of the version: safe-headers-dev was simply missing from the
+    # pinned closure, so apt took its 11.x candidate. It is in the list now,
+    # and `apt-get install -s` resolves the whole 10.16.1.11 set cleanly.
+    #
+    # Taking the exact release also made the pin fight the machine. Both Sparks
+    # sit at 10.16.1.11 from a plain apt upgrade, so a pin of 10.14.1.48 asks
+    # for a downgrade on every run, while vstrt -- built against whatever was
+    # installed the day it compiled -- ends up loading a runtime it was not
+    # built for. On gpu4 that pairing segfaulted the VapourSynth process.
     v="$(printf '%s\n' "$madison" \
-        | awk -v c="+cuda${cuda_ver}" '$3 ~ /^10\./ && index($3, c) {print $3; exit}')"
-    [ -n "$v" ] || v="$(printf '%s\n' "$madison" \
         | awk -v c="+cuda${cuda_major}." '$3 ~ /^10\./ && index($3, c) {print $3; exit}')"
+    # Nothing for this major: fall back to the exact release, then give up.
+    [ -n "$v" ] || v="$(printf '%s\n' "$madison" \
+        | awk -v c="+cuda${cuda_ver}" '$3 ~ /^10\./ && index($3, c) {print $3; exit}')"
     printf '%s' "$v"
 }
 
@@ -303,7 +316,7 @@ debian_system_deps() {
                                     libnvinfer-dispatch10 libnvonnxparsers10 \
                                     libnvinfer-dev libnvinfer-headers-dev \
                                     libnvinfer-plugin-dev libnvinfer-headers-plugin-dev \
-                                    libnvinfer-bin; do
+                                    libnvinfer-safe-headers-dev libnvinfer-bin; do
                         DEPS+=("$_trt_pkg=$trt_ver")
                     done
                 else
@@ -316,15 +329,28 @@ debian_system_deps() {
     printf '%s\n' "${DEPS[@]}"
 }
 
-# Prints the specs from debian_system_deps that dpkg does not have. A pinned
-# entry (name=version) is tested by name alone; apt re-pins it when the
-# installed version differs.
+# Prints the specs from debian_system_deps that dpkg does not have, or holds at
+# the wrong version.
+#
+# A pinned entry (name=version) used to be tested by name alone, on the theory
+# that apt would re-pin it. apt never saw the spec: a package installed at any
+# version read as satisfied, so the pin only ever applied to a host that did
+# not have TensorRT yet. Both Sparks drifted to 10.16.1.11 under a plain apt
+# upgrade while the pin still said 10.14.1.48, and nothing pulled them back --
+# which is how vstrt came to be built against one TensorRT and to load another.
 debian_system_deps_missing() {
-    local spec name
+    local spec name want have
     while IFS= read -r spec; do
         [ -n "$spec" ] || continue
         name="${spec%%=*}"
-        dpkg -s "$name" &>/dev/null || printf '%s\n' "$spec"
+        if ! dpkg -s "$name" &>/dev/null; then
+            printf '%s\n' "$spec"
+            continue
+        fi
+        [ "$spec" = "$name" ] && continue          # unpinned: presence is enough
+        want="${spec#*=}"
+        have="$(dpkg-query -W -f='${Version}' "$name" 2>/dev/null)"
+        [ "$have" = "$want" ] || printf '%s\n' "$spec"
     done < <(debian_system_deps)
 }
 
@@ -345,7 +371,12 @@ install_system_deps_debian() {
         log_info "Updating apt..."
         $_sudo apt update || { log_error "apt update failed"; return 1; }
         log_info "Installing ${#_missing[@]} missing system packages: ${_missing[*]}"
-        $_sudo apt install -y "${_missing[@]}" || { log_error "Failed to install system dependencies via apt"; return 1; }
+        # --allow-downgrades because converging on a pin usually IS a downgrade:
+        # the TensorRT dev packages drift upward with apt upgrade while the pin
+        # names the 10.x the onnxruntime TRT EP links against. Without it apt
+        # refuses the transaction outright, and the list above would be
+        # recomputed and refused on every single run.
+        $_sudo apt install -y --allow-downgrades "${_missing[@]}" || { log_error "Failed to install system dependencies via apt"; return 1; }
         ldconfig
     fi
 

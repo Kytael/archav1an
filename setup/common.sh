@@ -797,7 +797,7 @@ PYEOF
 # lines; returns 0 healthy, 1 broken. Skips load probes (with a note) when the
 # VS core itself cannot import.
 component_health() {
-    local component=$1 rc=0 a so ldd_broken=""
+    local component=$1 rc=0 a so ldd_broken="" probe_err probe_rc mismatch
     local out
     out=$(check_linkage "$component") || rc=1
     [ -n "$out" ] && echo "$out"
@@ -815,8 +815,22 @@ component_health() {
             echo "$a|SKIPPED|VS core not importable, load probe skipped"
             continue
         fi
-        if ! probe_plugin_load "$so" >/dev/null 2>&1; then
+        probe_err=$(probe_plugin_load "$so" 2>&1 >/dev/null); probe_rc=$?
+        if [ "$probe_rc" -ne 0 ]; then
             echo "$a|BROKEN|fails to load in VapourSynth"
+            rc=1
+            continue
+        fi
+        # A plugin that loads can still be built against a different TensorRT
+        # than it loads, and vstrt says so itself on stderr: "built with 110100
+        # but loaded with 110201; continue but fingers crossed". Take it at its
+        # word. The same drift on gpu4 -- built 10.14.01, loaded 10.16.01 --
+        # did not warn, it segfaulted the process, and nothing in this sweep saw
+        # it coming because the plugin loaded fine everywhere else.
+        mismatch=$(printf '%s' "$probe_err" \
+            | sed -n 's/.*built with \([0-9]*\) but loaded with \([0-9]*\).*/built against TensorRT \1, loading \2/p' | head -1)
+        if [ -n "$mismatch" ]; then
+            echo "$a|BROKEN|$mismatch — rebuild against the installed TensorRT"
             rc=1
         fi
     done
