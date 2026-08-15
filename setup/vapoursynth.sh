@@ -78,12 +78,39 @@ install_vapoursynth() {
     # python_libs pins Cython 3.2.9 in the venv, which is the version to use on
     # every host. No extra defines are needed once the right one runs -- that
     # was verified by building with and without -DCYTHON_LIMITED_API=1.
+    # Hide every symbol that comes from a static archive.
+    #
+    # VapourSynth's meson.build asks for zimg with static: true, and Debian's
+    # zimg.pc carries "Libs.private: -lstdc++". Static resolution therefore
+    # pulls libstdc++.a into the link, and libvapoursynth.so.4 ends up with no
+    # NEEDED on libstdc++.so.6 and 2315 std:: symbols exported with default
+    # visibility. The Python module loads that library RTLD_GLOBAL, so those
+    # copies sit ahead of the real libstdc++ in the global scope, and the next
+    # C++ library dlopened into the process binds to them. TensorRT does exactly
+    # that: libnvinfer.so.10 formats a number into an ostream from a static
+    # constructor, reaches VapourSynth's locale facets, which no ios_base::Init
+    # ever touched, and segfaults inside ELF init before LoadPlugin returns.
+    # Proven on gpu4: the same load succeeds with LD_PRELOAD=libstdc++.so.6,
+    # which puts the real one first, and succeeds again after this relink.
+    #
+    # Arch never saw it because pacman ships no libzimg.a, so meson falls back
+    # to the shared zimg and libstdc++ stays dynamic.
+    #
+    # This keeps upstream's static zimg and only makes archive symbols local,
+    # which is what they should have been. It also stops zimg itself leaking
+    # into the global scope, where it could interpose on a plugin's own copy.
+    local _vs_ldflags="$LDFLAGS"
+    export LDFLAGS="$LDFLAGS -Wl,--exclude-libs,ALL"
     PATH="$VENV_DIR/bin:$PATH" "$VENV_DIR/bin/meson" setup build \
         --prefix="$VS_PREFIX" \
         --buildtype=release \
         -Dpython.platlibdir="lib/python${_vs_py_ver}/site-packages" \
         -Dpython.purelibdir="lib/python${_vs_py_ver}/site-packages" \
-        || { cd "$ORIG_DIR"; log_error "VapourSynth meson setup failed"; return 1; }
+        || { cd "$ORIG_DIR"; export LDFLAGS="$_vs_ldflags"; log_error "VapourSynth meson setup failed"; return 1; }
+    # meson bakes the link line into build.ninja here, so the flag has done its
+    # work; the rest of this function builds ffms2 and BestSource, which link
+    # nothing static and should keep the shared flags.
+    export LDFLAGS="$_vs_ldflags"
     log_info "VS R76 build: cython $(PATH="$VENV_DIR/bin:$PATH" command -v cython) $(PATH="$VENV_DIR/bin:$PATH" cython --version 2>&1)"
     PATH="$VENV_DIR/bin:$PATH" "$VENV_DIR/bin/meson" compile -C build \
         || { cd "$ORIG_DIR"; log_error "VapourSynth meson compile failed"; return 1; }
