@@ -80,21 +80,23 @@ install_vapoursynth() {
     # was verified by building with and without -DCYTHON_LIMITED_API=1.
     # Hide every symbol that comes from a static archive.
     #
-    # VapourSynth's meson.build asks for zimg with static: true, and Debian's
-    # zimg.pc carries "Libs.private: -lstdc++". Static resolution therefore
-    # pulls libstdc++.a into the link, and libvapoursynth.so.4 ends up with no
-    # NEEDED on libstdc++.so.6 and 2315 std:: symbols exported with default
-    # visibility. The Python module loads that library RTLD_GLOBAL, so those
-    # copies sit ahead of the real libstdc++ in the global scope, and the next
-    # C++ library dlopened into the process binds to them. TensorRT does exactly
-    # that: libnvinfer.so.10 formats a number into an ostream from a static
+    # VapourSynth's meson.build asks for zimg with static: true, and zimg.pc
+    # carries "Libs.private: -lstdc++". Static resolution therefore puts
+    # libstdc++.a on the link line -- on Arch too, where zimg itself stays
+    # shared -- and libvapoursynth.so.4 ends up with no NEEDED on
+    # libstdc++.so.6 and the whole C++ runtime, locale facets included,
+    # exported with default visibility. The Python module loads that library
+    # RTLD_GLOBAL, so those copies sit ahead of the real libstdc++ in the
+    # global scope and the next C++ library dlopened into the process binds to
+    # them. libnvinfer.so.10 formats a number into an ostream from a static
     # constructor, reaches VapourSynth's locale facets, which no ios_base::Init
     # ever touched, and segfaults inside ELF init before LoadPlugin returns.
     # Proven on gpu4: the same load succeeds with LD_PRELOAD=libstdc++.so.6,
     # which puts the real one first, and succeeds again after this relink.
     #
-    # Arch never saw it because pacman ships no libzimg.a, so meson falls back
-    # to the shared zimg and libstdc++ stays dynamic.
+    # Every host has the bad link. Only the Sparks die of it so far -- x86
+    # libnvinfer 11.02 warns about its version and loads. Treat that as luck,
+    # not as a difference worth keeping.
     #
     # This keeps upstream's static zimg and only makes archive symbols local,
     # which is what they should have been. It also stops zimg itself leaking

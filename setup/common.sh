@@ -860,6 +860,23 @@ component_health() {
             rc=1
         fi
     done
+    # A VapourSynth linked against a static libstdc++ exports the whole C++
+    # runtime, locale facets included, and the Python module loads it
+    # RTLD_GLOBAL. Every C++ library dlopened after it binds to those copies,
+    # and libnvinfer segfaults in its own static constructor when it does --
+    # which is how both Sparks lost libvstrt.so while every other plugin loaded
+    # fine. Every host built before 2026-08-15 has this link; the x86 ones
+    # survive it by luck, so flag them too and let the relink fix it. An
+    # exported ios_base::Init is the tell -- it comes only from libstdc++.a,
+    # and --exclude-libs makes it local. See install_vapoursynth for the cause.
+    if [ "$component" = "vapoursynth" ]; then
+        local _vs_so="$VS_PREFIX/lib/libvapoursynth.so.4"
+        if [ -e "$_vs_so" ] && command -v nm &>/dev/null \
+           && nm -D --defined-only "$_vs_so" 2>/dev/null | grep -q '_ZNSt8ios_base4InitC1Ev'; then
+            echo "lib/libvapoursynth.so.4|BROKEN|static libstdc++ exported into the global scope — breaks TensorRT; relink"
+            rc=1
+        fi
+    fi
     return $rc
 }
 
