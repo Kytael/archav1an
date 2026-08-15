@@ -24,6 +24,7 @@ install_oxipng() {
     if [ -f "$HOME/.cargo/bin/oxipng" ]; then
         cp "$HOME/.cargo/bin/oxipng" "$VS_PREFIX/bin/oxipng"
         chmod +x "$VS_PREFIX/bin/oxipng"
+        rm -f "$HOME/.cargo/bin/oxipng"   # see install_av1an: one copy, in the prefix
 
         local _oxipng_ver
         _oxipng_ver=$("$VS_PREFIX/bin/oxipng" --version 2>/dev/null | awk 'NR==1{print $2}')

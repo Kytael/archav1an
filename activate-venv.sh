@@ -26,6 +26,33 @@ export VAPOURSYNTH_PLUGIN_PATH="$VS_PREFIX/lib/vapoursynth"
 export VAPOURSYNTH_EXTRA_PLUGIN_PATH="$VS_PREFIX/lib/vapoursynth"
 export PATH="$VS_PREFIX/bin:$PATH"
 
+# Put the VapourSynth package dir itself on the library path, under its real
+# name. av1an does not link VSScript -- it dlopens "libvsscript.so" and then
+# "libvapoursynth-script.so" by name -- and R76 installs libvsscript.so inside
+# its Python package dir, which nothing else adds to the search path. Without
+# this, av1an panics with "VSScript API not available" before it does any work.
+#
+# A symlink into $VS_PREFIX/lib cannot serve instead, and setup/vapoursynth.sh
+# deletes any that exists: vsscript.cpp finds itself with dladdr() and looks
+# that path up in ~/.config/vapoursynth/vapoursynth.toml, which is keyed by the
+# real path, so loading it through a symlink makes the lookup miss and takes
+# vspipe down with "Python executable and library path couldn't be determined".
+# Verified both ways on gpu4 2026-08-15.
+#
+# Arch hosts hid this. Their pacman vapoursynth package leaves
+# /usr/lib/libvapoursynth-script.so.0 behind, so av1an found the system build
+# and ran -- against a different VapourSynth than the vspipe beside it. Hosts
+# with no system VapourSynth, like the Ubuntu Sparks, had no av1an at all.
+#
+# Anchored on the venv's Python version rather than a glob, for the reason
+# setup/vapoursynth.sh:100 gives: a venv rebuilt at a new Python leaves the
+# prior install_dir behind, and the stale one would wire this to the wrong build.
+if [ -x "$VENV_DIR/bin/python" ]; then
+    _vs_pkg_dir="$VS_PREFIX/lib/$("$VENV_DIR/bin/python" -c 'import sys;print("python%d.%d" % sys.version_info[:2])' 2>/dev/null)/site-packages/vapoursynth"
+    [ -d "$_vs_pkg_dir" ] && export LD_LIBRARY_PATH="$_vs_pkg_dir:$LD_LIBRARY_PATH"
+    unset _vs_pkg_dir
+fi
+
 # Cover Python embedders (vspipe and friends) that need libpython3.X.so.1.0
 # when the venv interpreter lives outside $VS_PREFIX (typical for uv-managed
 # Pythons under ~/.local/share/uv/python/...). The build-time rpath should
@@ -40,8 +67,13 @@ export PATH="$VS_PREFIX/bin:$PATH"
 if [ -x "$VENV_DIR/bin/python" ]; then
     _uv_py_libdir="$("$VENV_DIR/bin/python" -c 'import sysconfig;print(sysconfig.get_config_var("LIBDIR"))' 2>/dev/null)"
     case "$_uv_py_libdir" in
-        /usr/lib|/usr/lib64|/lib|/lib64|/usr/local/lib|/usr/local/lib64)
+        /usr/lib|/usr/lib64|/lib|/lib64|/usr/local/lib|/usr/local/lib64| \
+        /usr/lib/*-linux-gnu*|/lib/*-linux-gnu*)
             # System libdir; loader already searches it. Do nothing.
+            # Debian and Ubuntu put libpython under a multiarch triplet
+            # (/usr/lib/aarch64-linux-gnu), which the bare names above missed:
+            # the Sparks were prepending their whole system libdir, ahead of
+            # every VapourSynth path this script sets.
             ;;
         *)
             if [ -n "$_uv_py_libdir" ] && [ -d "$_uv_py_libdir" ]; then

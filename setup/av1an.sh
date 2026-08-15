@@ -28,6 +28,12 @@ install_av1an() {
     if [ -f "$HOME/.cargo/bin/av1an" ]; then
         cp "$HOME/.cargo/bin/av1an" "$VS_PREFIX/bin/av1an"
         chmod +x "$VS_PREFIX/bin/av1an"
+        # One av1an, in the prefix. cargo drops its own copy in ~/.cargo/bin,
+        # which sits on PATH ahead of $VS_PREFIX/bin in a plain shell, so a
+        # later prefix-only reinstall would leave you running the old binary
+        # with no sign of it. uninstall_av1an already treats the prefix copy
+        # as the artifact and deletes this one.
+        rm -f "$HOME/.cargo/bin/av1an"
         log_success "av1an installed with LTO and -march=native."
     else
         log_warn "av1an binary not found in cargo bin after install?"
