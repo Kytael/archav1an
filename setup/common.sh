@@ -259,18 +259,36 @@ aur_helper() {
 # expires (15 minutes by default) and the denoiser wants root for
 # /etc/ld.so.conf.d an hour into a full build, so a root run is the honest way
 # to start something and walk away. Fix the result instead of the invocation.
-restore_prefix_ownership() {
+#
+# The prefix is the obvious tree. build_tmp is the one that gets missed: every
+# source build clones and compiles there, so a root run leaves it root-owned
+# and the next unprivileged run dies at the clone rather than at the install,
+# which reads like a git problem. encoder-host, spark2 and gpu3 all ended up that
+# way. It lives beside setup.sh, and the installers put it under the directory
+# the script was called from, so check both.
+restore_ownership() {
     [ "$EUID" -eq 0 ] || return 0
     [ -n "${SUDO_USER:-}" ] || return 0
-    [ -d "${VS_PREFIX:-}" ] || return 0
-    # -quit on the first hit: this runs on every exit, and the common case is a
-    # tree that is already entirely the user's.
-    [ -n "$(find "$VS_PREFIX" ! -user "$SUDO_USER" -print -quit 2>/dev/null)" ] || return 0
-    local _grp
+
+    local _grp _d _seen=""
     _grp="$(id -gn "$SUDO_USER" 2>/dev/null || printf '%s' "$SUDO_USER")"
-    log_info "Returning $VS_PREFIX to $SUDO_USER:$_grp (this run was root)."
-    chown -R "$SUDO_USER:$_grp" "$VS_PREFIX" \
-        || log_warn "Could not chown $VS_PREFIX to $SUDO_USER; later unprivileged runs will fail to write it."
+
+    local _targets=()
+    [ -n "${VS_PREFIX:-}" ] && _targets+=("$VS_PREFIX")
+    [ -n "${BASE_DIR:-}" ] && _targets+=("$BASE_DIR/build_tmp")
+    _targets+=("$PWD/build_tmp")
+
+    for _d in "${_targets[@]}"; do
+        [ -d "$_d" ] || continue
+        case " $_seen " in *" $_d "*) continue ;; esac
+        _seen="$_seen $_d"
+        # -quit on the first hit: this runs on every exit, and the common case
+        # is a tree that is already entirely the user's.
+        [ -n "$(find "$_d" ! -user "$SUDO_USER" -print -quit 2>/dev/null)" ] || continue
+        log_info "Returning $_d to $SUDO_USER:$_grp (this run was root)."
+        chown -R "$SUDO_USER:$_grp" "$_d" \
+            || log_warn "Could not chown $_d to $SUDO_USER; later unprivileged runs will fail to write it."
+    done
 }
 
 check_root() {

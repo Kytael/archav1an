@@ -115,7 +115,7 @@ chmod +x setup.sh
 ./setup.sh --install A
 ```
 
-`setup.sh` prompts for sudo **once** at the start to create `/opt/archav1an/` and chown it to you; everything after that runs as your user. If `uv` (the Python venv/pip replacement) isn't installed, the script fetches Astral's official installer and drops it in `~/.local/bin`. The only other step that needs root is installing distro packages, and `system_deps` escalates for the package manager itself — so a fresh host may prompt a second time, and an already-provisioned one will not prompt at all. Never run `setup.sh` under sudo to pre-empt this; see below.
+`setup.sh` prompts for sudo **once** at the start to create `/opt/archav1an/` and chown it to you; everything after that runs as your user. If `uv` (the Python venv/pip replacement) isn't installed, the script fetches Astral's official installer and drops it in `~/.local/bin`. The only other step that needs root is installing distro packages, and `system_deps` escalates for the package manager itself — so a fresh host may prompt a second time, and an already-provisioned one will not prompt at all. Running the whole script under `sudo` is supported too, and is the better choice for an unattended `-y` run; see below.
 
 Or selectively:
 ```bash
@@ -129,7 +129,9 @@ Or selectively:
 
 The full target list is `system_deps python_libs svt_av1 ffmpeg vapoursynth av1an ffvship oxipng fssimu2 wwxd vszip subtext denoiser`. Dependencies resolve automatically, so naming a late component pulls in what it needs.
 
-`system_deps` is the one target that installs distro packages, and the only one that needs root. Do **not** run `setup.sh` under sudo to give it that: it escalates for the package manager by itself and stays as your user for everything else. A root-owned prefix leaves the venv unwritable afterwards, and `makepkg`/`paru` refuse to run as root at all.
+`system_deps` is the one target that installs distro packages, and the only one that needs root. You do not have to hand it root up front — it escalates for the package manager by itself and stays as your user for everything else.
+
+Running the whole script under `sudo` is equally supported, and it is the right call for an unattended `-y` run on a host that still needs packages: sudo's credential cache expires after 15 minutes by default, and the denoiser wants root for `/etc/ld.so.conf.d` an hour into a full build. A root run hands `/opt/archav1an/` and `build_tmp/` back to `$SUDO_USER` when it exits, so the venv and the next unprivileged run stay writable, and the AUR steps drop back to `$SUDO_USER` because `makepkg`/`paru` refuse to run as root at all.
 
 It checks first and escalates only if something is missing — `pacman -Qi` on Arch, `dpkg -s` on Debian/Ubuntu — so on an already-provisioned host the whole install runs with no package-manager prompt. AUR packages remain manual: `paru` or `yay` is installed for you where one is a repo package (CachyOS has both; plain Arch has neither), and named in a warning where it is not.
 

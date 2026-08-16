@@ -11,7 +11,7 @@ SETUP_DIR="$BASE_DIR/setup"
 # Restore terminal settings on exit (builds/read -n 1 can leave terminal in raw mode)
 # On exit, not at the end of the happy path: a run that stops early still has
 # to leave the prefix owned by the person who will use it.
-trap 'stty sane 2>/dev/null; declare -F restore_prefix_ownership >/dev/null && restore_prefix_ownership' EXIT
+trap 'stty sane 2>/dev/null; declare -F restore_ownership >/dev/null && restore_ownership' EXIT
 
 # Source all modules
 source "$SETUP_DIR/common.sh"
