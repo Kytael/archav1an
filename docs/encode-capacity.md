@@ -106,6 +106,13 @@ except the 2070S, which came in 50% above. The 2070S is the one card here with
 its own cooling: it is the exception that shows the rule, because the others
 lose to heat soak on a clip long enough to reach it.
 
+Treat the two single-run rows with caution. gpu3 was later measured eight
+times on a longer clip and about one run in four came in 25% slow for reasons
+that are not heat: a 420 s cooldown before the run changed nothing, and the
+clean and slow runs shared a temperature and an SM clock. See
+`docs/window-sizing.md`. One run cannot distinguish a lane's rate from that
+event, and only the igpu row here has more than one.
+
 gpu2 is a separate case. It was recorded at 5.78 fps on driver 610.74, where
 it also faulted in 6 of 12 runs. On 610.88 it has completed eight consecutive
 runs with no fault -- six denoise-only, one full lane-bench crossing 11 window

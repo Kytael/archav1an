@@ -103,7 +103,7 @@ class TimedSink(threading.Thread):
             pass
 
 
-def rates(marks, t0, skip_frac=0.2):
+def rates(marks, t0, window=0, skip_frac=0.2):
     """Fixed overhead, sustained rate and end-to-end rate from the marks."""
     if not marks:
         return {}
@@ -118,13 +118,26 @@ def rates(marks, t0, skip_frac=0.2):
     }
     # Skip the leading fraction so the first window's fill does not drag the
     # sustained figure down. What remains is the lane in steady state.
-    start = int(frames * skip_frac)
-    tail = [m for m in marks if m[0] > start]
-    if len(tail) > 1:
-        span = tail[-1][1] - tail[0][1]
-        got = tail[-1][0] - tail[0][0]
-        out["sustained_fps"] = round(got / span, 3) if span > 0 else None
-        out["sustained_over_frames"] = got
+    #
+    # A windowed lane emits a whole window at once when its sweep completes, so
+    # every frame of that window carries one timestamp. Any burst that the
+    # measurement starts inside contributes its remaining frames at no time
+    # cost, and the figure then rises with window size rather than with the
+    # lane's rate -- which is how window 750 was recorded as 30% faster than
+    # window 500 on a lane that was slower. Skip a full window, then anchor on
+    # the END of the burst that straddles the skip point, so every frame counted
+    # arrived in a later burst and cost real time.
+    start = max(int(frames * skip_frac), window)
+    after = [m for m in marks if m[0] > start]
+    if after:
+        t_anchor = after[0][1]
+        anchor_frame = max(m[0] for m in after if m[1] == t_anchor)
+        tail = [m for m in after if m[1] > t_anchor]
+        if tail:
+            span = tail[-1][1] - t_anchor
+            got = tail[-1][0] - anchor_frame
+            out["sustained_fps"] = round(got / span, 3) if span > 0 else None
+            out["sustained_over_frames"] = got
     return out
 
 
@@ -177,7 +190,7 @@ def main():
                   backend=args.backend, device=args.device, tile=args.tile,
                   window=args.window, margin=args.margin, rc=proc.returncode,
                   bytes_received=sink.bytes)
-    result.update(rates(sink.marks, t0))
+    result.update(rates(sink.marks, t0, window=args.window))
     if proc.returncode != 0:
         result["tail"] = out.strip()[-600:]
     json.dump(result, sys.stdout, indent=1)

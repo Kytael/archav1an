@@ -62,10 +62,19 @@ enabled = true
 # and cannot process 78% of this archive (spec 5.5).
 #
 # Left disabled because roster A (4090 + iGPU) is the default. Enable it when
-# the 4090 is busy with other work: that is what this lane is for. window is
-# the resident frame count -- source plus output is about 19 GB at 750 -- and
-# margin must stay at or above 16, the model's future context, or windowing
-# stops being exact.
+# the 4090 is busy with other work: that is what this lane is for. margin must
+# stay at or above 16, the model's future context, or windowing stops being
+# exact.
+#
+# window is the resident frame count, and it costs FOUR host buffers, not one:
+# the published window, the one being swept, the source in flight and the
+# prefetch. That is 12.4 MB a frame each at 1080p, so 26.4 GB at window 500 and
+# 38.8 GB at 750 -- measured 27.8 and 39.3 GB peak RSS. It is host RAM, not
+# VRAM, and it is what should decide this value. Throughput does not: on gpu3,
+# 750 is about 3% faster end-to-end than 500 over 8 runs, and the old claim
+# that it regressed came from single runs and a broken metric. encoder-host has
+# 124 GB, so 750 costs it nothing, but it has never been measured on this card.
+# See docs/window-sizing.md.
 #
 # device = 0, not 1. The two encoder-host GPUs do not share an ordinal space: CUDA
 # enumerates only the NVIDIA card and ROCm only the AMD one, so both are 0 and
