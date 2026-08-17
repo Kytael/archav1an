@@ -10,7 +10,7 @@ import os
 from tools.archive_batch.heartbeat import read_all as read_heartbeats
 from tools.archive_batch.manifest import order_clips, parse_manifest
 from tools.archive_batch.roster import RosterError, load_roster
-from tools.archive_batch.state import MAX_ATTEMPTS, load_state
+from tools.archive_batch.state import MAX_ATTEMPTS, State, load_state
 
 from .liverate import frames_from_log
 
@@ -31,10 +31,15 @@ def snapshot(paths, tracker, now):
     """The whole page's data. `now` is injected so tests are deterministic."""
     roster, roster_error = _roster(paths.roster)
     clips, manifest_error = _clips(paths.manifest)
-    state = load_state(paths.state)
+    state = _state(paths.state)
     beats = read_heartbeats(paths.lanes)
     history, failures = _history(paths.state)
 
+    # Both counted against the manifest rather than against state.jsonl. The
+    # state file can name clips a regenerated manifest no longer lists, and
+    # len(state.done) would then push done + queued + failed past clips -- the
+    # page contradicting itself with no way to tell which half is wrong.
+    done_clips = sum(1 for c in clips if c.src in state.done)
     done_frames = sum(c.frames for c in clips if c.src in state.done)
     pending = [c for c in clips
                if c.src not in state.done
@@ -51,17 +56,22 @@ def snapshot(paths, tracker, now):
                     "lp_level": roster.encode.lp_level} if roster else None),
         "totals": {
             "clips": len(clips),
-            "done": len(state.done),
+            "done": done_clips,
             "failed": sum(1 for v in state.failures.values() if v >= MAX_ATTEMPTS),
             "queued": len(pending),
             "frames": sum(c.frames for c in clips),
             "frames_done": done_frames,
             "fps_live": _sum_or_none(l["fps_live"] for l in lanes),
-            "eta_finish": _eta_finish(clips, state, lanes, now),
+            "eta_finish": _eta_finish(pending, lanes, now),
         },
         "lanes": lanes,
         "queue": [{"src": c.src, "frames": c.frames} for c in pending[:QUEUE_PREVIEW]],
-        "failures": _failures(failures, state)[:FAILURE_PREVIEW],
+        # The LAST 50, not the first. _history builds these in file order, so
+        # slicing from the front freezes the panel on the oldest failures of the
+        # run and silently drops every later one -- including clips that go on
+        # to exhaust their attempts and stop for good. Over a few thousand clips and
+        # fifteen days even a 1.5% transient rate fills it.
+        "failures": _failures(failures, state)[-FAILURE_PREVIEW:],
     }
 
 
@@ -94,6 +104,21 @@ def _clips(path):
         return (), None
     except ValueError as exc:
         return (), f"manifest will not parse: {exc}"
+
+
+def _state(path):
+    """Resume state, or an empty one. Never raises.
+
+    load_state catches FileNotFoundError only, so a state.jsonl the daemon
+    cannot read -- a PermissionError when it runs as a different user from the
+    batch, or a directory where the file should be -- would propagate and 500
+    the /metrics endpoint, taking the Prometheus scrape and its alerts with it.
+    Every other file this snapshot touches already tolerates that.
+    """
+    try:
+        return load_state(path)
+    except OSError:
+        return State()
 
 
 def _batch(beats):
@@ -129,8 +154,11 @@ def _lane(denoiser, beat, history, tracker, now):
         "state": "idle" if denoiser.enabled else "off",
         "current": None,
         "fps_live": None,
-        "fps_recent": _mean(r["fps"] for r in rows[-RECENT_CLIPS:]),
-        "fps_all": _mean(r["fps"] for r in rows),
+        # .get, like every other read of a state.jsonl row. A direct subscript
+        # here would take the whole snapshot down on one record written before
+        # a field existed, and this file is append-only across versions.
+        "fps_recent": _mean(r.get("fps") for r in rows[-RECENT_CLIPS:]),
+        "fps_all": _mean(r.get("fps") for r in rows),
         "clips_done": len(rows),
         "phase_split": _phases(rows),
     }
@@ -138,7 +166,13 @@ def _lane(denoiser, beat, history, tracker, now):
         tracker.forget(denoiser.name)
         return row
 
-    if not _alive(beat.get("batch_pid", 0)):
+    pid = beat.get("batch_pid")
+    if not pid or not _alive(pid):
+        # The `not pid` half is not belt-and-braces: os.kill(0, 0) signals the
+        # caller's own process group and never raises, so _alive(0) is True and
+        # a heartbeat with no pid would render as working for ever. _batch
+        # already guards this; this is the same guard, not a new rule.
+        #
         # A SIGKILLed batch leaves its heartbeats behind. Reporting "working"
         # from one of those would be a lie that never expires.
         tracker.forget(denoiser.name)
@@ -165,7 +199,10 @@ def _lane(denoiser, beat, history, tracker, now):
         "frames_done": produced,
         "progress": (min(0.999, produced / frames_total)
                      if produced is not None and frames_total else None),
-        "eta_s": (round((frames_total - produced) / row["fps_live"], 0)
+        # Clamped at zero for the same reason progress is clamped at 0.999: the
+        # counted frames can pass the manifest's count, and an unclamped
+        # subtraction then renders a finish time in the past.
+        "eta_s": (max(0.0, round((frames_total - produced) / row["fps_live"], 0))
                   if produced is not None and frames_total and row["fps_live"]
                   else None),
     }
@@ -179,8 +216,11 @@ def _stem(src):
 def _history(state_path):
     """({lane: [done record, ...]}, {src: last failed record}), in file order.
 
-    One pass over the file rather than two: it is read on every poll for a
-    fortnight, and the two questions want the same lines.
+    One pass for these two questions, which want the same lines. `snapshot`
+    still reads the file a second time through `load_state`, and that is
+    deliberate: the done set and the attempt ceiling define resume, and
+    duplicating that logic here to save one read would put the rule in two
+    places and let them drift.
     """
     done, failed = {}, {}
     try:
@@ -240,13 +280,18 @@ def _sum_or_none(values):
     return round(sum(vals), 3) if vals else None
 
 
-def _eta_finish(clips, state, lanes, now):
+def _eta_finish(pending, lanes, now):
     """Seconds-since-epoch the run finishes, or None.
 
     Divides remaining frames by the enabled lanes' recent rates, skipping any
     lane with no history. None rather than infinity when nothing is enabled.
+
+    Takes `pending` rather than every not-done clip, so it agrees with the
+    `queued` total and the queue list. A clip that has exhausted its attempts is
+    never going to be processed, and counting its frames here would push the
+    finish date out for work the run has already given up on.
     """
-    remaining = sum(c.frames for c in clips if c.src not in state.done)
+    remaining = sum(c.frames for c in pending)
     supply = sum(l["fps_recent"] for l in lanes
                  if l["enabled"] and l["fps_recent"])
     if not remaining or supply <= 0:

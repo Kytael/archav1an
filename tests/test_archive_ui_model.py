@@ -238,3 +238,63 @@ def test_a_run_that_is_producing_nothing_totals_zero_not_unknown(tmp_path):
     snap = snapshot(paths, tracker, now=40.0)
     assert snap["lanes"][0]["fps_live"] == 0.0
     assert snap["totals"]["fps_live"] == 0.0
+
+
+def test_the_failure_panel_keeps_the_newest_not_the_oldest(tmp_path):
+    """Sliced from the front, the panel freezes on the first failures of the
+    run and silently drops every later one, including clips that go on to
+    exhaust their attempts. Over a few thousand clips a 1.5% transient rate fills it."""
+    from tools.archive_ui.model import FAILURE_PREVIEW
+    recs = [{"src": f"SetA/2001/a/c{i}.MOV", "status": "failed",
+             "denoiser": "2070s", "wall_s": 1.0, "fps": 0.0, "out_bytes": 0,
+             "reason": f"reason {i}"} for i in range(FAILURE_PREVIEW + 10)]
+    snap = snapshot(_run_dir(tmp_path, records=recs), RateTracker(), now=0.0)
+    reasons = [f["reason"] for f in snap["failures"]]
+    assert len(reasons) == FAILURE_PREVIEW
+    assert reasons[-1] == f"reason {FAILURE_PREVIEW + 9}"
+
+
+def test_a_heartbeat_with_no_pid_is_not_reported_as_working(tmp_path):
+    """os.kill(0, 0) signals the caller's own process group and never raises,
+    so _alive(0) is True and a pid-less heartbeat would render as working for
+    ever."""
+    lane = {"lane": "gpu1_4090", "src": "SetA/2001/a/one.MOV", "frames": 600,
+            "state": "working", "started_at": 1.0, "attempt": 1,
+            "temp_dir": str(tmp_path / "temp")}
+    snap = snapshot(_run_dir(tmp_path, lanes=[lane]), RateTracker(), now=10.0)
+    assert snap["lanes"][0]["state"] == "unknown"
+
+
+def test_a_done_record_without_an_fps_field_does_not_break_the_page(tmp_path):
+    """state.jsonl is append-only across versions, so it holds records written
+    before a field existed. Every other read of a row uses .get."""
+    rec = {"src": "SetA/2001/a/one.MOV", "status": "done",
+           "denoiser": "gpu1_4090", "wall_s": 1.0, "out_bytes": 1}
+    snap = snapshot(_run_dir(tmp_path, records=[rec]), RateTracker(), now=0.0)
+    assert snap["lanes"][0]["clips_done"] == 1
+    assert snap["lanes"][0]["fps_recent"] is None
+
+
+def test_an_unreadable_state_file_does_not_take_the_page_down(tmp_path):
+    """load_state catches FileNotFoundError only. A directory where the file
+    should be would otherwise 500 /metrics and stop the Prometheus scrape."""
+    paths = _run_dir(tmp_path)
+    os.remove(paths.state)
+    os.mkdir(paths.state)
+    snap = snapshot(paths, RateTracker(), now=0.0)
+    assert snap["totals"]["done"] == 0
+    assert snap["totals"]["clips"] == 3
+
+
+def test_an_exhausted_clip_is_not_counted_into_the_finish_estimate(tmp_path):
+    """queued and queue both exclude a clip past MAX_ATTEMPTS. If eta_finish
+    does not, the page shows a finish date built on work it has given up on."""
+    recs = [{"src": "SetA/2001/a/three.MOV", "status": "failed",
+             "denoiser": "2070s", "wall_s": 1.0, "fps": 0.0, "out_bytes": 0,
+             "reason": "x"} for _ in range(2)]
+    recs.append(_done("SetA/2001/a/one.MOV", "gpu1_4090", 10.0))
+    paths = _run_dir(tmp_path, records=recs)
+    snap = snapshot(paths, RateTracker(), now=0.0)
+    # Only two.MOV (400 frames) is really left; three.MOV (1000) is exhausted.
+    assert snap["totals"]["queued"] == 1
+    assert snap["totals"]["eta_finish"] == round(400 / 10.0, 0)
