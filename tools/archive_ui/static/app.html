@@ -1,3 +1,40 @@
 <!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>archive-batch</title>
-<p>Placeholder. Task 12 replaces this.</p>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header>
+  <h1>archive-batch</h1>
+  <div id="totals" class="totals"></div>
+  <a id="grafana" href="http://pi-host.tailnet.example:3030" target="_blank"
+     rel="noreferrer">history &rarr;</a>
+</header>
+
+<div id="banners"></div>
+
+<section>
+  <h2>Lanes</h2>
+  <table id="lanes"><tbody></tbody></table>
+  <p class="note">Switches arrive in part 2, together with the scheduler change
+     that gives a lane added mid-run a worker.</p>
+</section>
+
+<div class="split">
+  <section>
+    <h2>Next up <span id="queued" class="dim"></span></h2>
+    <table id="queue"><tbody></tbody></table>
+  </section>
+  <section>
+    <h2>Failed <span id="failed" class="dim"></span></h2>
+    <table id="failures"><tbody></tbody></table>
+  </section>
+</div>
+
+<footer id="stamp" class="dim"></footer>
+<script src="/static/app.js"></script>
+</body>
+</html>
