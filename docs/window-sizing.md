@@ -59,14 +59,22 @@ measurement.
 
 | window | cooldown | position | overhead | wall | end-to-end | sustained | GPU busy |
 |---:|---|---|---:|---:|---:|---:|---:|
-| 500 | yes | first | 118.30 s | 1377.53 s | 4.883 | 5.097 | — |
-| 500 | yes | second | 109.91 s | 1373.06 s | 4.899 | 5.079 | 1290 s |
-| 500 | yes | first | 110.01 s | 1378.34 s | 4.880 | 5.057 | 1293 s |
-| 500 | no | first | 108.26 s | 1707.38 s | 3.939 | 4.977 | 1597 s |
-| 750 | no | second | 161.79 s | 1793.68 s | 3.750 | 3.649 | — |
-| 750 | yes | first | **161.10 s** | **1326.90 s** | **5.069** | **5.317** | 1226 s |
-| 750 | yes | second | 159.46 s | 1337.05 s | 5.030 | 5.262 | 1236 s |
-| 750 | no | second | 162.04 s | 1359.81 s | 4.946 | 5.189 | 1256 s |
+| 500 | yes | first | 118.30 s | 1377.53 s | 4.883 | 4.951 | — |
+| 500 | yes | second | 109.91 s | 1373.06 s | 4.899 | 4.934 | 1290 s |
+| 500 | yes | first | 110.01 s | 1378.34 s | 4.880 | 4.912 | 1293 s |
+| 500 | no | first | 108.26 s | 1707.38 s | 3.939 | 4.835 | 1597 s |
+| 750 | no | second | 161.79 s | 1793.68 s | 3.750 | 3.545 | — |
+| 750 | yes | first | **161.10 s** | **1326.90 s** | **5.069** | **5.165** | 1226 s |
+| 750 | yes | second | 159.46 s | 1337.05 s | 5.030 | 5.111 | 1236 s |
+| 750 | no | second | 162.04 s | 1359.81 s | 4.946 | 5.041 | 1256 s |
+
+Overhead, wall and end-to-end are as measured. The sustained column is rescaled
+by 5226/5380: these runs were taken with an interim version of the anchor fix
+that started counting at frame 1346 instead of at the sweep boundary at 1500.
+Both windows anchor on the same sweep at this clip length, so the correction is
+one constant factor applied to every row, and it is exact to under 0.1% — the
+two candidate anchors sit inside one socket flush, under a second apart in a
+span above a thousand. It changes no ranking and no gap.
 
 **Window 750 beats window 500 in every clean run**, on sustained rate and on
 end-to-end rate both, despite paying 50 s more first-window wait. Six of the
@@ -75,8 +83,8 @@ there is one at each window size, so dropping them does not favour either:
 
 | window | clean runs | sustained | end-to-end |
 |---:|---:|---|---|
-| 500 | 3 | 5.057 - 5.097 | 4.880 - 4.899 |
-| 750 | 3 | 5.189 - 5.317 | 4.946 - 5.069 |
+| 500 | 3 | 4.912 - 4.951 | 4.880 - 4.899 |
+| 750 | 3 | 5.041 - 5.165 | 4.946 - 5.069 |
 
 That is 750 ahead by about 3% end-to-end and 4% sustained, with no overlap
 between the two groups. The `window + 80` model predicted a gain in this
@@ -124,17 +132,25 @@ invert any ranking built from single runs, which is exactly what happened here.
 Three defects. The first two are fixed; the third is a method rule.
 
 **The sustained-rate metric rewarded a bigger window for bursting harder.** A
-windowed lane publishes a whole window at once when its sweep completes, so
-every frame in that window shares one timestamp. `rates()` in
-`tools/denoise-rate.py` began measuring at a fixed 20% of the clip. When that
-point fell inside a burst, the rest of the burst entered the average at no time
-cost, and the figure climbed with window size instead of with the lane's rate.
-It now skips a full window and then anchors on the *end* of the burst that
-straddles the skip point, so every frame counted arrived in a later sweep.
+windowed lane publishes a whole window when its sweep completes, and that
+window then flushes down the socket far faster than it was computed. `rates()`
+in `tools/denoise-rate.py` began measuring at a fixed 20% of the clip. When
+that point fell inside a flush, the rest of the window entered the average at
+flush speed rather than at sweep speed — up to 749 frames arriving in about a
+second instead of the two and a half minutes they took to produce. The figure
+therefore climbed with window size instead of with the lane's rate.
+
+It now rounds the skip point **up to a multiple of the window**, which is where
+the sweep boundaries are, so the measurement always spans whole sweeps. The
+obvious alternative — find the boundary by looking for frames that share a
+timestamp — does not work: the sink stamps each frame as its bytes land, so a
+window's frames are milliseconds apart, and a first attempt at this fix that
+compared timestamps moved the anchor by exactly one frame and did nothing.
+
 `tests/test_denoise_rate.py` asserts that two lanes at an identical real rate
-report an identical sustained rate at window 500 and at 750; the old code
-failed that by 30%. Note that this defect flattered 750, so it was concealing
-the result rather than producing it.
+report an identical sustained rate at window 500 and at 750; the old code read
+them as 1.20 and 1.27. Note that this defect flattered 750, so it was
+concealing the result rather than producing it.
 
 **Every figure came from a single run.** With a 1-in-4 chance of a sporadic 25%
 loss, one run per cell decides the ranking by chance. The table above runs each

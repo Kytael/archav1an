@@ -128,16 +128,25 @@ def rates(marks, t0, window=0, skip_frac=0.2):
     # the END of the burst that straddles the skip point, so every frame counted
     # arrived in a later burst and cost real time.
     start = max(int(frames * skip_frac), window)
-    after = [m for m in marks if m[0] > start]
-    if after:
-        t_anchor = after[0][1]
-        anchor_frame = max(m[0] for m in after if m[1] == t_anchor)
-        tail = [m for m in after if m[1] > t_anchor]
-        if tail:
-            span = tail[-1][1] - t_anchor
-            got = tail[-1][0] - anchor_frame
-            out["sustained_fps"] = round(got / span, 3) if span > 0 else None
-            out["sustained_over_frames"] = got
+    if window:
+        # A sweep produces exactly `window` frames, so the sweep boundaries sit
+        # at multiples of it. Rounding up puts the anchor on a boundary without
+        # having to guess one from arrival times: the sink stamps each frame as
+        # its bytes land, so a window's frames are milliseconds apart rather
+        # than simultaneous, and no equality test finds the edge.
+        start = -(-start // window) * window
+    anchor = None
+    for m in marks:
+        if m[0] <= start:
+            anchor = m
+        else:
+            break
+    tail = [m for m in marks if m[0] > start]
+    if anchor and tail:
+        span = tail[-1][1] - anchor[1]
+        got = tail[-1][0] - anchor[0]
+        out["sustained_fps"] = round(got / span, 3) if span > 0 else None
+        out["sustained_over_frames"] = got
     return out
 
 
