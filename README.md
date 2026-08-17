@@ -298,6 +298,25 @@ It binds this host's Tailscale address on port 9328 and serves the page at `/`,
 the whole snapshot as JSON at `/api/status`, and Prometheus text at `/metrics`.
 `--host` and `--port` override the defaults.
 
+To keep it across reboots, install it as a systemd user service:
+
+```bash
+./tools/install-archive-ui-service.sh
+```
+
+That writes `~/.config/systemd/user/archive-ui.service`, enables it and starts
+it. Re-run it after moving the checkout or the venv; it rewrites the unit and
+restarts the daemon. `VENV_PY` overrides the interpreter. Afterwards use
+`systemctl --user restart archive-ui` to pick up a code change, and
+`journalctl --user -u archive-ui` to read the log.
+
+`setup.sh` does not install this, deliberately. `setup.sh` builds encode
+dependencies on every host that denoises or encodes; the dashboard runs on one
+host and serves the whole fleet, so installing it everywhere would leave four
+idle daemons fighting for one port. The unit is generated rather than committed
+because `ExecStart` needs this checkout's absolute path, and the hosts do not
+agree on it.
+
 It is a **sidecar**: it reads `.archive-run/` and never talks to the batch
 process, so it can be started, stopped and restarted at any point in a run
 without touching it — and killing it does not touch the run either.
