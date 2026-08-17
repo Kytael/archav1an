@@ -26,7 +26,12 @@ def test_run_dir_follows_the_env_var(monkeypatch):
 def test_run_dir_defaults_into_the_repo(monkeypatch):
     monkeypatch.delenv("ARCHIVE_RUN_DIR", raising=False)
     paths = encode_dash.Paths.from_env()
-    assert paths.run_dir.endswith(os.path.join("archav1an", ".archive-run"))
+    # Against REPO, not against a directory called "archav1an". The point of
+    # this test is that the default lands in the checkout, and the checkout's
+    # name is the clone's business: asserting it fails for anyone who clones
+    # into a differently-named directory, which is how the public tree's own
+    # copy of this suite first failed.
+    assert paths.run_dir == os.path.join(encode_dash.REPO, ".archive-run")
 
 
 ROSTER = """
