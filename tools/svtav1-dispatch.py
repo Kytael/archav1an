@@ -391,7 +391,10 @@ def run_remote_denoise(ssh_target, remote_root, remote_python, callback, port,
         try:
             run_piped([sys.executable,
                        os.path.join(os.path.dirname(os.path.abspath(__file__)), "netstream.py"),
-                       "recv", "--port", str(port)],
+                       "recv", "--port", str(port),
+                       # The remote's vspipe log stays on the remote host, so
+                       # this socket is where a remote lane gets counted.
+                       "--progress"],
                       sink_cmd, source_label="netstream recv",
                       sink_label="SvtAv1EncApp",
                       source_stderr_log=os.path.join(temp_dir, f"{stem}_netstream.log"))
@@ -1127,7 +1130,10 @@ def main():
         if not denoise_serve:
             print(f"[svtav1-dispatch] Output IVF: {ivf_path}")
         sys.stdout.flush()
-        run_piped([vspipe_exe, "-c", "y4m", vpy_path, "-"], _sink_cmd,
+        # -p makes vspipe print "Frame: N/M" to stderr about once a second, and
+        # source_stderr_log below already sends that stderr to a file. Without
+        # it the log holds only the closing summary and there is no live rate.
+        run_piped([vspipe_exe, "-p", "-c", "y4m", vpy_path, "-"], _sink_cmd,
                   source_label="vspipe",
                   sink_label=("netstream send" if denoise_serve else "SvtAv1EncApp"),
                   source_stderr_log=os.path.join(temp_dir, f"{stem}_vspipe.log"))
