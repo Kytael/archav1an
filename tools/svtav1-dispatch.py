@@ -7,6 +7,7 @@ Pipes ffmpeg → SvtAv1EncApp, muxes Opus audio, then measures SSIMU2 scores
 """
 
 import os
+import re
 import socket
 import sys
 import shlex
@@ -277,11 +278,25 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
 # Encode helpers
 # ---------------------------------------------------------------------------
 
+# The frame counter vspipe -p and netstream --progress emit. Kept identical to
+# archive-batch.py:78 and archive_ui/liverate.py: three readers of one log
+# format disagreeing about what a counter looks like is a silent bug waiting.
+_PROGRESS = re.compile(r"^Frame:\s*\d+")
+
+
 def _print_log_tail(log_path, label, max_lines=40):
-    """Print the last max_lines of a captured stderr log, for post-mortem."""
+    """Print the last max_lines of a captured stderr log, for post-mortem.
+
+    Progress lines are dropped first. vspipe -p and netstream --progress emit
+    one about once a second, and text-mode readlines() splits on the carriage
+    return they use, so an unfiltered tail of a netstream log is 39 counters
+    and one summary -- the listening and accepted lines that say whether the
+    remote ever connected get pushed out of view.
+    """
     try:
         with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
-            tail = f.readlines()[-max_lines:]
+            tail = [ln for ln in f.readlines()
+                    if not _PROGRESS.match(ln.strip())][-max_lines:]
     except OSError:
         return
     if not tail:

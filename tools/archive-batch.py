@@ -72,9 +72,17 @@ _ROOT_CAUSE = re.compile(
     r"out of memory|Traceback|Segmentation fault|Killed|assert|"
     r"Error in execution|No such file|Permission denied", re.I)
 
-# vspipe -p and netstream --progress both emit this, about once a second, so
-# an unfiltered tail of a failed clip's log is guaranteed to be progress and
-# never the error. Dropped before the tail is taken.
+# vspipe -p and netstream --progress both emit this, about once a second.
+# Dropped before the tail is taken, for two reasons of different strength.
+#
+# The load-bearing one is the timeout kill: run_dispatch SIGKILLs the process
+# group, so the log simply stops, and its last lines are pure counters with no
+# error anywhere. Unfiltered, the reason recorded for a hung clip would be four
+# frame numbers.
+#
+# The weaker one is an ordinary failure. vspipe stops printing progress once it
+# errors, so the traceback does end up last -- but every counter still inside
+# the four-line tail is a slot not spent on context.
 _PROGRESS = re.compile(r"^Frame:\s*\d+")
 
 
