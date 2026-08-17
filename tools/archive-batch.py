@@ -72,6 +72,11 @@ _ROOT_CAUSE = re.compile(
     r"out of memory|Traceback|Segmentation fault|Killed|assert|"
     r"Error in execution|No such file|Permission denied", re.I)
 
+# vspipe -p and netstream --progress both emit this, about once a second, so
+# an unfiltered tail of a failed clip's log is guaranteed to be progress and
+# never the error. Dropped before the tail is taken.
+_PROGRESS = re.compile(r"^Frame:\s*\d+")
+
 
 def log_tail(temp_dir, stem, lines=4, limit=600):
     """What the dispatch logged for this clip, root cause first.
@@ -91,7 +96,8 @@ def log_tail(temp_dir, stem, lines=4, limit=600):
         path = os.path.join(temp_dir, f"{stem}{suffix}")
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                body = [ln.strip() for ln in fh.read().splitlines() if ln.strip()]
+                body = [ln.strip() for ln in fh.read().splitlines()
+                        if ln.strip() and not _PROGRESS.match(ln.strip())]
         except OSError:
             continue
         if not body:
