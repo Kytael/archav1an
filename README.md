@@ -285,6 +285,40 @@ Edit `prefilter/settings.txt` to customize filter settings.
 - For NVIDIA scripts: NVEncC installed and in PATH
 - For x265 scripts: VapourSynth with placebo plugin, x265
 
+## Archive run dashboard
+
+`tools/archive-ui.py` is a read-only status page for a batch run. Start it from
+the repo root:
+
+```bash
+/opt/archav1an/venv/bin/python tools/archive-ui.py
+```
+
+It binds this host's Tailscale address on port 9328 and serves the page at `/`,
+the whole snapshot as JSON at `/api/status`, and Prometheus text at `/metrics`.
+`--host` and `--port` override the defaults.
+
+It is a **sidecar**: it reads `.archive-run/` and never talks to the batch
+process, so it can be started, stopped and restarted at any point in a run
+without touching it — and killing it does not touch the run either.
+
+Two batch-side behaviours exist to feed it, and they are on by default:
+
+- `vspipe -p` and `netstream recv --progress` leave a frame counter in each
+  clip's log, which is where the **live** rate comes from. A rate computed from
+  finished clips would be up to three hours stale on the longest clip in the
+  archive, because a record only lands when a clip completes.
+- Each worker writes `.archive-run/lanes/<name>.json` naming the clip it holds
+  and whether it is denoising or waiting for an encode slot.
+
+Reading it: a blank rate is not zero. An absent measurement and a measured zero
+are different facts everywhere in this page, so a lane that has not started
+never looks like a lane that has stalled.
+
+History and alerting live in the Prometheus and Grafana on the Pi rather than in
+this page, which is why it carries no charts. Design and the part 2 plan:
+the design notes, which are not part of this tree.
+
 ## Reference docs
 
 Longer write-ups live in `docs/`:
