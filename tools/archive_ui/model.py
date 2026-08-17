@@ -191,7 +191,8 @@ def _lane(denoiser, beat, history, tracker, now):
         # stays, so this is the only place the change of clip is visible.
         tracker.forget(denoiser.name)
     else:
-        row["fps_live"] = tracker.sample(denoiser.name, produced, now)
+        row["fps_live"] = tracker.sample(denoiser.name, produced, now,
+                                         _smooth_for(denoiser, row["fps_recent"]))
     row["current"] = {
         "src": beat.get("src", ""),
         "frames": frames_total,
@@ -207,6 +208,35 @@ def _lane(denoiser, beat, history, tracker, now):
                   else None),
     }
     return row
+
+
+# How many sweeps of smoothing a windowed lane gets. With a step input any
+# finite window sees N or N+1 bursts depending on phase, so the reported rate
+# swings by 1/N: one sweep is a factor of two, which is the artefact itself.
+# Two and a half holds it inside 50% while a lane's figure still settles in
+# minutes rather than tens of minutes.
+SWEEPS_SMOOTHED = 2.5
+
+# Used only to size the smoothing window before a lane has ever finished a clip.
+# Deliberately at the slow end of the fleet's measured range (2.4-6.6 fps for
+# every lane except gpu1's 4090), because guessing slow makes the window too
+# long and guessing fast makes it too short -- and too short reproduces the
+# burst. It is never displayed and never reaches a reported figure.
+_ASSUMED_SLOW_FPS = 2.0
+
+
+def _smooth_for(denoiser, fps_recent):
+    """Seconds of smoothing this lane needs, or None for the tracker default.
+
+    A full-frame lane produces frames evenly and wants the short default, so its
+    number is current. A windowed lane steps by a whole window every
+    `window / fps` seconds and needs to span several of those steps, or the rate
+    reads zero for most of a sweep and then spikes -- at window 750 and 5.5 fps,
+    a 30 s window reads 0 for 106 s and then 25 fps against a true 5.5.
+    """
+    if not denoiser.window:
+        return None
+    return SWEEPS_SMOOTHED * denoiser.window / (fps_recent or _ASSUMED_SLOW_FPS)
 
 
 def _stem(src):

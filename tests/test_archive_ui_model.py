@@ -298,3 +298,22 @@ def test_an_exhausted_clip_is_not_counted_into_the_finish_estimate(tmp_path):
     # Only two.MOV (400 frames) is really left; three.MOV (1000) is exhausted.
     assert snap["totals"]["queued"] == 1
     assert snap["totals"]["eta_finish"] == round(400 / 10.0, 0)
+
+
+def test_a_windowed_lane_is_smoothed_over_sweeps_and_a_full_frame_lane_is_not():
+    """At window 750 and 5.5 fps a sweep is 136 s. A 30 s window would read 0
+    for 106 s of it and then 25 fps against a true 5.5 -- the exact artefact
+    the smoothing exists to remove, in the default value."""
+    from tools.archive_batch.roster import Denoiser
+    from tools.archive_ui.model import _smooth_for
+
+    windowed = Denoiser(name="2070s", host="local", backend="trt", device=0,
+                        tiling="auto", enabled=True, window=750, margin=32)
+    full = Denoiser(name="gpu1_4090", host="gpu1", backend="trt", device=0,
+                    tiling="none", enabled=True, port=5300)
+
+    assert _smooth_for(full, 15.2) is None, "a streaming lane needs no sweeps"
+    assert _smooth_for(windowed, 5.5) > 136.0, "must span more than one sweep"
+    # With no history yet it must guess slow, because guessing fast gives a
+    # window too short to contain a sweep and brings the burst straight back.
+    assert _smooth_for(windowed, None) > _smooth_for(windowed, 5.5)

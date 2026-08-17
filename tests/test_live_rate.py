@@ -98,3 +98,14 @@ def test_lanes_do_not_share_history():
     t.sample("b", 1000, now=0.0)
     t.sample("a", 50, now=5.0)
     assert t.sample("b", 1050, now=5.0) == 10.0
+
+
+def test_a_per_lane_window_overrides_the_default():
+    """One global value cannot serve both lane kinds: a full-frame lane wants a
+    short window so its figure is current, a windowed lane needs several
+    sweeps."""
+    t = RateTracker(smooth_s=10.0)
+    t.sample("w", 0, now=0.0, smooth_s=100.0)
+    t.sample("w", 100, now=20.0, smooth_s=100.0)
+    # Still inside the 100 s override, so the anchor is the first sample.
+    assert t.sample("w", 200, now=40.0, smooth_s=100.0) == 5.0

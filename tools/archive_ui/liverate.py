@@ -88,8 +88,16 @@ class RateTracker:
         self.smooth_s = smooth_s
         self._series = {}
 
-    def sample(self, lane, frames, now):
-        """Record a count and return the current rate, or None if unknown."""
+    def sample(self, lane, frames, now, smooth_s=None):
+        """Record a count and return the current rate, or None if unknown.
+
+        `smooth_s` overrides the default for this lane only. One global value
+        cannot serve both lane kinds: a full-frame lane streams frames evenly
+        and wants a short window so its figure is current, while a windowed lane
+        steps by a whole window and needs several sweeps. The caller knows which
+        it is, because the roster says so.
+        """
+        smooth_s = smooth_s or self.smooth_s
         series = self._series.setdefault(lane, deque())
         if series and frames < series[-1][1]:
             # The count went backwards: a new clip, or the same clip restarted
@@ -101,7 +109,7 @@ class RateTracker:
         # bounds the memory: everything younger than smooth_s is kept and
         # nothing else, so a lane holds smooth_s/poll_interval entries however
         # long the run lasts.
-        while len(series) > 2 and now - series[1][0] >= self.smooth_s:
+        while len(series) > 2 and now - series[1][0] >= smooth_s:
             series.popleft()
         if len(series) < 2:
             return None
