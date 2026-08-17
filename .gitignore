@@ -93,3 +93,6 @@ setb/
 *.AVI
 *.mkv
 *.MKV
+
+# Visual companion mockups (superpowers brainstorming)
+.superpowers/
