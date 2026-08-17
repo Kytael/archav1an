@@ -44,7 +44,11 @@ enabled = true
 # BSVD's MIGraphX wheels stop at cp312 (see setup/denoiser.sh).
 #
 # Enable this together with gpu1_4090 for roster A. It competes with the
-# encoders for CPU: measured 5.19 fps solo against 3.27 fps under encode load.
+# encoders for CPU, and the cost is bigger than it used to say here: 4.08 fps
+# denoising alone, against 2.37 fps while this host encodes at its production
+# slot count. The old claim of 5.19 fps solo is withdrawn -- that was a
+# short-run figure taken before the die heat soaks, and three full-clip runs
+# measured 4.32, 4.08 and 3.98. See docs/encode-capacity.md.
 [[denoiser]]
 name    = "igpu"
 host    = "local"
