@@ -87,7 +87,9 @@ def load_roster(path):
     denoisers = tuple(_denoiser(entry) for entry in data.get("denoiser", []))
     enc = data.get("encode", {})
     encode = EncodePool(host=enc.get("host", "local"),
-                        slots=int(enc.get("slots", 2)),
+                        # 6, not 2: a slot is held for a whole clip, so a count
+                        # below the number of enabled denoisers blocks a lane.
+                        slots=int(enc.get("slots", 6)),
                         lp_level=int(enc.get("lp_level", 6)))
     roster = Roster(denoisers=denoisers, encode=encode)
     _validate(roster)

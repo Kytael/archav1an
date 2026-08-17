@@ -71,8 +71,7 @@ encoder-host shows two independent runs. The encode side reproduced to within 0.
 
 ## encoder-host in the production configuration
 
-`slots = 5` at `lp_level = 6`, preset 4, with the iGPU lane loaded -- what the
-roster actually asks for.
+`slots = 5` at `lp_level = 6`, preset 4, with the iGPU lane loaded.
 
 | phase | rate |
 |---|---:|
@@ -90,6 +89,16 @@ at three: one stream gives 19.26 fps concurrent and five give 28.06, +46%. The
 denoiser takes CPU from the encoders, so a loaded machine has more slack for
 extra slots, not less. The loaded curve was measured at its endpoints only; the
 2- and 3-slot loaded points are not known.
+
+**The roster now asks for 6, one past the measured endpoint.** A slot is held
+for a whole clip -- staging and publishing included, not just the encode -- so a
+slot count below the number of enabled denoisers leaves a lane blocked with
+nothing to do. Six is one per lane the fleet can field, which makes the ceiling
+stop being a thing that starves a card. The denoise lanes never supply frames
+fast enough to saturate even five encoders, so the sixth costs nothing until a
+clip occupies it. Memory is the constraint to watch rather than threads: 4.8 GB
+a slot at level 6 is about 29 GB for a full six, and the 2070S lane at window
+750 measured 40.6 GB peak RSS on its own, out of the same 124 GB.
 
 ## Denoise lanes, end to end
 

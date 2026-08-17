@@ -96,20 +96,40 @@ margin  = 32
 enabled = false
 
 # --- the encode pool --------------------------------------------------------
-# Encoder-host's encode ceiling is about 26 fps and 2 slots reach it: one wide
-# encoder wastes a quarter of the machine, 2 gain 15%, 3 add nothing.
+# slots is NOT just an encoder count. A slot is held for a whole clip -- stage,
+# denoise and publish included -- so slots below the number of enabled denoisers
+# leaves a lane blocked with nothing to do. That is the reason for 6: it is one
+# per lane the fleet can field, so the ceiling never starves a card.
+#
+# It used to say 2, on an idle-machine measurement: the encode curve saturates
+# at 3 with nothing else running. Under load it does not. docs/encode-capacity.md
+# measured the production configuration and found 5 slots give 28.06 fps against
+# 19.26 for one, +46%, and says plainly that the answer is more slots rather than
+# fewer -- the loaded curve was only measured at its endpoints. 6 is one step past
+# what was measured, taken deliberately: the denoise lanes do not supply frames
+# fast enough to keep even 5 encoders saturated, so a spare slot costs nothing
+# until a clip actually occupies it.
+#
+# Memory is the thing to watch, not threads. Budget about 4.8 GB a slot at
+# lp_level 6, so a full 6 is ~29 GB, and the 2070S lane at window 750 measured
+# 40.6 GB peak RSS on its own. Both come out of the same 124 GB.
+#
+# The slot count is fixed when the run starts -- unlike `enabled`, which is
+# re-read before every clip. Changing it needs a restart. 6 is chosen so that
+# tuning it is not something anyone has to do mid-run.
 #
 # lp_level is SVT-AV1's --lp: a parallelism LEVEL in [0, 6], NOT a thread count.
 # It costs memory, not quality -- every level produced a bit-identical bitstream.
-# Level 6 is the default because this pool runs few slots, and a low level only
-# fills the machine when many slots share it: at 2 slots level 6 measured
-# 26.27 fps against 23.05 at level 4, while 3 slots at level 4 reached 25.88 for
-# 35% less memory. Budget about 4.8 GB a slot at level 6, 2.1 GB at level 4.
+# A low level only fills the machine when many slots share it: at 2 slots level 6
+# measured 26.27 fps against 23.05 at level 4, while 3 slots at level 4 reached
+# 25.88 for 35% less memory. Level 4 is therefore worth revisiting now that the
+# pool runs 6 slots, because that trade moves with the slot count and the figures
+# above were taken at 2 and 3. Budget 4.8 GB a slot at level 6, 2.1 GB at level 4.
 #
 # 0 lets the encoder choose from the core count. That is level 5 on a 16-thread
 # host and reaches 6 only at 24 threads, so 0 is not a synonym for 6.
 # See docs/lp-and-encoder-parallelism.md.
 [encode]
 host     = "local"
-slots    = 2
+slots    = 6
 lp_level = 6
