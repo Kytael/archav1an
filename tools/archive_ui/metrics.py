@@ -46,13 +46,28 @@ def render(snap):
     _metric(out, "archive_manifest_error",
             "1 when the manifest will not parse.", "gauge",
             [(None, int(bool(snap.get("manifest_error"))))])
-    _metric(out, "archive_clips_total", "Clips by status.", "gauge",
+    _metric(out, "archive_clips", "Clips by status.", "gauge",
             [({"status": s}, totals[s]) for s in ("done", "failed", "queued")])
-    _metric(out, "archive_frames_total",
-            "Frames in the manifest.", "gauge", [(None, totals["frames"])])
-    _metric(out, "archive_frames_done_total",
-            "Frames in clips that finished.", "counter",
-            [(None, totals["frames_done"])])
+
+    # Both frames families are omitted when the manifest yielded no clips, and
+    # that guard is load-bearing rather than tidy. frames_done is a counter, and
+    # model._clips returns no clips when the manifest is missing or will not
+    # parse -- so without this, an unreadable manifest drops the counter from
+    # 6.1M to 0 and the repair drops it back. Prometheus reads that pair as a
+    # reset followed by 6.1M frames of fresh progress, so increase() over the
+    # next four hours is nonsense and the ArchiveNoProgress alert cannot fire
+    # during exactly the window something is wrong. An absent metric says "I do
+    # not know"; a zero says "nothing has been done", and only one is true.
+    #
+    # Guarding on manifest_error is not enough: a missing manifest is
+    # deliberately not an error, so an unmounted run directory would zero the
+    # counter with no error flag raised anywhere.
+    if totals["clips"]:
+        _metric(out, "archive_frames",
+                "Frames in the manifest.", "gauge", [(None, totals["frames"])])
+        _metric(out, "archive_frames_done_total",
+                "Frames in clips that finished.", "counter",
+                [(None, totals["frames_done"])])
 
     _metric(out, "archive_lane_enabled",
             "1 when the roster has this lane switched on.", "gauge",
@@ -71,10 +86,10 @@ def render(snap):
             "and publishing included.", "gauge",
             [({"lane": l["name"]}, l["fps_recent"])
              for l in lanes if l["fps_recent"] is not None])
-    _metric(out, "archive_lane_clips_done",
+    _metric(out, "archive_lane_clips_done_total",
             "Clips this lane finished.", "counter",
             [({"lane": l["name"]}, l["clips_done"]) for l in lanes])
-    _metric(out, "archive_lane_phase_seconds",
+    _metric(out, "archive_lane_phase_ratio",
             "Share of a clip's wall time spent in each phase.", "gauge",
             [({"lane": l["name"], "phase": phase}, share)
              for l in lanes if l["phase_split"]

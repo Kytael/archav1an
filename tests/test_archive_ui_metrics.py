@@ -32,8 +32,8 @@ def _parse(text):
 def test_every_sample_parses_as_prometheus_text():
     got = _parse(render(SNAP))
     assert got["archive_batch_up"] == 1.0
-    assert got['archive_clips_total{status="done"}'] == 1204.0
-    assert got['archive_clips_total{status="queued"}'] == 2178.0
+    assert got['archive_clips{status="done"}'] == 1204.0
+    assert got['archive_clips{status="queued"}'] == 2178.0
     assert got["archive_frames_done_total"] == 6104882.0
 
 
@@ -76,11 +76,11 @@ def test_a_broken_roster_or_manifest_raises_the_flag():
 
 def test_every_metric_carries_help_and_type():
     text = render(SNAP)
-    for name in ("archive_batch_up", "archive_clips_total",
-                 "archive_frames_total", "archive_frames_done_total",
+    for name in ("archive_batch_up", "archive_clips",
+                 "archive_frames", "archive_frames_done_total",
                  "archive_lane_enabled", "archive_lane_busy",
                  "archive_lane_fps_live", "archive_lane_fps",
-                 "archive_lane_clips_done", "archive_lane_phase_seconds",
+                 "archive_lane_clips_done_total", "archive_lane_phase_ratio",
                  "archive_roster_error", "archive_manifest_error"):
         assert f"# HELP {name} " in text, f"{name} has no HELP"
         assert f"# TYPE {name} " in text, f"{name} has no TYPE"
@@ -90,6 +90,21 @@ def test_a_lane_name_with_a_quote_is_escaped():
     snap = dict(SNAP, lanes=[dict(SNAP["lanes"][0], name='we"ird')])
     text = render(snap)
     assert 'lane="we\\"ird"' in text
+
+
+def test_no_clips_omits_the_frames_counter_rather_than_zeroing_it():
+    """model._clips yields nothing when the manifest is missing or unparseable.
+    Emitting frames_done as 0 there would look to Prometheus like a counter
+    reset, and the repair would look like millions of frames of fresh progress
+    -- so increase() over the next four hours is nonsense and the no-progress
+    alert cannot fire during exactly the window something is wrong."""
+    snap = dict(SNAP, manifest_error="will not parse",
+                totals=dict(SNAP["totals"], clips=0, frames=0, frames_done=0))
+    text = render(snap)
+    assert "archive_frames_done_total" not in text
+    assert "archive_frames" not in text
+    # The error flag is still raised, so the absence is explained.
+    assert _parse(text)["archive_manifest_error"] == 1.0
 
 
 def test_an_empty_run_still_renders():
