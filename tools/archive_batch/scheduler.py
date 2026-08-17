@@ -6,19 +6,24 @@ is lost (spec 5.2). Disabling is a pause, not an exit -- a worker whose
 denoiser has gone away parks and keeps re-checking, so re-enabling the device
 mid-run puts it straight back to work (spec 7.1 gate 7).
 """
+import os
 import queue
 import threading
 import time
 
+from .heartbeat import clear as clear_heartbeat, write as write_heartbeat
 from .state import MAX_ATTEMPTS, Record, append_record
 from .transfer import TransferOutage
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 class Scheduler:
     POLL_SECONDS = 5.0      # how often a parked worker re-reads the roster
     BOUNCE_PAUSE = 0.5      # give another denoiser time to claim a bounced clip
 
-    def __init__(self, clips, roster_fn, runner, state_path, prior_failures=None):
+    def __init__(self, clips, roster_fn, runner, state_path, prior_failures=None,
+                 lanes_dir=None):
         """
         clips          -- ordered tuple of Clip still to do
         roster_fn      -- callable returning a fresh Roster, called before each clip
@@ -32,6 +37,9 @@ class Scheduler:
         self.roster_fn = roster_fn
         self.runner = runner
         self.state_path = state_path
+        # Where each worker publishes the clip it holds. None disables it, which
+        # is what the older tests and any caller predating the UI expect.
+        self.lanes_dir = lanes_dir
         self.done = 0
         self.failed = 0
         self.failures = []
@@ -152,9 +160,40 @@ class Scheduler:
                 return d
         return None
 
+    @staticmethod
+    def temp_dir_for(name, stem):
+        """Must match make_runner in archive-batch.py, which builds
+        Temp/<lane>/<stem>. The heartbeat carries it so the daemon never has to
+        rebuild this path and drift from it."""
+        return os.path.join(REPO, "Temp", name, stem)
+
+    def _beat(self, name, clip, state):
+        if not self.lanes_dir:
+            return
+        try:
+            write_heartbeat(self.lanes_dir, lane=name, src=clip.src,
+                            frames=clip.frames, state=state,
+                            started_at=time.time(), batch_pid=os.getpid(),
+                            attempt=self._attempts.get(clip.src, 0) + 1,
+                            temp_dir=self.temp_dir_for(name, clip.stem))
+        except Exception as exc:
+            # A dashboard must never be able to stop the run.
+            print(f"archive-batch: heartbeat for {name} failed: {exc!r}",
+                  flush=True)
+
+    def _unbeat(self, name):
+        if self.lanes_dir:
+            clear_heartbeat(self.lanes_dir, name)
+
     def _process(self, clip, denoiser):
-        self._slots.acquire()
         started = time.monotonic()
+        # Publish BEFORE acquiring, and say which of the two states this is.
+        # The acquire below can block for a whole clip, and a lane waiting on an
+        # encode slot must not be indistinguishable from one that is denoising:
+        # its ETA would be wrong for the entire wait.
+        self._beat(denoiser.name, clip, "waiting_for_slot")
+        self._slots.acquire()
+        self._beat(denoiser.name, clip, "working")
         raised = False
         reason = ""
         phases = {}
@@ -187,6 +226,7 @@ class Scheduler:
                 self.failures.append((clip.src, denoiser.name, reason))
         finally:
             self._slots.release()
+            self._unbeat(denoiser.name)
 
         try:
             append_record(self.state_path,

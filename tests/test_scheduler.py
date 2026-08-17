@@ -1,4 +1,5 @@
 import threading
+import time
 
 from tools.archive_batch.manifest import Clip
 from tools.archive_batch.roster import Denoiser, EncodePool, Roster
@@ -262,3 +263,74 @@ def test_a_denoiser_disabled_at_startup_can_still_be_enabled_later(tmp_path):
     s.run()
     assert len(seen) == 8
     assert b_ran.is_set(), "b never ran, so its worker was never created"
+
+
+def test_a_heartbeat_names_the_clip_and_clears_when_done(tmp_path):
+    from tools.archive_batch import heartbeat
+    seen = {}
+
+    def runner(clip, denoiser):
+        seen.update(heartbeat.read_all(str(tmp_path / "lanes")))
+        return True, 1.0, 100.0, 42, ""
+
+    s = Scheduler(_clips(1), lambda: _roster(D1), runner,
+                  state_path=tmp_path / "state.jsonl",
+                  lanes_dir=str(tmp_path / "lanes"))
+    s.run()
+    assert seen["a"]["src"] == "SetA/2001/f/c0.MOV"
+    assert seen["a"]["frames"] == 100
+    assert seen["a"]["state"] == "working"
+    assert heartbeat.read_all(str(tmp_path / "lanes")) == {}, "not cleared"
+
+
+def test_the_heartbeat_says_waiting_while_the_slot_is_held(tmp_path):
+    """A lane blocked on an encode slot must not look like one that is
+    denoising: its ETA would be wrong for the whole wait."""
+    from tools.archive_batch import heartbeat
+    lanes = str(tmp_path / "lanes")
+    started = threading.Event()
+    release = threading.Event()
+
+    def runner(clip, denoiser):
+        # Whichever lane gets in first holds the slot. Blocking only lane a
+        # would not be deterministic: nothing orders the lanes, so b can win
+        # the slot, finish its instant clip and leave nothing contended.
+        started.set()
+        release.wait(5)
+        return True, 1.0, 1.0, 1, ""
+
+    # One slot, two clips, two lanes: the second lane to take a clip cannot
+    # start until the first one finishes.
+    roster = Roster(denoisers=(D1, D2),
+                    encode=EncodePool(host="local", slots=1, lp_level=4))
+    s = Scheduler(_clips(2), lambda: roster, runner,
+                  state_path=tmp_path / "state.jsonl", lanes_dir=lanes)
+    t = threading.Thread(target=s.run)
+    t.start()
+    started.wait(5)
+    # started only says one lane is inside the runner; the other may not have
+    # reached its own heartbeat yet. Poll rather than read once, but stay
+    # inside the runner so the state we catch is a lane parked behind the other.
+    deadline = time.monotonic() + 5
+    while True:
+        parked = heartbeat.read_all(lanes)
+        waiting = [r for r in parked.values() if r["state"] == "waiting_for_slot"]
+        if waiting or time.monotonic() > deadline:
+            break
+        time.sleep(0.01)
+    release.set()
+    t.join(20)
+    assert waiting, f"no lane reported waiting_for_slot: {parked}"
+
+
+def test_a_raising_runner_still_clears_its_heartbeat(tmp_path):
+    from tools.archive_batch import heartbeat
+
+    def runner(clip, denoiser):
+        raise RuntimeError("boom")
+
+    s = Scheduler(_clips(1), lambda: _roster(D1), runner,
+                  state_path=tmp_path / "state.jsonl",
+                  lanes_dir=str(tmp_path / "lanes"))
+    s.run()
+    assert heartbeat.read_all(str(tmp_path / "lanes")) == {}

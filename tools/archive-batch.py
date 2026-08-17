@@ -35,6 +35,7 @@ RUN_DIR = os.environ.get("ARCHIVE_RUN_DIR") or os.path.join(REPO, ".archive-run"
 MANIFEST = os.path.join(RUN_DIR, "manifest-raw.tsv")
 STATE = os.path.join(RUN_DIR, "state.jsonl")
 ROSTER = os.path.join(RUN_DIR, "denoisers.toml")
+LANES = os.path.join(RUN_DIR, "lanes")
 STAGE_ROOT = os.path.join(REPO, "Temp", "_stage")
 # encoder-host's LAN address; tailscale caps at 1.5 Gbps. Overridable because the
 # remotes reach this host by different routes in different setups, and because
@@ -427,7 +428,7 @@ def main():
         print(f"[archive-batch] tracing to {os.path.join(RUN_DIR, 'trace')}, "
               f"one CSV per clip per lane")
     scheduler = Scheduler(todo, _roster, make_runner(roster.encode, trace=trace),
-                          STATE, prior_failures=state.failures)
+                          STATE, prior_failures=state.failures, lanes_dir=LANES)
 
     def on_signal(signum, _frame):
         # Restore the default so a second press aborts at once; the first press
