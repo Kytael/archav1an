@@ -6,6 +6,9 @@ part 2, writes exactly one of them. It never talks to the batch process.
 import os
 from dataclasses import dataclass
 
+# Three dirnames, not the two archive-batch.py uses: that file sits in tools/
+# and this one in tools/archive_ui/. Two would land on tools/ and the daemon
+# would read a .archive-run no batch ever writes.
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 9328 is free and sits in the 93xx range the fleet's other exporters use:
@@ -19,6 +22,9 @@ class Paths:
     state: str
     roster: str
     manifest: str
+    # Directories, not files, unlike the three above. lanes holds one heartbeat
+    # per denoiser; control is where part 2 drops request files for the batch to
+    # pick up, and nothing in part 1 touches it.
     lanes: str
     control: str
 
