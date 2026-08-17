@@ -2,17 +2,17 @@ import json
 import os
 import sys
 
-from tools import archive_ui
-from tools.archive_ui import Paths
-from tools.archive_ui.liverate import RateTracker
-from tools.archive_ui.model import snapshot
+from tools import encode_dash
+from tools.encode_dash import Paths
+from tools.encode_dash.liverate import RateTracker
+from tools.encode_dash.model import snapshot
 
 
 def test_run_dir_follows_the_env_var(monkeypatch):
     """The batch already reads ARCHIVE_RUN_DIR; the daemon must agree with it
     or the two look at different runs."""
     monkeypatch.setenv("ARCHIVE_RUN_DIR", "/tmp/somewhere")
-    paths = archive_ui.Paths.from_env()
+    paths = encode_dash.Paths.from_env()
     assert paths.run_dir == "/tmp/somewhere"
     assert paths.state == "/tmp/somewhere/state.jsonl"
     assert paths.roster == "/tmp/somewhere/denoisers.toml"
@@ -25,7 +25,7 @@ def test_run_dir_follows_the_env_var(monkeypatch):
 
 def test_run_dir_defaults_into_the_repo(monkeypatch):
     monkeypatch.delenv("ARCHIVE_RUN_DIR", raising=False)
-    paths = archive_ui.Paths.from_env()
+    paths = encode_dash.Paths.from_env()
     assert paths.run_dir.endswith(os.path.join("archav1an", ".archive-run"))
 
 
@@ -244,7 +244,7 @@ def test_the_failure_panel_keeps_the_newest_not_the_oldest(tmp_path):
     """Sliced from the front, the panel freezes on the first failures of the
     run and silently drops every later one, including clips that go on to
     exhaust their attempts. Over a few thousand clips a 1.5% transient rate fills it."""
-    from tools.archive_ui.model import FAILURE_PREVIEW
+    from tools.encode_dash.model import FAILURE_PREVIEW
     recs = [{"src": f"SetA/2001/a/c{i}.MOV", "status": "failed",
              "denoiser": "2070s", "wall_s": 1.0, "fps": 0.0, "out_bytes": 0,
              "reason": f"reason {i}"} for i in range(FAILURE_PREVIEW + 10)]
@@ -305,7 +305,7 @@ def test_a_windowed_lane_is_smoothed_over_sweeps_and_a_full_frame_lane_is_not():
     for 106 s of it and then 25 fps against a true 5.5 -- the exact artefact
     the smoothing exists to remove, in the default value."""
     from tools.archive_batch.roster import Denoiser
-    from tools.archive_ui.model import _smooth_for
+    from tools.encode_dash.model import _smooth_for
 
     windowed = Denoiser(name="2070s", host="local", backend="trt", device=0,
                         tiling="auto", enabled=True, window=750, margin=32)

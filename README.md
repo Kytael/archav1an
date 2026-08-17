@@ -285,13 +285,13 @@ Edit `prefilter/settings.txt` to customize filter settings.
 - For NVIDIA scripts: NVEncC installed and in PATH
 - For x265 scripts: VapourSynth with placebo plugin, x265
 
-## Archive run dashboard
+## Encode dashboard
 
-`tools/archive-ui.py` is a read-only status page for a batch run. Start it from
+`tools/encode-dash.py` is a read-only status page for a batch run. Start it from
 the repo root:
 
 ```bash
-/opt/archav1an/venv/bin/python tools/archive-ui.py
+/opt/archav1an/venv/bin/python tools/encode-dash.py
 ```
 
 It binds this host's Tailscale address on port 9328 and serves the page at `/`,
@@ -301,14 +301,14 @@ the whole snapshot as JSON at `/api/status`, and Prometheus text at `/metrics`.
 To keep it across reboots, install it as a systemd user service:
 
 ```bash
-./tools/install-archive-ui-service.sh
+./tools/install-encode-dash-service.sh
 ```
 
-That writes `~/.config/systemd/user/archive-ui.service`, enables it and starts
+That writes `~/.config/systemd/user/encode-dash.service`, enables it and starts
 it. Re-run it after moving the checkout or the venv; it rewrites the unit and
 restarts the daemon. `VENV_PY` overrides the interpreter. Afterwards use
-`systemctl --user restart archive-ui` to pick up a code change, and
-`journalctl --user -u archive-ui` to read the log.
+`systemctl --user restart encode-dash` to pick up a code change, and
+`journalctl --user -u encode-dash` to read the log.
 
 `setup.sh` does not install this, deliberately. `setup.sh` builds encode
 dependencies on every host that denoises or encodes; the dashboard runs on one

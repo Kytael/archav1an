@@ -1,4 +1,4 @@
-"""Where the archive UI daemon looks, and on which port it listens.
+"""Where the encode dashboard looks, and on which port it listens.
 
 Every path here is one the batch already owns. The daemon reads them and, from
 part 2, writes exactly one of them. It never talks to the batch process.
@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 
 # Three dirnames, not the two archive-batch.py uses: that file sits in tools/
-# and this one in tools/archive_ui/. Two would land on tools/ and the daemon
+# and this one in tools/encode_dash/. Two would land on tools/ and the daemon
 # would read a .archive-run no batch ever writes.
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

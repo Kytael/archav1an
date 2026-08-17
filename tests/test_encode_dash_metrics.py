@@ -1,4 +1,4 @@
-from tools.archive_ui.metrics import render
+from tools.encode_dash.metrics import render
 
 SNAP = {
     "batch": {"running": True, "pid": 42},
@@ -31,27 +31,27 @@ def _parse(text):
 
 def test_every_sample_parses_as_prometheus_text():
     got = _parse(render(SNAP))
-    assert got["archive_batch_up"] == 1.0
-    assert got['archive_clips{status="done"}'] == 1204.0
-    assert got['archive_clips{status="queued"}'] == 2178.0
-    assert got["archive_frames_done_total"] == 6104882.0
+    assert got["encode_batch_up"] == 1.0
+    assert got['encode_clips{status="done"}'] == 1204.0
+    assert got['encode_clips{status="queued"}'] == 2178.0
+    assert got["encode_frames_done_total"] == 6104882.0
 
 
 def test_a_lane_gets_one_label_set_per_metric():
     got = _parse(render(SNAP))
-    assert got['archive_lane_enabled{lane="gpu1_4090"}'] == 1.0
-    assert got['archive_lane_enabled{lane="2070s"}'] == 0.0
-    assert got['archive_lane_busy{lane="gpu1_4090"}'] == 1.0
-    assert got['archive_lane_busy{lane="2070s"}'] == 0.0
-    assert got['archive_lane_fps_live{lane="gpu1_4090"}'] == 15.6
+    assert got['encode_lane_enabled{lane="gpu1_4090"}'] == 1.0
+    assert got['encode_lane_enabled{lane="2070s"}'] == 0.0
+    assert got['encode_lane_busy{lane="gpu1_4090"}'] == 1.0
+    assert got['encode_lane_busy{lane="2070s"}'] == 0.0
+    assert got['encode_lane_fps_live{lane="gpu1_4090"}'] == 15.6
 
 
 def test_an_unknown_rate_is_omitted_rather_than_reported_as_zero():
     """Zero fps and 'no measurement yet' are different states, and a graph that
     conflates them shows a lane flatlining when it has simply not started."""
     text = render(SNAP)
-    assert 'archive_lane_fps_live{lane="2070s"}' not in text
-    assert 'archive_lane_fps{lane="2070s"}' not in text
+    assert 'encode_lane_fps_live{lane="2070s"}' not in text
+    assert 'encode_lane_fps{lane="2070s"}' not in text
 
 
 def test_a_measured_zero_is_reported_not_omitted():
@@ -61,27 +61,27 @@ def test_a_measured_zero_is_reported_not_omitted():
     could never fire."""
     snap = dict(SNAP, lanes=[dict(SNAP["lanes"][0], fps_live=0.0)])
     got = _parse(render(snap))
-    assert got['archive_lane_fps_live{lane="gpu1_4090"}'] == 0.0
+    assert got['encode_lane_fps_live{lane="gpu1_4090"}'] == 0.0
 
 
 def test_a_broken_roster_or_manifest_raises_the_flag():
     got = _parse(render(dict(SNAP, roster_error="duplicate port", lanes=[])))
-    assert got["archive_roster_error"] == 1.0
+    assert got["encode_roster_error"] == 1.0
     got = _parse(render(dict(SNAP, manifest_error="will not parse")))
-    assert got["archive_manifest_error"] == 1.0
+    assert got["encode_manifest_error"] == 1.0
     clean = _parse(render(SNAP))
-    assert clean["archive_roster_error"] == 0.0
-    assert clean["archive_manifest_error"] == 0.0
+    assert clean["encode_roster_error"] == 0.0
+    assert clean["encode_manifest_error"] == 0.0
 
 
 def test_every_metric_carries_help_and_type():
     text = render(SNAP)
-    for name in ("archive_batch_up", "archive_clips",
-                 "archive_frames", "archive_frames_done_total",
-                 "archive_lane_enabled", "archive_lane_busy",
-                 "archive_lane_fps_live", "archive_lane_fps",
-                 "archive_lane_clips_done_total", "archive_lane_phase_ratio",
-                 "archive_roster_error", "archive_manifest_error"):
+    for name in ("encode_batch_up", "encode_clips",
+                 "encode_frames", "encode_frames_done_total",
+                 "encode_lane_enabled", "encode_lane_busy",
+                 "encode_lane_fps_live", "encode_lane_fps",
+                 "encode_lane_clips_done_total", "encode_lane_phase_ratio",
+                 "encode_roster_error", "encode_manifest_error"):
         assert f"# HELP {name} " in text, f"{name} has no HELP"
         assert f"# TYPE {name} " in text, f"{name} has no TYPE"
 
@@ -101,10 +101,10 @@ def test_no_clips_omits_the_frames_counter_rather_than_zeroing_it():
     snap = dict(SNAP, manifest_error="will not parse",
                 totals=dict(SNAP["totals"], clips=0, frames=0, frames_done=0))
     text = render(snap)
-    assert "archive_frames_done_total" not in text
-    assert "archive_frames" not in text
+    assert "encode_frames_done_total" not in text
+    assert "encode_frames" not in text
     # The error flag is still raised, so the absence is explained.
-    assert _parse(text)["archive_manifest_error"] == 1.0
+    assert _parse(text)["encode_manifest_error"] == 1.0
 
 
 def test_an_empty_run_still_renders():
@@ -117,4 +117,4 @@ def test_an_empty_run_still_renders():
                         "eta_finish": None},
              "lanes": [], "queue": [], "failures": []}
     got = _parse(render(empty))
-    assert got["archive_batch_up"] == 0.0
+    assert got["encode_batch_up"] == 0.0

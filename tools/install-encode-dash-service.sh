@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install the archive dashboard as a systemd --user service on this host.
+# Install the encode dashboard as a systemd --user service on this host.
 #
 # The daemon is a sidecar, so nothing in a run depends on it. Without a unit it
 # still dies at the next reboot, and a fifteen-day run outlives more than one
@@ -20,23 +20,23 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 VENV_PY="${VENV_PY:-/opt/archav1an/venv/bin/python}"
 UNIT_DIR="$HOME/.config/systemd/user"
-UNIT="$UNIT_DIR/archive-ui.service"
+UNIT="$UNIT_DIR/encode-dash.service"
 
 [ -x "$VENV_PY" ] || {
     echo "no interpreter at $VENV_PY -- set VENV_PY to override" >&2
     exit 1
 }
-[ -f "$REPO/tools/archive-ui.py" ] || {
-    echo "no tools/archive-ui.py under $REPO" >&2
+[ -f "$REPO/tools/encode-dash.py" ] || {
+    echo "no tools/encode-dash.py under $REPO" >&2
     exit 1
 }
 
 # A daemon started by hand holds port 9328, so the unit would start, fail to
 # bind and retry forever. Say so here rather than leaving that in the journal.
-if pgrep -f "[a]rchive-ui\.py" > /dev/null; then
-    if ! systemctl --user is-active --quiet archive-ui.service; then
-        echo "archive-ui.py is already running outside systemd. Stop it first:" >&2
-        echo "  pkill -f archive-ui.py" >&2
+if pgrep -f "[e]ncode-dash\.py" > /dev/null; then
+    if ! systemctl --user is-active --quiet encode-dash.service; then
+        echo "encode-dash.py is already running outside systemd. Stop it first:" >&2
+        echo "  pkill -f encode-dash.py" >&2
         exit 1
     fi
 fi
@@ -44,7 +44,7 @@ fi
 mkdir -p "$UNIT_DIR"
 cat > "$UNIT" <<EOF
 [Unit]
-Description=Archive run dashboard (port 9328)
+Description=Encode dashboard for the archive batch (port 9328)
 After=network-online.target
 
 [Service]
@@ -57,7 +57,7 @@ Type=simple
 # tailscale at all needs --host on ExecStart instead.
 TimeoutStartSec=120
 ExecStartPre=/bin/sh -c 'until tailscale ip -4 > /dev/null 2>&1; do sleep 2; done'
-ExecStart=$VENV_PY $REPO/tools/archive-ui.py
+ExecStart=$VENV_PY $REPO/tools/encode-dash.py
 Restart=on-failure
 RestartSec=10
 
@@ -67,14 +67,14 @@ EOF
 
 echo "wrote $UNIT"
 systemctl --user daemon-reload
-systemctl --user enable archive-ui.service
+systemctl --user enable encode-dash.service
 # restart, not "enable --now": on a re-run after the checkout or the venv moved,
 # --now sees an active service and does nothing, so the old ExecStart keeps
 # running and the freshly written unit is a lie until the next reboot. The
 # daemon holds no run state, so restarting one that was already healthy costs a
 # second of page downtime and nothing else.
-systemctl --user restart archive-ui.service
-systemctl --user --no-pager --lines=0 status archive-ui.service || true
+systemctl --user restart encode-dash.service
+systemctl --user --no-pager --lines=0 status encode-dash.service || true
 
 # Without linger the user manager stops at logout and takes the daemon with it.
 if ! loginctl show-user "$(id -un)" 2>/dev/null | grep -q "^Linger=yes"; then
@@ -84,6 +84,6 @@ if ! loginctl show-user "$(id -un)" 2>/dev/null | grep -q "^Linger=yes"; then
 fi
 
 echo
-echo "  journalctl --user -u archive-ui -f      # follow"
-echo "  systemctl --user restart archive-ui     # after a code change"
-echo "  systemctl --user disable --now archive-ui   # remove"
+echo "  journalctl --user -u encode-dash -f      # follow"
+echo "  systemctl --user restart encode-dash     # after a code change"
+echo "  systemctl --user disable --now encode-dash   # remove"

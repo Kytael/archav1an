@@ -4,7 +4,7 @@ import threading
 import urllib.error
 import urllib.request
 
-from tools.archive_ui.server import make_server
+from tools.encode_dash.server import make_server
 
 SNAP = {"batch": {"running": False, "pid": None}, "roster_error": None,
         "manifest_error": None, "encode": {"slots": 6, "lp_level": 4},
@@ -59,7 +59,7 @@ def test_metrics_returns_prometheus_text():
         status, ctype, body = _get(base + "/metrics")
         assert status == 200
         assert ctype.startswith("text/plain")
-        assert "archive_batch_up 0" in body
+        assert "encode_batch_up 0" in body
     finally:
         srv.shutdown()
 
@@ -137,7 +137,7 @@ def test_a_symlink_out_of_the_static_directory_is_refused(tmp_path, monkeypatch)
     """A guard on the text of the path alone does not see a symlink, and the
     static directory is on disk beside a daemon that anything on the tailnet can
     reach. The check has to be on the resolved file."""
-    from tools.archive_ui import server as server_mod
+    from tools.encode_dash import server as server_mod
 
     secret = tmp_path / "secret"
     secret.write_text("root:x:0:0:", encoding="utf-8")
@@ -189,7 +189,7 @@ def test_a_failure_after_the_headers_does_not_splice_a_second_response():
     response to the first one's body, and the client reads that as a 200 whose
     body happens to contain "500 Internal Server Error" -- a failure that looks
     like success. Nothing may follow the first status line."""
-    from tools.archive_ui import server as server_mod
+    from tools.encode_dash import server as server_mod
 
     def half_sent(self, body, ctype):
         self.send_response(200)

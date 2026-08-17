@@ -1,4 +1,4 @@
-from tools.archive_ui.liverate import RateTracker, frames_from_log
+from tools.encode_dash.liverate import RateTracker, frames_from_log
 
 
 def _write(tmp_path, name, counts):

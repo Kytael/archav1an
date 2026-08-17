@@ -36,17 +36,17 @@ def render(snap):
     totals = snap["totals"]
     lanes = snap["lanes"]
 
-    _metric(out, "archive_batch_up",
+    _metric(out, "encode_batch_up",
             "1 when an archive-batch process is alive.", "gauge",
             [(None, int(bool(snap["batch"]["running"])))])
-    _metric(out, "archive_roster_error",
+    _metric(out, "encode_roster_error",
             "1 when the roster will not parse; every lane parks silently when "
             "this happens, so it is worth an alert.", "gauge",
             [(None, int(bool(snap["roster_error"])))])
-    _metric(out, "archive_manifest_error",
+    _metric(out, "encode_manifest_error",
             "1 when the manifest will not parse.", "gauge",
             [(None, int(bool(snap.get("manifest_error"))))])
-    _metric(out, "archive_clips", "Clips by status.", "gauge",
+    _metric(out, "encode_clips", "Clips by status.", "gauge",
             [({"status": s}, totals[s]) for s in ("done", "failed", "queued")])
 
     # Both frames families are omitted when the manifest yielded no clips, and
@@ -55,7 +55,7 @@ def render(snap):
     # parse -- so without this, an unreadable manifest drops the counter from
     # 6.1M to 0 and the repair drops it back. Prometheus reads that pair as a
     # reset followed by 6.1M frames of fresh progress, so increase() over the
-    # next four hours is nonsense and the ArchiveNoProgress alert cannot fire
+    # next four hours is nonsense and the EncodeNoProgress alert cannot fire
     # during exactly the window something is wrong. An absent metric says "I do
     # not know"; a zero says "nothing has been done", and only one is true.
     #
@@ -63,33 +63,33 @@ def render(snap):
     # deliberately not an error, so an unmounted run directory would zero the
     # counter with no error flag raised anywhere.
     if totals["clips"]:
-        _metric(out, "archive_frames",
+        _metric(out, "encode_frames",
                 "Frames in the manifest.", "gauge", [(None, totals["frames"])])
-        _metric(out, "archive_frames_done_total",
+        _metric(out, "encode_frames_done_total",
                 "Frames in clips that finished.", "counter",
                 [(None, totals["frames_done"])])
 
-    _metric(out, "archive_lane_enabled",
+    _metric(out, "encode_lane_enabled",
             "1 when the roster has this lane switched on.", "gauge",
             [({"lane": l["name"]}, int(bool(l["enabled"]))) for l in lanes])
-    _metric(out, "archive_lane_busy",
+    _metric(out, "encode_lane_busy",
             "1 when this lane holds a clip.", "gauge",
             [({"lane": l["name"]}, int(l["state"] in _BUSY)) for l in lanes])
-    _metric(out, "archive_lane_fps_live",
+    _metric(out, "encode_lane_fps_live",
             "Frames a second right now, from the lane's frame counter. Absent "
             "when nothing has been counted yet; zero means measured as zero.",
             "gauge",
             [({"lane": l["name"]}, l["fps_live"])
              for l in lanes if l["fps_live"] is not None])
-    _metric(out, "archive_lane_fps",
+    _metric(out, "encode_lane_fps",
             "End-to-end frames a second over recent finished clips, staging "
             "and publishing included.", "gauge",
             [({"lane": l["name"]}, l["fps_recent"])
              for l in lanes if l["fps_recent"] is not None])
-    _metric(out, "archive_lane_clips_done_total",
+    _metric(out, "encode_lane_clips_done_total",
             "Clips this lane finished.", "counter",
             [({"lane": l["name"]}, l["clips_done"]) for l in lanes])
-    _metric(out, "archive_lane_phase_ratio",
+    _metric(out, "encode_lane_phase_ratio",
             "Share of a clip's wall time spent in each phase.", "gauge",
             [({"lane": l["name"], "phase": phase}, share)
              for l in lanes if l["phase_split"]

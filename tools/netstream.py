@@ -216,7 +216,7 @@ def main():
     r.add_argument("--accept-timeout", type=float, default=300.0)
     r.add_argument("--progress", action="store_true",
                    help="print 'Frame: N' to stderr as frames arrive, for "
-                        "the archive UI's live rate. Off by default so "
+                        "the encode dashboard's live rate. Off by default so "
                         "nothing else changes.")
     r.add_argument("--progress-interval", type=float, default=1.0,
                    help="seconds between progress lines")

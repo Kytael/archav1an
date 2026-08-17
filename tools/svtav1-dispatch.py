@@ -279,7 +279,7 @@ def write_denoise_vpy(vpy_path, source, cachefile, model_name, tile, streams,
 # ---------------------------------------------------------------------------
 
 # The frame counter vspipe -p and netstream --progress emit. Kept identical to
-# archive-batch.py:78 and archive_ui/liverate.py: three readers of one log
+# archive-batch.py:78 and encode_dash/liverate.py: three readers of one log
 # format disagreeing about what a counter looks like is a silent bug waiting.
 _PROGRESS = re.compile(r"^Frame:\s*\d+")
 

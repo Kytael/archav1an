@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# tools/archive-ui.py
+# tools/encode-dash.py
 """The archive run's dashboard. Runs beside archive-batch, never inside it.
 
-    /opt/archav1an/venv/bin/python tools/archive-ui.py
+    /opt/archav1an/venv/bin/python tools/encode-dash.py
 
 Reads .archive-run/ and serves a page, a JSON snapshot and a Prometheus
 endpoint. It holds no state of its own except the rate history, so it can be
@@ -25,10 +25,10 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.archive_ui import DEFAULT_PORT, Paths          # noqa: E402
-from tools.archive_ui.liverate import RateTracker         # noqa: E402
-from tools.archive_ui.model import snapshot               # noqa: E402
-from tools.archive_ui.server import make_server           # noqa: E402
+from tools.encode_dash import DEFAULT_PORT, Paths          # noqa: E402
+from tools.encode_dash.liverate import RateTracker         # noqa: E402
+from tools.encode_dash.model import snapshot               # noqa: E402
+from tools.encode_dash.server import make_server           # noqa: E402
 
 
 def _tailscale_address():
@@ -76,13 +76,13 @@ def main():
     # not a tty -- so without this the address line stays in the buffer for the
     # whole fifteen days. That line is the only record of which interface it
     # bound, and it is the first thing to read when a remote curl times out.
-    print(f"[archive-ui] {paths.run_dir}", flush=True)
-    print(f"[archive-ui] http://{host}:{args.port}  "
+    print(f"[encode-dash] {paths.run_dir}", flush=True)
+    print(f"[encode-dash] http://{host}:{args.port}  "
           f"(hostname {socket.gethostname()})", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
-        print("\n[archive-ui] stopping", flush=True)
+        print("\n[encode-dash] stopping", flush=True)
     return 0
 
 

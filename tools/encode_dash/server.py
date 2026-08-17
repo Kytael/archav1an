@@ -20,7 +20,7 @@ _TYPES = {".html": "text/html; charset=utf-8",
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server_version = "archive-ui"
+    server_version = "encode-dash"
     # Pinned, not inherited. _fail abandons a response once its status line is
     # out and relies on the close to say it failed, which is only true at 1.0.
     # Raising this to 1.1 -- a natural thing to try for a page that polls every
@@ -65,7 +65,7 @@ class _Handler(BaseHTTPRequestHandler):
             # is noise, while a 500 is a fault. Without this line the only signal
             # that the daemon is failing is the scrape failing on the Pi, which
             # says a request went wrong and nothing about why.
-            print(f"[archive-ui] {path}: {exc!r}", file=sys.stderr, flush=True)
+            print(f"[encode-dash] {path}: {exc!r}", file=sys.stderr, flush=True)
             self._fail(500, repr(exc))
 
     def _fail(self, code, explain=None):
