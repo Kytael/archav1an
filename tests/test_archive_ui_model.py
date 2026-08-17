@@ -160,6 +160,28 @@ def test_failures_carry_the_reason_the_batch_already_recorded(tmp_path):
     assert snap["failures"][0]["attempts"] == 1
 
 
+def test_a_corrupt_manifest_is_reported_and_does_not_raise(tmp_path):
+    """Letting parse_manifest's ValueError out would 500 /metrics, which stops
+    the Prometheus scrape and every alert built on it -- a broken manifest
+    would switch off the monitoring instead of appearing on it."""
+    paths = _run_dir(tmp_path)
+    with open(paths.manifest, "w") as fh:
+        fh.write("SetA/2001/a/one.MOV\tnot-a-size\t30,600\t20.0\n")
+    snap = snapshot(paths, RateTracker(), now=0.0)
+    assert snap["manifest_error"]
+    assert snap["totals"]["clips"] == 0
+
+
+def test_a_missing_manifest_is_not_an_error(tmp_path):
+    """No manifest yet is the normal state before the first run. A banner for
+    it would be noise, and totals of zero already say it."""
+    paths = _run_dir(tmp_path)
+    os.remove(paths.manifest)
+    snap = snapshot(paths, RateTracker(), now=0.0)
+    assert snap["manifest_error"] is None
+    assert snap["totals"]["clips"] == 0
+
+
 def test_the_queue_keeps_the_batch_ordering(tmp_path):
     """Longest first inside a folder, as manifest.order_clips does. The page
     must not re-sort it, or 'next up' would be a lie."""

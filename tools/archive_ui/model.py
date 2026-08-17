@@ -30,7 +30,7 @@ RECENT_CLIPS = 10
 def snapshot(paths, tracker, now):
     """The whole page's data. `now` is injected so tests are deterministic."""
     roster, roster_error = _roster(paths.roster)
-    clips = _clips(paths.manifest)
+    clips, manifest_error = _clips(paths.manifest)
     state = load_state(paths.state)
     beats = read_heartbeats(paths.lanes)
     history, failures = _history(paths.state)
@@ -46,6 +46,7 @@ def snapshot(paths, tracker, now):
     return {
         "batch": _batch(beats),
         "roster_error": roster_error,
+        "manifest_error": manifest_error,
         "encode": ({"slots": roster.encode.slots,
                     "lp_level": roster.encode.lp_level} if roster else None),
         "totals": {
@@ -77,11 +78,22 @@ def _roster(path):
 
 
 def _clips(path):
+    """(clips, error). A missing manifest is not an error; a corrupt one is.
+
+    No manifest yet is the normal state before the first run, and a red banner
+    for it would be noise. A manifest that will not parse is different:
+    parse_manifest raises ValueError on a non-numeric size column, and the file
+    is hand-editable. Left to propagate it would 500 the /metrics endpoint,
+    which takes out the Prometheus scrape and every alert built on it -- so a
+    broken manifest would disable the monitoring rather than show up on it.
+    """
     try:
         with open(path, "r", encoding="utf-8") as fh:
-            return order_clips(parse_manifest(fh.read()))
+            return order_clips(parse_manifest(fh.read())), None
     except OSError:
-        return ()
+        return (), None
+    except ValueError as exc:
+        return (), f"manifest will not parse: {exc}"
 
 
 def _batch(beats):
