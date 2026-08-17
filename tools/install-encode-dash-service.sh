@@ -19,6 +19,13 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 VENV_PY="${VENV_PY:-/opt/archav1an/venv/bin/python}"
+# Where this deployment keeps its history, for the page's "history" link. It
+# arrives as an environment variable rather than a default in this file,
+# because a default here would be one site's hostname committed to the repo,
+# and from there into the published tree.
+GRAFANA_URL="${GRAFANA_URL:-}"
+ARGS=""
+[ -n "$GRAFANA_URL" ] && ARGS=" --grafana-url $GRAFANA_URL"
 UNIT_DIR="$HOME/.config/systemd/user"
 UNIT="$UNIT_DIR/encode-dash.service"
 
@@ -57,7 +64,7 @@ Type=simple
 # tailscale at all needs --host on ExecStart instead.
 TimeoutStartSec=120
 ExecStartPre=/bin/sh -c 'until tailscale ip -4 > /dev/null 2>&1; do sleep 2; done'
-ExecStart=$VENV_PY $REPO/tools/encode-dash.py
+ExecStart=$VENV_PY $REPO/tools/encode-dash.py$ARGS
 Restart=on-failure
 RestartSec=10
 

@@ -124,7 +124,29 @@ function renderBanners(snap) {
   }
 }
 
+// The history link is deployment configuration, so it arrives with the
+// snapshot rather than being written into the page. Only http and https are
+// accepted: the value reaches an href, and a javascript: URL there would run
+// on click. It comes from the operator's own command line today, which is an
+// argument for not checking that no longer holds the day part 2 lets the page
+// write anything back.
+function renderHistoryLink(url) {
+  const a = document.getElementById("grafana");
+  let ok = false;
+  if (url) {
+    try {
+      const p = new URL(url, window.location.href).protocol;
+      ok = p === "http:" || p === "https:";
+    } catch (e) {
+      ok = false;
+    }
+  }
+  if (ok) a.href = url; else a.removeAttribute("href");
+  a.hidden = !ok;
+}
+
 function apply(snap) {
+  renderHistoryLink(snap.grafana_url);
   renderBanners(snap);
   renderTotals(snap.totals);
   renderLanes(snap.lanes);

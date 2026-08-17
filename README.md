@@ -296,7 +296,10 @@ the repo root:
 
 It binds this host's Tailscale address on port 9328 and serves the page at `/`,
 the whole snapshot as JSON at `/api/status`, and Prometheus text at `/metrics`.
-`--host` and `--port` override the defaults.
+`--host` and `--port` override the defaults. `--grafana-url` points the page's
+"history" button at wherever you keep the long-term charts; leave it out and the
+button is hidden, because where the history lives is a property of your
+deployment rather than of this program.
 
 To keep it across reboots, install it as a systemd user service:
 
@@ -306,7 +309,10 @@ To keep it across reboots, install it as a systemd user service:
 
 That writes `~/.config/systemd/user/encode-dash.service`, enables it and starts
 it. Re-run it after moving the checkout or the venv; it rewrites the unit and
-restarts the daemon. `VENV_PY` overrides the interpreter. Afterwards use
+restarts the daemon. `VENV_PY` overrides the interpreter, and `GRAFANA_URL`
+puts `--grafana-url` on the generated `ExecStart` — passed at install time
+rather than defaulted in the script, so no site's hostname is committed here.
+Afterwards use
 `systemctl --user restart encode-dash` to pick up a code change, and
 `journalctl --user -u encode-dash` to read the log.
 

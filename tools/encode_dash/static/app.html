@@ -10,8 +10,11 @@
 <header>
   <h1>archive-batch</h1>
   <div id="totals" class="totals"></div>
-  <a id="grafana" href="http://pi-host.tailnet.example:3030" target="_blank"
-     rel="noreferrer">history &rarr;</a>
+  <!-- No href here. Where the history lives is a property of one deployment,
+       not of this program, and a hostname baked into the page is also a
+       hostname baked into the public tree. app.js fills it in from
+       --grafana-url and leaves it hidden when that flag is unset. -->
+  <a id="grafana" hidden target="_blank" rel="noreferrer">history &rarr;</a>
 </header>
 
 <div id="banners"></div>

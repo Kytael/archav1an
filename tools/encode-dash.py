@@ -32,7 +32,7 @@ from tools.encode_dash.server import make_server           # noqa: E402
 
 
 def _tailscale_address():
-    """This host's the tailnet CGNAT range address, or None.
+    """This host's tailnet address, or None.
 
     Never guess a LAN address instead: encoder-host's firewall refuses high ports
     there, so binding one would produce a daemon that answers only itself.
@@ -53,6 +53,10 @@ def main():
                     help="bind address; default is this host's Tailscale IP, "
                          "falling back to 127.0.0.1")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
+    ap.add_argument("--grafana-url", default=None,
+                    help="link the page's 'history' button at this URL. Left "
+                         "out, the button is hidden: where the history lives "
+                         "is a property of one deployment, not of this program.")
     ap.add_argument("--smooth", type=float, default=30.0,
                     help="seconds to average the live rate over. A windowed "
                          "lane bursts a whole window at once, so this must "
@@ -64,13 +68,18 @@ def main():
     paths = Paths.from_env()
     tracker = RateTracker(smooth_s=args.smooth)
 
+    # grafana_url is added here rather than inside snapshot() because it is not
+    # a measurement. Everything model.py produces is read off the run; this is
+    # a command-line flag, and mixing the two would put deployment settings in
+    # the middle of the thing that reports facts.
     srv = make_server(host, args.port,
                       # time.time(), not monotonic: the heartbeat records wall
                       # clock because a person reads it, and model._lane
                       # subtracts the two. Mixing the clocks would give every
                       # lane a nonsense elapsed time. A run measured in days
                       # does not care about a one-second NTP correction.
-                      lambda: snapshot(paths, tracker, time.time()))
+                      lambda: dict(snapshot(paths, tracker, time.time()),
+                                   grafana_url=args.grafana_url))
     # Flushed, like the error path in server.py. This daemon's stdout is a log
     # file or a journal, never a terminal, and print block-buffers when it is
     # not a tty -- so without this the address line stays in the buffer for the
