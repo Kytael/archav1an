@@ -6,6 +6,7 @@ arrive in part 2, which is also when the page's switches stop being inert.
 import json
 import os
 import posixpath
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote
 
@@ -20,6 +21,10 @@ _TYPES = {".html": "text/html; charset=utf-8",
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "archive-ui"
+    # Suppresses the "Python/3.14.7" that BaseHTTPRequestHandler appends to the
+    # Server header. This listens on the tailnet with no authentication, and the
+    # interpreter's patch version is not something a status page needs to say.
+    sys_version = ""
 
     # True once a status line has gone out. See _fail.
     _begun = False
@@ -47,6 +52,13 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             # One unreadable file must not end the daemon: it is the thing that
             # tells you the run is in trouble, so it has to outlive the trouble.
+            #
+            # Printed here rather than through log_error, which send_error also
+            # calls for every 404 -- and a 404 from anything scanning the tailnet
+            # is noise, while a 500 is a fault. Without this line the only signal
+            # that the daemon is failing is the scrape failing on the Pi, which
+            # says a request went wrong and nothing about why.
+            print(f"[archive-ui] {path}: {exc!r}", file=sys.stderr, flush=True)
             self._fail(500, repr(exc))
 
     def _fail(self, code, explain=None):
