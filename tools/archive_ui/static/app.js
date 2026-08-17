@@ -156,13 +156,31 @@ function apply(snap) {
 }
 
 async function poll() {
+  const stamp = document.getElementById("stamp");
+  let snap = null;
+
+  // Fetching and rendering are caught separately on purpose. Wrapping both in
+  // one try makes a renderer that throws -- a field this page has not been
+  // taught about yet -- report "daemon unreachable", so the page freezes on
+  // stale data and blames a daemon that is answering perfectly. Sending someone
+  // to the wrong machine is worse than saying nothing.
   try {
     const r = await fetch("/api/status", { cache: "no-store" });
-    if (r.ok) apply(await r.json());
-    else document.getElementById("stamp").textContent = `HTTP ${r.status}`;
+    if (r.ok) snap = await r.json();
+    else stamp.textContent = `HTTP ${r.status}`;
   } catch (e) {
     // A daemon restart mid-run is expected and must not need a page reload.
-    document.getElementById("stamp").textContent = "daemon unreachable — retrying";
+    stamp.textContent = "daemon unreachable — retrying";
+  }
+
+  if (snap) {
+    try {
+      apply(snap);
+    } catch (e) {
+      // The data arrived; this page could not draw it. Say so, and keep
+      // polling: the next snapshot may be renderable.
+      stamp.textContent = `page cannot render this snapshot: ${e.message}`;
+    }
   }
   setTimeout(poll, POLL_MS);
 }
