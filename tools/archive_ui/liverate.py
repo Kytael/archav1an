@@ -17,7 +17,12 @@ import os
 import re
 from collections import deque
 
-_PROGRESS = re.compile(r"Frame:\s*(\d+)")
+# Anchored to a line start, matching archive-batch.py:78, which filters these
+# same two logs. Both producers emit the counter at the start of a line, so the
+# anchor costs nothing and stops a diagnostic that happens to mention a frame
+# mid-sentence from being read as a count. Two readers of one file format
+# disagreeing about what that format is invites exactly one silent bug.
+_PROGRESS = re.compile(r"^Frame:\s*(\d+)", re.MULTILINE)
 
 # Both logs for one clip, most specific first. Order only breaks ties that
 # mtime cannot, which in practice does not happen: a clip is local or remote.

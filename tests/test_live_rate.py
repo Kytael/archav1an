@@ -29,6 +29,17 @@ def test_no_log_at_all_is_none(tmp_path):
     assert frames_from_log(str(tmp_path), "nothing") is None
 
 
+def test_a_diagnostic_mentioning_a_frame_is_not_read_as_a_count(tmp_path):
+    """Only a line that starts with the counter is a counter. A denoiser log
+    ends in diagnostics, and one naming a frame must not be mistaken for the
+    lane's progress -- that would show a rate jumping backwards to the frame
+    the error happened to name."""
+    (tmp_path / "MVI_5_vspipe.log").write_text(
+        "Frame: 4210/6726\n"
+        "Error Code 1: Cuda Runtime at Frame: 17 in deallocate\n")
+    assert frames_from_log(str(tmp_path), "MVI_5") == 4210
+
+
 def test_the_newer_log_wins_when_both_exist(tmp_path):
     import os
     (tmp_path / "MVI_4_vspipe.log").write_text("Frame: 5/10\n")
