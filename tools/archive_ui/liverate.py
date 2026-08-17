@@ -30,6 +30,13 @@ _SUFFIXES = ("_vspipe.log", "_netstream.log")
 
 # Enough to hold the last progress lines without reading a log that has grown
 # to a quarter of a megabyte over three hours.
+#
+# Known and accepted: if more than 8 KB of non-progress output follows the last
+# counter, this returns None and the lane renders as unknown. Reaching that
+# needs the producer to have stopped emitting progress and then printed 8 KB,
+# which means the clip has already crashed or finished -- on a live lane the
+# tail always holds the last few hundred seconds of counters. Unknown is the
+# right answer for a dead clip anyway; a frozen count that never moves is worse.
 _TAIL_BYTES = 8192
 
 
