@@ -1,8 +1,8 @@
 # Window size and denoise throughput
 
-Status: measured 2026-08-16 on gpu3, 8 runs. **The window curve this document
-used to report does not exist. Window 750 does not regress. See "What was wrong
-before".**
+Status: measured 2026-08-16 — 8 runs on gpu3, 4 on encoder-host. **The window curve
+this document used to report does not exist. Window 750 does not regress; it is
+the faster value on both cards tested. See "What was wrong before".**
 
 A card that cannot hold the full-frame BSVD state runs tile-sequential and
 windowed. `window` is how many output frames one sweep produces. It sets
@@ -97,6 +97,44 @@ host, not throughput. Nothing in the traces shows the headroom hurting: swap
 stayed at zero, and `pgscan_direct`, `pgsteal_direct` and `allocstall_*` stayed
 at **zero for every run**, sampled at 1 Hz. There is no reclaim pressure at
 7 GB of headroom on this host.
+
+## Measured: encoder-host, RTX 2070 SUPER, tile auto, margin 32
+
+Same clip, same instrument, 2026-08-16. Windows alternated so neither took a
+favoured position, each run gated to start at 40 °C. **Two runs per window, not
+the three this document asks for below** — the sweep was stopped early to give
+the machine back.
+
+| window | run | overhead | wall | end-to-end | sustained | peak RSS |
+|---:|---|---:|---:|---:|---:|---:|
+| 500 | 1 | 99.74 s | 1289.33 s | 5.217 | 5.769 | 29.1 GB |
+| 500 | 2 | 99.79 s | 1282.41 s | 5.245 | 5.803 | 29.1 GB |
+| 750 | 1 | 141.79 s | **1227.24 s** | **5.481** | **6.408** | 40.6 GB |
+| 750 | 2 | 142.11 s | 1227.62 s | 5.479 | 6.410 | 40.5 GB |
+
+**750 wins here too, by more than on gpu3**: 4.7% end-to-end and 10.6%
+sustained. The card's configured value is 750, and this is the first
+measurement that supports it.
+
+The reproducibility is the other result. The two 750 runs differ by 0.03% in
+wall time and the two 500 runs by 0.5%. **gpu3's sporadic slow run did not
+appear in four runs here.** That is not proof it cannot, but it separates the
+two hosts: the 2070S is a desktop card with its own cooling, in a machine that
+owns its GPU, where gpu3 is a laptop whose card is shared with a Windows
+desktop the WSL2 distro does not control. It is consistent with the contention
+hypothesis in the TODO below.
+
+Window 750 costs 40.6 GB against 29.1 GB here. On 124 GB neither matters, which
+is why this host should take the faster value and gpu3 — where 750 leaves
+7.1 GB spare — is the one with a real decision to make.
+
+One anomaly, recorded because it is unexplained rather than because it mattered:
+the first 500 run took 1.77 M pages of direct reclaim between minutes 5 and 11
+while `MemAvailable` sat at 88 GB. Reclaiming with 88 GB free points at a
+zone-constrained allocation, not at memory pressure — plausibly DMA32 or the
+pinned memory the iGPU shares with the system. `allocstall_normal` stayed at 0,
+so the stall counter for whichever zone it was went unsampled. The run was not
+slow and the other three showed nothing.
 
 ## The sporadic slow run
 
@@ -203,17 +241,17 @@ unwindowed, so the burst defect never applied to them and their figures stand.
   which is not true — gpu2 is 300. On the measurements above it is also the
   slower of the two values tested, by about 3% end-to-end. It is defensible
   only as the low-memory choice: 27.8 GB against 39.3 GB.
-- **2070s 750** has no recorded rationale, but gpu3's data no longer argues
-  against it. encoder-host has 124 GB against gpu3's 47, so the memory cost that
-  is the real argument for 500 does not apply there. The value has still never
-  been measured on that card.
+- **2070s 750** had no recorded rationale, and now has one: measured on the
+  card, it is 4.7% faster end-to-end and 10.6% faster sustained than 500, and
+  its 40.6 GB is free on a 124 GB host. Keep it. The value was right by
+  accident for two years, which is not the same as being justified.
 
 ## TODO
 
-1. **Test the 2070S at 500 against its configured 750.** Highest-value single
-   test: the fleet's best remaining windowed lane, on a host with enough RAM
-   that 750 costs it nothing. Run each window at least three times. Needs
-   encoder-host free.
+1. **Add the third run on the 2070S.** Two per window is what the sweep got
+   before it was stopped, and two cannot show a 1-in-4 event any better than
+   one can. The ranking is not in doubt — the gap is 4.7% and the spread is
+   0.03% — but the "no slow run on this host" claim rests on four runs.
 2. **Find the sporadic slow run.** Sample per-process GPU use during a sweep
    (`nvidia-smi pmon`) and log what else holds the device. If it is contention
    from the Windows side, the archive batch inherits it on every windowed lane
