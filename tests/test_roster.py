@@ -84,10 +84,12 @@ def test_rejects_a_core_count_in_lp_level(tmp_path):
         load_roster(_write(tmp_path, text))
 
 
-def test_lp_level_defaults_to_six(tmp_path):
+def test_lp_level_defaults_to_four(tmp_path):
+    # 4, not 6: no denoise lane supplies frames fast enough to need a wider
+    # encoder, and level 6 costs 4.8 GB a slot against 2.1 GB.
     text = GOOD.replace("lp_level = 6\n", "")
     r = load_roster(_write(tmp_path, text))
-    assert r.encode.lp_level == 6
+    assert r.encode.lp_level == 4
 
 
 def test_accepts_lp_level_zero(tmp_path):

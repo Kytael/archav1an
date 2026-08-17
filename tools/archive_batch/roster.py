@@ -59,11 +59,11 @@ class EncodePool:
     slots: int
     # SVT-AV1's --lp: a parallelism LEVEL in [0, 6], not a thread count. 0 lets
     # the encoder pick from the core count, which on a 16-thread host is level 5
-    # and only reaches 6 at 24 threads. 6 is the default here because the pool
-    # runs few slots: at 2 slots level 6 measured 26.27 fps against 23.05 at
-    # level 4, and only 3 or more slots close that gap. See
-    # docs/lp-and-encoder-parallelism.md. The cost is memory, ~4.8 GB a slot.
-    lp_level: int = 6
+    # and only reaches 6 at 24 threads. 4 is the default because no denoise lane
+    # supplies frames fast enough to need a wider encoder, and the width costs
+    # 4.8 GB a slot against 2.1 GB at level 4 -- 29 GB against 13 GB across the
+    # 6-slot pool. See docs/lp-and-encoder-parallelism.md.
+    lp_level: int = 4
 
 
 @dataclass(frozen=True)
@@ -90,7 +90,7 @@ def load_roster(path):
                         # 6, not 2: a slot is held for a whole clip, so a count
                         # below the number of enabled denoisers blocks a lane.
                         slots=int(enc.get("slots", 6)),
-                        lp_level=int(enc.get("lp_level", 6)))
+                        lp_level=int(enc.get("lp_level", 4)))
     roster = Roster(denoisers=denoisers, encode=encode)
     _validate(roster)
     return roster

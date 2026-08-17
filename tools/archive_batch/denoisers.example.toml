@@ -119,12 +119,24 @@ enabled = false
 # tuning it is not something anyone has to do mid-run.
 #
 # lp_level is SVT-AV1's --lp: a parallelism LEVEL in [0, 6], NOT a thread count.
-# It costs memory, not quality -- every level produced a bit-identical bitstream.
-# A low level only fills the machine when many slots share it: at 2 slots level 6
-# measured 26.27 fps against 23.05 at level 4, while 3 slots at level 4 reached
-# 25.88 for 35% less memory. Level 4 is therefore worth revisiting now that the
-# pool runs 6 slots, because that trade moves with the slot count and the figures
-# above were taken at 2 and 3. Budget 4.8 GB a slot at level 6, 2.1 GB at level 4.
+# It costs memory, not quality -- every level produced a bit-identical bitstream,
+# so changing it never makes one clip differ from another.
+#
+# 4, not 6, and the reason is supply. An encoder here never runs flat out: it
+# consumes frames at the rate its denoiser produces them, and the fastest lane in
+# the fleet is gpu1's 4090 at 14.24 fps under load, with every other lane between
+# 2.4 and 6.6. A wider encoder cannot help a stream that is starved. What it does
+# do is cost memory: 4.8 GB a slot at level 6 against 2.1 GB at level 4, which
+# across 6 slots is 29 GB against 13 GB.
+#
+# The old default was 6, chosen when the pool ran 2 slots -- at 2 slots level 6
+# measured 26.27 fps against 23.05 at level 4, and 3 slots at level 4 reached
+# 25.88 for 35% less memory. Those are saturated-encoder figures and they stop
+# applying once the denoisers are the limit.
+#
+# One thing to watch on the first real run: the table has no single-slot level-4
+# point, so whether one level-4 stream keeps up with the 4090's 14.24 fps while
+# other slots are busy is untested. If that lane looks throttled, raise this.
 #
 # 0 lets the encoder choose from the core count. That is level 5 on a 16-thread
 # host and reaches 6 only at 24 threads, so 0 is not a synonym for 6.
@@ -132,4 +144,4 @@ enabled = false
 [encode]
 host     = "local"
 slots    = 6
-lp_level = 6
+lp_level = 4

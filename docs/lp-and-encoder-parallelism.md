@@ -155,11 +155,23 @@ Applied 2026-08-13.
 1. **`run_linux_dance_HQ_crf27.sh` passes `--lp 0`.** The `LP=$(nproc)` block is gone. On
    encoder-host this is the same level 6 as before, at 22.11 fps against 22.90, inside noise. On
    the 16-thread hosts it is level 5 rather than the clamped 6 — see the auto table above.
-2. **`roster.py` field `threads_per_slot` is now `lp_level`, default 6.** `dispatch_cmd.py`
+2. **`roster.py` field `threads_per_slot` is now `lp_level`, default 4.** `dispatch_cmd.py`
    passes it straight to `--lp`, so a roster now names a level instead of a thread count.
-   Level 6 rather than 4 because the pool runs 2 slots: at 2 slots level 6 measured 26.27 fps
-   against 23.05 at level 4, and only 3 or more slots close that gap. Level 4 remains the
-   better setting *if* `slots` ever goes to 3, where it reaches 25.88 fps for 35% less memory.
+   The default was 6 while the pool ran 2 slots, on the reading that at 2 slots level 6
+   measured 26.27 fps against 23.05 at level 4, and only 3 or more slots closed that gap.
+
+   **That reading was retired on 2026-08-16, and the table above is not what decides it.**
+   Every row here is a saturated encoder, fed as fast as it will take frames. In the archive
+   batch it never is: an encoder consumes frames at the rate of the denoiser feeding it, and
+   the fastest lane in the fleet is gpu1's 4090 at 14.24 fps under load, with every other
+   lane between 2.4 and 6.6 (`docs/encode-capacity.md:62-82`). A wider encoder cannot speed up
+   a starved stream. The width still costs memory — 4.8 GB a slot against 2.1 GB — which
+   across the 6-slot pool is 29 GB against 13 GB.
+
+   One gap in the evidence, left open deliberately: there is no single-slot level-4 row above,
+   so whether one level-4 stream keeps up with 14.24 fps while other slots are busy is
+   untested. If the 4090 lane looks throttled on the first real run, raise the level. It is
+   changeable per clip now, so that costs nothing but the decision.
 3. **The thread budget is gone, and `oversubscribe` with it.** `slots * threads_per_slot <=
    cores * oversubscribe` was arithmetic over a value the encoder ignores, and no thread
    budget replaces it: a single level-4 encoder already asks for 87 threads on 32 cores.
