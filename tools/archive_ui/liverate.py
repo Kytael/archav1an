@@ -15,6 +15,7 @@ channel captured locally carries only the remote dispatch's own output.
 """
 import os
 import re
+import threading
 from collections import deque
 
 # Anchored to a line start, matching archive-batch.py:78, which filters these
@@ -87,6 +88,19 @@ class RateTracker:
     def __init__(self, smooth_s=30.0):
         self.smooth_s = smooth_s
         self._series = {}
+        # One tracker is shared by every request thread of a ThreadingHTTPServer,
+        # and sample() is a check-then-index across bytecode boundaries: a
+        # clear() from a concurrent poll landing between `len(series) < 2` and
+        # `series[0]` empties the deque and raises IndexError, which surfaces as
+        # a 500 on /metrics and breaks the scrape.
+        #
+        # The GIL makes each deque operation atomic; it does not make the
+        # sequence atomic. A stress run finds nothing because the window is a
+        # few bytecodes wide and needs a clip restart to coincide with it -- that
+        # is evidence of low probability, not of safety. Demonstrated with a
+        # deterministic two-thread interleave. state.py uses the same pattern
+        # for the same reason.
+        self._lock = threading.Lock()
 
     def sample(self, lane, frames, now, smooth_s=None):
         """Record a count and return the current rate, or None if unknown.
@@ -98,23 +112,24 @@ class RateTracker:
         it is, because the roster says so.
         """
         smooth_s = smooth_s or self.smooth_s
-        series = self._series.setdefault(lane, deque())
-        if series and frames < series[-1][1]:
-            # The count went backwards: a new clip, or the same clip restarted
-            # after a yield. The old series describes different work.
-            series.clear()
-        series.append((now, frames))
-        # Keep one sample older than the smoothing window, and drop the rest,
-        # so the slope always spans at least smooth_s once it can. This is what
-        # bounds the memory: everything younger than smooth_s is kept and
-        # nothing else, so a lane holds smooth_s/poll_interval entries however
-        # long the run lasts.
-        while len(series) > 2 and now - series[1][0] >= smooth_s:
-            series.popleft()
-        if len(series) < 2:
-            return None
-        t0, f0 = series[0]
-        t1, f1 = series[-1]
+        with self._lock:
+            series = self._series.setdefault(lane, deque())
+            if series and frames < series[-1][1]:
+                # The count went backwards: a new clip, or the same clip
+                # restarted after a yield. The old series describes other work.
+                series.clear()
+            series.append((now, frames))
+            # Keep one sample older than the smoothing window, and drop the
+            # rest, so the slope always spans at least smooth_s once it can.
+            # This is what bounds the memory: everything younger than smooth_s
+            # is kept and nothing else, so a lane holds smooth_s/poll_interval
+            # entries however long the run lasts.
+            while len(series) > 2 and now - series[1][0] >= smooth_s:
+                series.popleft()
+            if len(series) < 2:
+                return None
+            t0, f0 = series[0]
+            t1, f1 = series[-1]
         span = t1 - t0
         if span <= 0:
             return None
@@ -123,4 +138,5 @@ class RateTracker:
     def forget(self, lane):
         """Drop a lane's history when it stops working, so the next clip does
         not inherit a slope from the last one."""
-        self._series.pop(lane, None)
+        with self._lock:
+            self._series.pop(lane, None)

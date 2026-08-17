@@ -21,6 +21,13 @@ _TYPES = {".html": "text/html; charset=utf-8",
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "archive-ui"
+    # Pinned, not inherited. _fail abandons a response once its status line is
+    # out and relies on the close to say it failed, which is only true at 1.0.
+    # Raising this to 1.1 -- a natural thing to try for a page that polls every
+    # two seconds -- keeps the connection open, so _begun survives into the next
+    # request on that socket and the second request gets no reply at all.
+    # Stating it here makes the comment in _fail true by construction.
+    protocol_version = "HTTP/1.0"
     # Suppresses the "Python/3.14.7" that BaseHTTPRequestHandler appends to the
     # Server header. This listens on the tailnet with no authentication, and the
     # interpreter's patch version is not something a status page needs to say.
