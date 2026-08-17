@@ -36,6 +36,81 @@ def _report(label, nbytes, elapsed):
           f"({rate:.0f} MB/s)", file=sys.stderr)
 
 
+class _FrameCounter:
+    """Frames seen so far, from the y4m header and arithmetic -- not from
+    scanning for the FRAME marker.
+
+    Scanning would give false positives on payload bytes that happen to spell
+    FRAME, and would miss a marker straddling two reads. The header carries the
+    geometry, so the frame stride is exact and a division answers it.
+
+    `frames` is -1 until the header parses, which is how "cannot count" is told
+    apart from "counted zero".
+    """
+
+    _HEADER_LIMIT = 512     # a y4m header is well under this; do not buffer a
+                            # whole stream waiting for a newline that never comes
+
+    def __init__(self):
+        self.frames = -1
+        self._stride = 0
+        self._body = 0
+        self._head = bytearray()
+
+    def feed(self, chunk):
+        if self._stride:
+            self._body += len(chunk)
+            self.frames = self._body // self._stride
+            return
+        self._head += bytes(chunk)
+        end = self._head.find(b"\n")
+        if end < 0:
+            if len(self._head) > self._HEADER_LIMIT:
+                self._head = bytearray()    # not y4m; give up quietly
+                self.feed = lambda _chunk: None
+            return
+        stride = self._stride_from(bytes(self._head[:end]))
+        if stride is None:
+            # The stream still has to reach the encoder. A counter that cannot
+            # work must go quiet, never take the encode down with it.
+            self._head = bytearray()
+            self.feed = lambda _chunk: None
+            return
+        self._stride = stride
+        self._body = len(self._head) - (end + 1)
+        self._head = bytearray()
+        self.frames = self._body // self._stride
+
+    @staticmethod
+    def _stride_from(header):
+        """Bytes per frame including the "FRAME\\n" marker, or None."""
+        if not header.startswith(b"YUV4MPEG2"):
+            return None
+        width = height = 0
+        depth = 1
+        try:
+            for tag in header.split():
+                if tag[:1] == b"W":
+                    width = int(tag[1:] or 0)
+                elif tag[:1] == b"H":
+                    height = int(tag[1:] or 0)
+                elif tag[:1] == b"C":
+                    # C420p10 and C420p16 are two bytes a sample; C420mpeg2 and
+                    # friends are one. Getting this wrong halves or doubles
+                    # every remote lane's rate.
+                    depth = 2 if (b"p10" in tag or b"p12" in tag
+                                  or b"p16" in tag) else 1
+        except ValueError:
+            # A truncated or corrupt W/H tag. Go quiet like any other header
+            # this cannot read; never let the counter kill the encode.
+            return None
+        if width <= 0 or height <= 0:
+            return None
+        # 4:2:0 only, which is all this pipeline carries: svtav1-dispatch's
+        # generated VPY converts to YUV420P10 precisely so the y4m stays 4:2:0.
+        return len(b"FRAME\n") + width * height * 3 // 2 * depth
+
+
 def recv(args):
     srv = socket.socket()
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -61,13 +136,34 @@ def recv(args):
     total = 0
     t0 = time.monotonic()
     conn.settimeout(None)
+    # A remote denoise lane has no local frame counter otherwise: the remote
+    # host's vspipe writes its log on the remote disk, and the ssh channel this
+    # side captures carries only the remote dispatch's own output. Counting
+    # arrivals here is also the truer figure -- it is frames that landed.
+    #
+    # The geometry is not passed in. dispatch does not know it: it has no width
+    # or height anywhere and simply pipes y4m. The stream announces itself in
+    # its first line, so this reads it there and needs no plumbing at all.
+    counter = _FrameCounter() if args.progress else None
+    next_report = t0 + args.progress_interval
+    reported = -1
     while True:
         n = conn.recv_into(view)
         if not n:
             break
         out.write(view[:n])
         total += n
+        if counter is not None:
+            counter.feed(view[:n])
+            now = time.monotonic()
+            if now >= next_report and counter.frames != reported:
+                next_report = now + args.progress_interval
+                reported = counter.frames
+                # Same shape vspipe -p emits, so the reader has one parser.
+                print(f"Frame: {counter.frames}", file=sys.stderr, flush=True)
     out.flush()
+    if counter is not None and counter.frames >= 0:
+        print(f"Frame: {counter.frames}", file=sys.stderr, flush=True)
     _report("received", total, time.monotonic() - t0)
     return 0
 
@@ -118,6 +214,12 @@ def main():
     r = sub.add_parser("recv", help="listen, then copy the socket to stdout")
     r.add_argument("--port", type=int, required=True)
     r.add_argument("--accept-timeout", type=float, default=300.0)
+    r.add_argument("--progress", action="store_true",
+                   help="print 'Frame: N' to stderr as frames arrive, for "
+                        "the archive UI's live rate. Off by default so "
+                        "nothing else changes.")
+    r.add_argument("--progress-interval", type=float, default=1.0,
+                   help="seconds between progress lines")
 
     s = sub.add_parser("send", help="copy stdin to the socket, retrying connect")
     s.add_argument("--host", required=True)
