@@ -186,7 +186,6 @@ class Scheduler:
             clear_heartbeat(self.lanes_dir, name)
 
     def _process(self, clip, denoiser):
-        started = time.monotonic()
         # Publish BEFORE acquiring, and say which of the two states this is.
         # The acquire below can block for a whole clip, and a lane waiting on an
         # encode slot must not be indistinguishable from one that is denoising:
@@ -194,6 +193,12 @@ class Scheduler:
         self._beat(denoiser.name, clip, "waiting_for_slot")
         self._slots.acquire()
         self._beat(denoiser.name, clip, "working")
+        # After the acquire, not before. This feeds wall_s on the raising path
+        # below, and that figure is meant to be how long the work took. Started
+        # before the acquire, a clip that queued two hours for a slot and then
+        # crashed instantly would be recorded as a two-hour failure, which reads
+        # as a hang and is the wrong thing to go looking for.
+        started = time.monotonic()
         raised = False
         reason = ""
         phases = {}
