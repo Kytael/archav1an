@@ -32,7 +32,11 @@ import platform
 import re
 import select
 import sys
-# from scipy import fftpack, interpolate, signal, stats
+# fftpack and signal are live: the frame-selection block transforms the
+# scene diffs and picks their peaks. Commented out, that block raised
+# NameError on every scene longer than one frame. interpolate and stats
+# are left out because the only code that used them is commented out.
+from scipy import fftpack, signal
 import shutil
 import subprocess
 import time

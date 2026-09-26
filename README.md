@@ -122,7 +122,7 @@ Or selectively:
 ./setup.sh --install system_deps   # distro packages via pacman/apt (escalates itself)
 ./setup.sh --install python_libs   # uv venv at /opt/archav1an/venv
 ./setup.sh --install ffmpeg        # source-built ffmpeg w/ NVENC into prefix
-./setup.sh --install vapoursynth   # VS R76 + FFMS2 + BestSource
+./setup.sh --install vapoursynth   # VS R79 + FFMS2 + BestSource
 ./setup.sh --install denoiser      # BSVD/SCUNet/SMDegrain/RVRT/STA-SUNet plugins + models
 ./setup.sh --install wwxd vszip subtext  # core VS plugins
 ```
@@ -154,7 +154,7 @@ Arch needs none of this: cuDNN comes from pacman and TensorRT from the AUR, both
 source activate-venv.sh
 ```
 
-`activate-venv.sh` sources the venv, prepends `/opt/archav1an/bin` to PATH, sets `LD_LIBRARY_PATH=/opt/archav1an/lib` (the source-built R76 VapourSynth shares pacman v75's SONAME `libvapoursynth.so.4`, so LD_LIBRARY_PATH precedence makes R76 win only inside this activated env — pacman's v75 remains the global default outside it), and sets `VAPOURSYNTH_EXTRA_PLUGIN_PATH=/opt/archav1an/lib/vapoursynth`.
+`activate-venv.sh` sources the venv, prepends `/opt/archav1an/bin` to PATH, sets `LD_LIBRARY_PATH=/opt/archav1an/lib` (the source-built R79 VapourSynth shares pacman's SONAME `libvapoursynth.so.4`, so LD_LIBRARY_PATH precedence makes R79 win only inside this activated env — pacman's copy remains the global default outside it), and sets `VAPOURSYNTH_EXTRA_PLUGIN_PATH=/opt/archav1an/lib/vapoursynth`.
 
 **Choosing the Python version:**
 ```bash
@@ -172,7 +172,7 @@ After `source activate-venv.sh`:
 ```bash
 # Core tools (should resolve to /opt/archav1an/bin)
 which vspipe ffmpeg av1an SvtAv1EncApp
-vspipe --version    # should report "Core R76"
+vspipe --version    # should report "Core R79"
 ffmpeg -version | head -n 1
 SvtAv1EncApp --help | grep -i "SVT-AV1"
 
@@ -287,8 +287,8 @@ Edit `prefilter/settings.txt` to customize filter settings.
 
 ## Encode dashboard
 
-`tools/encode-dash.py` is a read-only status page for a batch run. Start it from
-the repo root:
+`tools/encode-dash.py` is a status page for a batch run. Start it from the repo
+root:
 
 ```bash
 /opt/archav1an/venv/bin/python tools/encode-dash.py
@@ -300,6 +300,28 @@ the whole snapshot as JSON at `/api/status`, and Prometheus text at `/metrics`.
 "history" button at wherever you keep the long-term charts; leave it out and the
 button is hidden, because where the history lives is a property of your
 deployment rather than of this program.
+
+### Starting and stopping a run
+
+The page's "Start the run" button posts to `POST /api/run/start`; the daemon
+spawns `tools/archive-batch.py` with its own session (`start_new_session=True`),
+so the daemon's Ctrl-C does not reach the batch.
+A second start while a run is live answers `409` — one run at a time. The
+"Stop the run" button posts to `POST /api/run/stop`; stopping is graceful,
+through the batch's control directory, and the batch clears its liveness file
+as it exits. A daemon crash mid-run is a non-event: on restart the supervisor
+adopts the live batch from `batch.json` and the page keeps reporting the run it
+already knows about. A stale liveness file left by a SIGKILLed batch is
+cleared, so a fresh start is not refused forever. Liveness is decided with the
+process's `/proc` starttime (`pid_start`, compared by
+`tools/archive_batch/pidfile.py`), so a recycled pid reads as stale instead of
+blocking starts or being adopted by mistake. A record written before that
+field existed — a batch that was already running when you upgraded the
+checkout — carries no starttime, so it is checked against the process's
+command line instead: a live pre-upgrade run keeps reading as live, and the
+page does not offer Start over it. If the run directory is not writable by the
+daemon, the page still comes up read-only and Start answers `503` naming the
+reason.
 
 To keep it across reboots, install it as a systemd user service:
 
@@ -323,9 +345,11 @@ idle daemons fighting for one port. The unit is generated rather than committed
 because `ExecStart` needs this checkout's absolute path, and the hosts do not
 agree on it.
 
-It is a **sidecar**: it reads `.archive-run/` and never talks to the batch
-process, so it can be started, stopped and restarted at any point in a run
-without touching it — and killing it does not touch the run either.
+It runs beside the batch, not inside it: it reads `.archive-run/`, spawns or
+adopts the batch, and then talks to it only through files — the control
+directory, and `batch.json`, which the supervisor writes to claim a live run.
+Stopping the unit kills only the daemon (`KillMode=process`), so the batch
+survives and is adopted by the next daemon.
 
 Two batch-side behaviours exist to feed it, and they are on by default:
 
@@ -340,6 +364,227 @@ Reading it: a blank rate is not zero. An absent measurement and a measured zero
 are different facts everywhere in this page, so a lane that has not started
 never looks like a lane that has stalled.
 
+### The Failed panel
+
+Its heading reads `N exhausted · M listed`, because the two numbers are
+different questions and it used to answer only the first. The list is the last
+50 failed *attempts*, most of which get retried and succeed; `exhausted` counts
+the clips the run has actually given up on. A healthy run therefore shows
+"0 exhausted" over a list of fifty rows, which read as a broken page until the
+heading said both. Tick **out of attempts only** to see just the clips that
+need a decision — those are also the only ones with a `retry` button, since a
+clip with an attempt left is already coming back on its own.
+
+The list is capped, but never at the cost of the rows that matter: it carries
+the most recent failures *plus* every exhausted one. Recency alone was the
+wrong cap, because a clip stops failing at the moment it runs out of attempts
+and then drifts out of a newest-50 window while clips that keep retrying stay
+in it. The filter emptied the panel instead of narrowing it — at exactly the
+point the panel had something to say.
+
+**Retry all** puts back every clip that is out of attempts, in one press. It
+reads `state.jsonl`, not the rows on screen — the list above is a capped
+preview, so a button driven from the rendered rows would quietly do less than
+its label says while still reporting success. The number it acts on is the
+`N exhausted` in the heading beside it. Like Stop, it arms on the first click
+and acts on the second, because it re-queues work measured in days.
+
+**Retry works while the run is stopped**, and that is the case it exists for. A
+clip out of attempts is dropped from the queue, so a run with nothing else left
+prints `nothing to do` and exits; the batch then applies any retry queued
+against it on the next start, before it decides whether it has work. So the
+order is: press `retry` on the rows you want back, then **Start**. Retries and
+submissions are the two requests that survive a stopped run — a queued `yield`
+or `stop` is still discarded at startup, because each names a live lane or a
+live run and a stale one would fire into a run it was never meant for.
+
+### Encode jobs: a folder with no denoise pass
+
+The **Encode a folder** form queues work that skips the GPU entirely: every
+`.MOV` and `.MP4` directly in one folder, decoded on the batch host and encoded
+with SVT-AV1 on an encode host's CPU. One level only — a folder inside the one
+you name is not included, because its files would be published to a destination
+chosen for their parent.
+
+The form takes three fields: `host` is the ssh alias that holds the folder (or
+`local`), `path` is an **absolute POSIX path on that host**, and `dest` is a
+subpath under `encoded/`. A Windows drive letter is refused, by the daemon and
+again by the probe: the path is handed to a shell on the holding host, and the
+probe pipes a bash script to it, so the WSL side of a box is the reachable
+target even when the files live on an NTFS drive. `M:\Media\Dance\SetA\2026`
+on gpu1 is `/mnt/media/dance/SetA/2026`, with `host = gpu1`.
+
+The archive run is **not** one of the choices here. It is driven by
+`manifest-raw.tsv`, it denoises, and it is started by **Start the run**. It was
+briefly listed as a folder, which offered a choice and then refused half of it:
+selecting it blanked the fields and disabled the button, which reads worse than
+not listing it at all.
+
+Submitting writes a `submit` control request. The batch probes the folder with
+one `ffprobe` per file — over ssh when the folder is on another host — and that
+walk is slow, so it acks twice: "probing" at once, then the count when the walk
+finishes. A control handler that blocked would stop the run answering a stop.
+
+**Queueing a folder works while the run is stopped**, and on a drained archive
+it is the only way that works at all: the control poller that answers a
+submission starts only *after* the run has decided it has work, so a folder
+queued against a finished archive used to be swept away at the next **Start**
+with `nothing to do` as the only sign anything had happened. The batch now
+lifts queued submissions out before it clears the stale requests, probes each
+one during startup, and counts the jobs it found as work to do. So the order is
+the same as a retry's: queue the folder, then **Start**. The probe is serial
+there rather than threaded — nothing is polling yet, and a run that started
+before its own queue was known would report `nothing to do` and exit.
+
+Jobs are appended to `manifest-encode.tsv`, which is read at startup like
+`manifest-raw.tsv`, so a submitted folder survives a restart. It is a separate
+file with three extra columns — the host holding the source, the destination
+under `encoded/`, and the preset. An archive clip's destination *is* its own
+parent directory; a submitted job's is not, and nothing may derive one from the
+other. The preset sits third, among the columns the batch writes: the `ffprobe`
+columns trail off, because a source with an embedded thumbnail emits a second
+rate column, so nothing read from the end has a fixed meaning.
+
+An encode job runs on any host in the pool, local or remote. On a remote encoder the
+batch host decodes and streams y4m over the same `--remote-encode` path a denoise lane
+uses; only the denoise pass is absent. This was refused until 2026-09-04, which made every
+encode job a job for whichever encoder has `host = "local"` — see `docs/split-host-denoise.md`.
+
+**A preset picks the encoder settings for that folder.** The dropdown lists
+every `run_linux_*.sh` in the repo, and the scripts *are* the catalogue — there
+is no separate list to keep in step, which is how `ENCODER_PARAMS` and
+`run_linux_dance_HQ_crf27.sh` drifted apart before. A preset supplies four
+values: `--quality`, `--photon-noise`, `--speed` and `--encoder-params`. Its
+own `--lp` is dropped, because that is a memory-for-parallelism choice
+belonging to the encode host, and the roster's `lp_level` already passes one.
+Leave the preset empty for the fleet-fixed settings, which is what every encode
+job got before this existed. Presets reach encode jobs only: an archive clip's
+output must not depend on which device took it, and a per-job setting there
+would make it depend on when it was queued instead.
+
+**Denoise jobs win the contest for slots.** A slot worker leaves the last free
+slot on an encoder alone while archive work is still queued or in flight, since
+a lane can only reach that host through a slot. An encoder with `slots = 1`
+therefore runs encode jobs only once the denoise work is done. A running encode
+job is never preempted; a lane can wait one out, bounded by that job's length.
+
+That reserve is held only for a lane that could actually claim it: some enabled
+denoiser whose allowlist names that encoder. Without the check, every encoder
+kept a slot open for lanes that are switched off, or that route elsewhere — and
+in an encode-only run, where the archive backlog never drains because no lane
+can take it, that slot stayed reserved for the whole run.
+
+Each slot row carries its own live rate, progress bar and ETA, read the same
+way a lane's is: a slot worker writes the same heartbeat, and dispatch writes
+the same `<stem>_vspipe.log`. The **Encode hosts** table carries the figure per
+host — live fps summed across that host's slots, and the completed-job average,
+which stays per clip so a two-slot host does not read as twice as fast as it is.
+A single slot's rate cannot be compared with another host running two, and that
+comparison is what the table is for.
+
+Submitting into a drained run queues nothing useful. Slot workers end when the
+queue empties, exactly as lane workers do, so a submission has a worker waiting
+for it only while the run still has work.
+
+### Stopping and starting an encode host
+
+The **Encode hosts** table lists every `[[encoder]]` in the roster, enabled or
+not, each with the same switch a lane has. Turning a host off kills nothing in
+flight: it finishes what it is encoding, lanes stop picking it at their next
+clip, and it goes quiet. Turning it back on needs the row to exist while the
+host is off, which is why this table lists disabled hosts and the slot count in
+the status line does not — that count answers how many clips can encode now.
+
+It is a roster write, `POST /api/encoder/<name>/enabled`, and a separate route
+from the lane switch on purpose. The two tables are separate namespaces: this
+fleet's roster carries a denoiser `gpu4` *and* an encoder `gpu4`, the same
+machine doing two different jobs. One route taking a bare name would have to
+guess which was meant, and it would guess wrong on exactly the hosts that do
+both — turning off a CPU encoder would stop a GPU lane mid-clip.
+
+### Routing a lane to encode hosts
+
+Each lane's edit form carries an **encoders** box per host in the pool. Ticking
+none means any enabled host, which is the default and what an absent `encoders`
+key says in the roster. Ticking some pins the lane to those, and the scheduler
+will wait for one of them rather than spill elsewhere.
+
+Checkboxes rather than a text field because the roster validates these names
+against the `[[encoder]]` table: a typo in a typed list is refused only after
+the whole list has been typed. A lane that names a host since removed from the
+pool still shows it, ticked and marked — that roster is already refused by the
+validator, and hiding the name would make the refusal unexplainable from the
+page.
+
+Routing and the switch are one contract. A lane pinned to a single host, with
+that host then switched off, would wait for ever while the rest of the fleet
+drains the queue, so the roster refuses it and the page repeats the message —
+which names all three ways out: enable one of its encoders, widen its
+allowlist, or disable the lane. Switching off the **last** enabled encoder is
+allowed, because that is an operator halting the pool rather than one lane
+starving beside working ones.
+
+### Adding and editing an encode host
+
+Each host row carries **edit** and **remove**, and the section has **Add an
+encode host**. The fields are the `[[encoder]]` ones — `host`, `root`,
+`stream_ip` or `stream_net`, `port_base`, `slots`, `lp_level` — and a new host
+arrives switched off, for the same reason a new lane does: adding it does not
+test it.
+
+Give a new host a port block no other host uses; slot N listens on
+`port_base + N`. A remote host needs `stream_ip` or `stream_net`, and the
+validator says so rather than letting the lane fail at its first clip. Prefer
+`stream_net` for a WSL2 box under mirrored networking, whose address is not
+reserved and goes stale on a lease change.
+
+The name is read-only on an edit, and refused by the daemon. It is stricter
+than the lane rule: every lane's `encoders` allowlist names encoders by name,
+so a rename would leave each of those pointing at a host that no longer
+exists. **remove** is refused for the same reason while any lane still routes
+there — clear that routing first. Removing the last encoder is refused too,
+since a roster with no pool cannot run.
+
+The table is hidden on a legacy `[encode]` roster. That format has no
+`[[encoder]]` blocks — the loader synthesizes one named `local` from the table —
+and there is no block to write, so a switch there would answer 404.
+
+### Adding and editing a lane
+
+"Add a lane" opens a form that writes one `[[denoiser]]` block into the roster.
+The block always arrives with `enabled = false`, because adding a lane does not
+test it.
+
+Each row's **edit** button opens the same form filled from that lane, and saving
+posts `POST /api/lane/<name>`. Only the values change: the block's spacing, its
+aligned `=` column and any comment inside it survive, and no other lane is
+touched. A change takes effect at the next clip, exactly like the enable switch
+— nothing in flight is killed. Clearing a field removes the key, which is how a
+lane goes back to a default; the roster validator still has the last word, so an
+edit that would not load is refused with its message and nothing is written.
+
+The name is read-only. It keys the worker's heartbeat at
+`.archive-run/lanes/<name>.json`, dispatch's `--temp-tag` and the scheduler's
+in-flight bookkeeping, so a rename mid-run would orphan all three while the lane
+kept working. To rename, remove the lane and add it again.
+
+When adding, the form starts with a **known lane** picker. Choosing a host fills every field
+from `tools/encode_dash/static/lane-presets.json`, a catalogue of the lanes this
+fleet has actually benchmarked — backend, device, tiling, window, margin,
+checkout path — and shows the measurement the settings come from. The fields
+stay editable, so a preset is a starting point rather than a decision. The
+picker is hidden if the catalogue cannot be read, and the form still takes a
+hand-typed lane.
+
+Benchmarked a new host? Add it to that file. Each entry needs `id`, `label`,
+`note`, `source` and a `fields` object whose keys are the `Denoiser` fields.
+`tests/test_lane_presets.py` puts every entry through the real roster writer and
+the real validator, singly and all together, so a preset that names an unknown
+key or omits a window on a tiled card fails the suite rather than the operator.
+A preset cannot carry `port`: the y4m listener lives on the encode host now, so
+a port belongs to an `[[encoder]]` entry as `port_base`, and the loader refuses
+any `[[denoiser]]` that sets one.
+
 History and alerting live in the Prometheus and Grafana on the Pi rather than in
 this page, which is why it carries no charts. Design and the part 2 plan:
 the design notes, which are not part of this tree.
@@ -352,6 +597,7 @@ Longer write-ups live in `docs/`:
 |-----|--------|
 | [lp-and-encoder-parallelism.md](docs/lp-and-encoder-parallelism.md) | `--lp` is a level in [0, 6], not a thread count. Measured fps/memory per level, what `--lp 0` picks from the core count, and how many encoder slots to run |
 | [split-host-denoise.md](docs/split-host-denoise.md) | Rationale and measurements behind `--remote-denoise` |
+| [encode-pool-gates.md](docs/encode-pool-gates.md) | What the remote encode pool was verified to do on real hardware: the eight gate results, measured pool throughput and y4m bandwidth, what a hard kill leaves behind, and what is still open |
 | [vapoursynth-isolation.md](docs/vapoursynth-isolation.md) | How the `/opt/archav1an` prefix keeps its VapourSynth from colliding with the distro's |
 | [framebuffer-warning.md](docs/framebuffer-warning.md) | The VapourSynth "framebuffer" message at the end of a run, and why it is not a leak |
 
@@ -360,3 +606,34 @@ Longer write-ups live in `docs/`:
 -   **Missing Tools**: Ensure `av1an`, `SvtAv1EncApp`, `ffmpeg`, `mkvmerge`, `mkvpropedit` are in your PATH.
 -   **VapourSynth Errors**: Ensure you have the required plugins (`ffms2`) installed and accessible to VapourSynth.
 -   **Permissions**: Ensure you have write permissions in the folder.
+
+## Attribution
+
+This work derives from **Auto-Boost-Av1an-Linux** by
+[abdalrahmanx9](https://github.com/abdalrahmanx9/Auto-Boost-Av1an-Linux), and
+carries contributions from that project's history by LastBreeze and Line. The
+scene-detection and progression-boost scripts under `tools/` come from that
+lineage.
+
+The upstream project declares no licence, so no licence is claimed or granted
+here either. Treat this as published for reference and discussion. If you want
+to reuse any of it, ask the upstream author first.
+
+## Notes
+
+**Host names in this repository are examples.** `encoder-host`, `gpu1`, `gpu2`
+and so on are role names standing in for whatever machines you run on. Put
+your own SSH aliases in the roster and the example configuration.
+
+**Model weights are distributed separately** and are not in the tree. The
+pipeline expects them under `models/`; see the setup scripts for the paths it
+looks in.
+
+**The batch tooling's example corpus is fictional.** `SetA` and `SetB`, the
+folder names under them, the years and the file counts are placeholders. The
+batch reads whatever tree you point `ARCHIVE_ROOT` at; only the two-level
+`<set>/<year>/<folder>` shape matters, and only to the ordering rule in
+`tools/archive_batch/manifest.py`.
+
+**Design notes are not published.** Several comments refer to them; they
+discuss the private fleet the code was written for.

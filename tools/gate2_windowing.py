@@ -27,14 +27,24 @@ SOURCE_SCRIPT = '''\
 import os as _os
 import vapoursynth as vs
 core = vs.core
+_failed = []
 for _d in ("/opt/archav1an/lib/vapoursynth", "/usr/lib/vapoursynth"):
     for _so in ("libffms2.so", "libvszip.so"):
         _p = _os.path.join(_d, _so)
         if _os.path.exists(_p):
             try:
                 core.std.LoadPlugin(_p)
-            except vs.Error:
-                pass
+            except vs.Error as _e:
+                if "already loaded" not in str(_e):
+                    _failed.append(_p + ": " + str(_e))
+# A plugin we do not use may fail to load -- encoder-host carries a libvsncnn.so
+# with an undefined onnx symbol -- so a load error is only fatal when the
+# namespace we need is the missing one. Then say so HERE, with the loader
+# message included, rather than leaving an AttributeError to surface further down
+# (or, on a split-host encode, as a 0 MB read blamed on the encoder host).
+for _ns in ("ffms2", "vszip"):
+    if not hasattr(core, _ns):
+        raise RuntimeError("VapourSynth plugin " + _ns + " is missing. Plugin load errors: " + ("; ".join(_failed) or "none"))
 from vstools import initialize_clip
 clip = core.ffms2.Source(source={path!r})
 clip = initialize_clip(clip)

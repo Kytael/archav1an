@@ -20,7 +20,7 @@ prefer_prefix_bin()
 
 
 def get_audio_channels(input_file):
-    """Detect audio channel count via ffprobe. Returns int (default 2)."""
+    """Detect audio channel count via ffprobe. 0 means the source has none."""
     ffprobe_exe = shutil.which("ffprobe")
     if not ffprobe_exe:
         return 2
@@ -30,6 +30,10 @@ def get_audio_channels(input_file):
              "-show_entries", "stream=channels", "-of", "csv=p=0", input_file],
             capture_output=True, text=True,
         )
+        # A video-only source prints nothing; int("") would raise and the old
+        # except-2 default then injected an audio pass that failed the encode.
+        if result.returncode == 0 and not result.stdout.strip():
+            return 0
         return int(result.stdout.strip())
     except (ValueError, subprocess.SubprocessError):
         return 2
@@ -196,12 +200,17 @@ def main():
         encoder_params += current_flags
 
     # --- Audio params ---
+    channels = 2
+    opus_bitrate = "128k"
     if no_opus:
         print("[av1an-dispatch] Audio: passthrough (--no-opus)")
     else:
         channels = get_audio_channels(input_file) if input_file else 2
-        opus_bitrate = opus_bitrate_for_channels(channels)
-        print(f"[av1an-dispatch] Audio: Opus {opus_bitrate} ({channels}ch)")
+        if channels == 0:
+            print("[av1an-dispatch] Audio: source has no audio track")
+        else:
+            opus_bitrate = opus_bitrate_for_channels(channels)
+            print(f"[av1an-dispatch] Audio: Opus {opus_bitrate} ({channels}ch)")
 
     # Build the av1an command
     if input_file:
@@ -216,7 +225,7 @@ def main():
     final_cmd.extend(["--temp", temp_dir])
 
     final_cmd.extend(["--encoder", "svt-av1"])
-    if not no_opus:
+    if not no_opus and channels != 0:
         final_cmd.extend(["-a", f"-c:a libopus -b:a {opus_bitrate}"])
 
     if workers:

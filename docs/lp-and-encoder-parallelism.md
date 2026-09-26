@@ -155,6 +155,15 @@ Applied 2026-08-13.
 1. **`run_linux_dance_HQ_crf27.sh` passes `--lp 0`.** The `LP=$(nproc)` block is gone. On
    encoder-host this is the same level 6 as before, at 22.11 fps against 22.90, inside noise. On
    the 16-thread hosts it is level 5 rather than the clamped 6 — see the auto table above.
+
+   **Amended 2026-09-19.** `--lp 0` now applies to a single lane only. The script picks
+   its lane count from a per-host table keyed on `uname -n`, then derives the level from
+   that count: more than one lane sends `--lp 4`, one lane keeps `--lp 0`. So encoder-host,
+   gpu1, gpu2 and the sparks all run level 4 by default now, and gpu3 keeps the
+   encoder's own pick. This buys memory and may cost throughput — the 26.27-against-23.05
+   figure below is a saturated encoder, which is what this script runs — and it is a
+   deliberate choice, not a measured optimum. The table is in `docs/encode-capacity.md`,
+   under "What the batch script defaults to"; `LP` in the environment overrides it.
 2. **`roster.py` field `threads_per_slot` is now `lp_level`, default 4.** `dispatch_cmd.py`
    passes it straight to `--lp`, so a roster now names a level instead of a thread count.
    The default was 6 while the pool ran 2 slots, on the reading that at 2 slots level 6

@@ -252,7 +252,7 @@ aur_helper() {
 # check_root returns early on EUID 0, so under `sudo ./setup.sh` the prefix is
 # created by whichever component reaches it first -- as root. Everything after
 # that assumes it is yours: the venv is pip-installed into on later runs and
-# --update rewrites the manifest, both unprivileged. spark2 ended a successful
+# --update rewrites the manifest, both unprivileged. gpu5 ended a successful
 # `sudo ./setup.sh --install A -y` with 21k root-owned files under the prefix.
 #
 # Refusing to run as root would be the wrong fix. sudo's credential cache
@@ -263,7 +263,7 @@ aur_helper() {
 # The prefix is the obvious tree. build_tmp is the one that gets missed: every
 # source build clones and compiles there, so a root run leaves it root-owned
 # and the next unprivileged run dies at the clone rather than at the install,
-# which reads like a git problem. encoder-host, spark2 and gpu3 all ended up that
+# which reads like a git problem. encoder-host, gpu5 and gpu3 all ended up that
 # way. It lives beside setup.sh, and the installers put it under the directory
 # the script was called from, so check both.
 restore_ownership() {

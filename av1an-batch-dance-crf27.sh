@@ -73,10 +73,16 @@ done 3< <(find Input -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.mo
 
 # --- TAGGING & CLEANUP ---
 echo "Tagging output files..."
-python3 tools/tag.py
+if ! python3 tools/tag.py; then
+    echo "FAILED: tagging step"
+    FAILED_FILES+=("(tagging)")
+fi
 
 echo "Cleaning up temporary files and folders..."
-python3 tools/cleanup.py
+if ! python3 tools/cleanup.py; then
+    echo "FAILED: cleanup step"
+    FAILED_FILES+=("(cleanup)")
+fi
 
 if [ ${#FAILED_FILES[@]} -gt 0 ]; then
     echo "WARNING: ${#FAILED_FILES[@]} file(s) FAILED:"

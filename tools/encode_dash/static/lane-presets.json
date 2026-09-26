@@ -1,0 +1,110 @@
+{
+  "presets": [
+    {
+      "id": "gpu1_4090",
+      "label": "gpu1 — RTX 4090, 24 GB (remote)",
+      "note": "The fastest lane in the fleet: 18.20 fps sustained, full-frame, no window. gpu1 holds a copy of the archive, so each clip is read in place and stage_source stays off.",
+      "source": "docs/window-sizing.md, docs/split-host-denoise.md",
+      "fields": {
+        "name": "gpu1_4090",
+        "host": "gpu1",
+        "backend": "trt",
+        "device": 0,
+        "tiling": "none",
+        "root": "/home/user/archav1an"
+      }
+    },
+    {
+      "id": "igpu",
+      "label": "encoder-host — Radeon 8060S iGPU (local)",
+      "note": "128 GB of unified memory holds the full-frame state, so this lane needs no tiling and no window. 4.08 fps over three full-clip runs, and 2.37 fps while this host also encodes. It uses its own interpreter, because the MIGraphX wheels stop at cp312.",
+      "source": "docs/encode-capacity.md",
+      "fields": {
+        "name": "igpu",
+        "host": "local",
+        "backend": "migraphx",
+        "device": 0,
+        "tiling": "none"
+      }
+    },
+    {
+      "id": "2070s",
+      "label": "encoder-host — RTX 2070 SUPER, 8 GB (local)",
+      "note": "8 GB cannot hold the 7.4 GB full-frame state, so this card must run tiled and windowed. Window 750 measured 4.7% faster end to end than 500, for 40.6 GB of host RAM against 29.1 GB. device is 0, not 1: CUDA enumerates only the NVIDIA card.",
+      "source": "docs/window-sizing.md",
+      "fields": {
+        "name": "2070s",
+        "host": "local",
+        "backend": "trt",
+        "device": 0,
+        "tiling": "auto",
+        "window": 750,
+        "margin": 32
+      }
+    },
+    {
+      "id": "gpu2_5070",
+      "label": "gpu2 — RTX 5070 Laptop (remote)",
+      "note": "4.07 fps on driver 610.88, GPU-bound at 92.8%, with no fault in eight runs. Window 750 completed 0 of 8 attempts on this card, so keep 300. gpu2 holds no archive, so every clip is copied to it and its Temp/_remote grows all run.",
+      "source": "docs/window-sizing.md, docs/encode-capacity.md",
+      "fields": {
+        "name": "gpu2_5070",
+        "host": "gpu2-wsl",
+        "backend": "trt",
+        "device": 0,
+        "tiling": "auto",
+        "window": 300,
+        "margin": 32,
+        "stage_source": true,
+        "root": "/home/user/reposetc/archav1an"
+      }
+    },
+    {
+      "id": "gpu4",
+      "label": "gpu4 — GB10 (remote)",
+      "note": "Full-frame and unwindowed: 4.37 fps sustained after 12.1 s of overhead. The checkout on this host is ubuntav1an, not archav1an. gpu4 holds no archive, so every clip is copied to it.",
+      "source": "docs/window-sizing.md, docs/encode-capacity.md",
+      "fields": {
+        "name": "gpu4",
+        "host": "gpu4",
+        "backend": "trt",
+        "device": 0,
+        "tiling": "none",
+        "stage_source": true,
+        "root": "/home/user/reposetc/ubuntav1an"
+      }
+    },
+    {
+      "id": "gpu5",
+      "label": "gpu5 — GB10 (remote)",
+      "note": "gpu4's twin: the same GB10, 20 cores and 121 GB, so it takes the same settings — full-frame, no window, 4.37 fps sustained. No archive of its own, so every clip is copied to it.",
+      "source": "docs/encode-capacity.md",
+      "fields": {
+        "name": "gpu5",
+        "host": "gpu5",
+        "backend": "trt",
+        "device": 0,
+        "tiling": "none",
+        "stage_source": true,
+        "root": "/home/user/reposetc/ubuntav1an"
+      }
+    },
+    {
+      "id": "gpu3_3070",
+      "label": "gpu3 — RTX 3070 Laptop, 8 GB (remote)",
+      "note": "About 4.89 fps end to end at window 500. Window 750 is 3% faster but takes 39.3 GB of this host's 47 GB. The card throttles to 1292 MHz under load, and to about half the rate on Thunderbolt power.",
+      "source": "docs/window-sizing.md",
+      "fields": {
+        "name": "gpu3_3070",
+        "host": "gpu3",
+        "backend": "trt",
+        "device": 0,
+        "tiling": "auto",
+        "window": 500,
+        "margin": 32,
+        "stage_source": true,
+        "root": "/home/user/reposetc/archav1an"
+      }
+    }
+  ]
+}

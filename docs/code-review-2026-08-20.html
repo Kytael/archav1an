@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>archav1an — Code Review Report</title>
+<style>
+  :root {
+    --ink: #1a1a1a;
+    --muted: #555;
+    --line: #ddd;
+    --bg: #fff;
+    --panel: #f6f7f9;
+    --crit: #b3261e;
+    --crit-bg: #fdecea;
+    --imp: #b26a00;
+    --imp-bg: #fff4e5;
+    --min: #1a5fb4;
+    --min-bg: #e8f1fb;
+    --ok: #2e7d32;
+    --ok-bg: #e8f5e9;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink); background: var(--bg); line-height: 1.55;
+  }
+  header {
+    background: #101418; color: #f0f2f5; padding: 34px 48px 28px;
+  }
+  header h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: .2px; }
+  header .sub { color: #9fb0c0; font-size: 14px; }
+  header .meta { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 22px; font-size: 13px; }
+  header .meta b { color: #fff; font-weight: 600; }
+  header .meta span { color: #b8c4d0; }
+  main { max-width: 1100px; margin: 0 auto; padding: 28px 48px 80px; }
+  h2 {
+    font-size: 20px; margin: 44px 0 14px; padding-bottom: 6px;
+    border-bottom: 2px solid var(--line);
+  }
+  h3 { font-size: 16px; margin: 26px 0 8px; }
+  p { margin: 8px 0; }
+  code {
+    font-family: var(--mono); font-size: 0.88em;
+    background: #eef1f4; padding: 1px 5px; border-radius: 4px;
+  }
+  .summary p { max-width: 72ch; }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 14px; margin: 18px 0; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .stat .num { font-size: 26px; font-weight: 700; }
+  .stat .lbl { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--panel); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+  td.loc { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
+  .sev { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .3px;
+         padding: 2px 8px; border-radius: 999px; text-transform: uppercase; white-space: nowrap; }
+  .sev.crit { background: var(--crit-bg); color: var(--crit); border: 1px solid var(--crit); }
+  .sev.imp  { background: var(--imp-bg);  color: var(--imp);  border: 1px solid var(--imp); }
+  .sev.min  { background: var(--min-bg);  color: var(--min);  border: 1px solid var(--min); }
+  .sev.ok   { background: var(--ok-bg);   color: var(--ok);   border: 1px solid var(--ok); }
+  .finding {
+    border: 1px solid var(--line); border-left-width: 4px; border-radius: 8px;
+    padding: 14px 18px; margin: 14px 0; background: var(--bg);
+  }
+  .finding.crit { border-left-color: var(--crit); }
+  .finding.imp  { border-left-color: var(--imp); }
+  .finding.min  { border-left-color: var(--min); }
+  .finding .h { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .finding .h .id { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .finding .h .t { font-weight: 700; font-size: 15px; }
+  .finding .loc { font-family: var(--mono); font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+  .finding p { margin: 8px 0 0; }
+  .finding .fix { margin-top: 6px; font-size: 13.5px; color: #333; }
+  .finding .fix b { color: var(--ink); }
+  ul { margin: 8px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  .note { background: var(--ok-bg); border: 1px solid #b5d7b6; border-radius: 8px; padding: 12px 16px; margin: 14px 0; }
+  .note h4 { margin: 0 0 6px; font-size: 14px; color: var(--ok); }
+  footer { max-width: 1100px; margin: 0 auto; padding: 20px 48px 60px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); }
+  .method { font-size: 13.5px; color: #333; background: var(--panel); border: 1px solid var(--line);
+            border-radius: 8px; padding: 14px 18px; margin: 14px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>archav1an — Code Review Report</h1>
+  <div class="sub">Static review of the encoding pipeline, dashboard daemon, and batch supervisor</div>
+  <div class="meta">
+    <div><b>Branch</b><br><span>run-control</span></div>
+    <div><b>Head</b><br><span>a061ed8</span></div>
+    <div><b>Date</b><br><span>2026-08-20</span></div>
+    <div><b>Scope</b><br><span>~10,900 lines of Python across 22 modules</span></div>
+    <div><b>Method</b><br><span>Read-only review; py_compile on every module</span></div>
+  </div>
+</header>
+
+<main>
+
+  <h2>Executive summary</h2>
+  <div class="summary">
+    <p>The codebase is a resumable, four-stage av1an boosting pipeline. It generates a
+    VapourSynth script, runs a fast SVT-AV1 pass, scores per-frame quality
+    (XPSNR or SSIMULACRA2), builds per-scene CRF zones, and runs the final encode.
+    A batch supervisor daemon (<code>encode-dash</code>) spawns and adopts the batch
+    process through a <code>batch.json</code> pid file, with split-host denoise over
+    ssh+rsync+netstream.</p>
+    <p>The core batch machinery is carefully built and well-commented. Tests are genuinely
+    strong: real subprocesses, a real HTTP daemon on loopback, corrupt-input fixtures, and
+    bounded poll loops. No <code>shell=True</code> in the dispatch layer. The defects cluster in
+    four areas: the pid-file liveness protocol (pid reuse and a non-atomic claim write), the
+    HTTP body reader (negative Content-Length), a handful of real logic bugs in the main
+    pipeline (fssimu2 result always discarded, dead <code>_hr</code> flag), and unchecked
+    subprocess exit codes in shell scripts and one benchmark tool.</p>
+  </div>
+
+  <div class="stat-grid">
+    <div class="stat"><div class="num" style="color:var(--crit)">2</div><div class="lbl">Critical</div></div>
+    <div class="stat"><div class="num" style="color:var(--imp)">14</div><div class="lbl">Important</div></div>
+    <div class="stat"><div class="num" style="color:var(--min)">34</div><div class="lbl">Minor</div></div>
+    <div class="stat"><div class="num" style="color:var(--ok)">22</div><div class="lbl">Modules reviewed</div></div>
+  </div>
+
+  <h2>Findings overview</h2>
+  <table>
+    <tr><th>ID</th><th>Severity</th><th>Location</th><th>Issue</th></tr>
+    <tr><td>C1</td><td><span class="sev crit">Critical</span></td><td class="loc">encode_dash/supervisor.py:133,154 · model.py:196,202,244</td><td>Pid-file liveness checks existence only; pid reuse blocks restarts and can adopt the wrong process</td></tr>
+    <tr><td>C2</td><td><span class="sev crit">Critical</span></td><td class="loc">encode_dash/server.py:387-394</td><td>Negative Content-Length bypasses the body cap; <code>rfile.read(-1)</code> drains the connection</td></tr>
+    <tr><td>I1</td><td><span class="sev imp">Important</span></td><td class="loc">Auto-Boost-Av1an.py:1337-1396</td><td>VS-ZIP fallback runs unconditionally and overwrites the fssimu2 score log</td></tr>
+    <tr><td>I2</td><td><span class="sev imp">Important</span></td><td class="loc">Auto-Boost-Av1an.py:578-582</td><td>VPY staleness check inspects only the <code># convert=</code> marker</td></tr>
+    <tr><td>I3</td><td><span class="sev imp">Important</span></td><td class="loc">Auto-Boost-Av1an.py:69,1260-1268</td><td><code>shell=True</code> on Windows with list args breaks paths and can inject commands</td></tr>
+    <tr><td>I4</td><td><span class="sev imp">Important</span></td><td class="loc">Auto-Boost-Av1an.py:988</td><td><code>_hr</code> is always False; <code>--no-boosting</code> on HD content picks the SD CRF</td></tr>
+    <tr><td>I5</td><td><span class="sev imp">Important</span></td><td class="loc">svtav1-dispatch.py:422-436</td><td>Remote teardown kill aborts a finished encode instead of muxing it</td></tr>
+    <tr><td>I6</td><td><span class="sev imp">Important</span></td><td class="loc">svtav1-dispatch.py:379-403</td><td><code>remote_root</code> interpolated raw into a remote shell line and rsync-path</td></tr>
+    <tr><td>I7</td><td><span class="sev imp">Important</span></td><td class="loc">av1an-dispatch.py:22-35,219-220</td><td>Video-only source misreported as 2 channels; audio pass injected and fails</td></tr>
+    <tr><td>I8</td><td><span class="sev imp">Important</span></td><td class="loc">pipeline.py:308-312,362-366,585-596</td><td>Ctrl+C during a mux step does not stop the batch</td></tr>
+    <tr><td>I9</td><td><span class="sev imp">Important</span></td><td class="loc">encode-capacity.py:309-335</td><td>Decoder exit code never checked; failed decode reports a successful fast encode</td></tr>
+    <tr><td>I10</td><td><span class="sev imp">Important</span></td><td class="loc">encode_dash/supervisor.py:108-121</td><td><code>_record_pid</code> is check-then-replace and can clobber a live O_EXCL claim</td></tr>
+    <tr><td>I11</td><td><span class="sev imp">Important</span></td><td class="loc">encode_dash/supervisor.py:status()</td><td><code>status()</code> is dead code; the comment claiming a merge is false; child stays a zombie</td></tr>
+    <tr><td>I12</td><td><span class="sev imp">Important</span></td><td class="loc">encode_dash/model.py:200-203</td><td>Heartbeat <code>batch_pid</code> not type-checked before <code>os.kill</code>; a corrupt row 500s /metrics</td></tr>
+    <tr><td>I13</td><td><span class="sev imp">Important</span></td><td class="loc">archive-batch.py:654</td><td>Stale-claim takeover is TOCTOU; two batches can both take over and run one manifest</td></tr>
+    <tr><td>I14</td><td><span class="sev imp">Important</span></td><td class="loc">archive_batch/scheduler.py:286-366</td><td>Retry duplicate-guard window lets one clip be requeued while a lane takes it</td></tr>
+    <tr><td>I15</td><td><span class="sev imp">Important</span></td><td class="loc">comp.py:1346</td><td><code>str.replace</code> instead of <code>re.sub</code>; filename sanitization never runs</td></tr>
+    <tr><td>I16</td><td><span class="sev imp">Important</span></td><td class="loc">archive-batch.py:272-295</td><td>File descriptor leaked when Popen raises; CSV left mid-write</td></tr>
+    <tr><td>I17</td><td><span class="sev imp">Important</span></td><td class="loc">archive-monitor.py:117-131</td><td>"retry" records counted as failures in the failure summary</td></tr>
+    <tr><td>I18</td><td><span class="sev imp">Important</span></td><td class="loc">tag.py:299-308</td><td>XML values unescaped; an ampersand in a batch flag rejects the whole tag</td></tr>
+    <tr><td>I19</td><td><span class="sev imp">Important</span></td><td class="loc">av1an-batch-*.sh:74-80 · run_linux_dance_HQ_crf27.sh:254</td><td>tag.py/cleanup.py exit codes unchecked; failures exit 0</td></tr>
+    <tr><td>I20</td><td><span class="sev imp">Important</span></td><td class="loc">tests/test_cli.py:23</td><td>CALLBACK_IP test is a tautology that pins the code's own default literal</td></tr>
+  </table>
+
+  <h2>Critical findings</h2>
+
+  <div class="finding crit">
+    <div class="h"><span class="sev crit">Critical</span><span class="t">Pid-reuse poisons the pid-file liveness protocol</span><span class="id">C1</span></div>
+    <div class="loc">encode_dash/supervisor.py:133 (adopt), 154 (start) · encode_dash/model.py:196,202 (batch), 244 (lane) · archive-batch.py:647-648</div>
+    <p>Every liveness decision treats "os.kill(pid, 0) succeeds" as "the batch runs", with no
+    process-identity check. <code>started_at</code> is written (supervisor.py:120) but never
+    compared. On a host that shells out ffmpeg/ffprobe constantly, a crashed batch's pid is
+    recycled by the kernel: <code>start()</code> raises <code>AlreadyRunning</code> forever with no UI
+    recovery, <code>adopt()</code> claims an unrelated process as the batch, and
+    <code>model._batch</code> reports <code>encode_batch_up=1</code> so the EncodeBatchDown alert
+    never fires.</p>
+    <p class="fix"><b>Fix:</b> compare /proc/&lt;pid&gt;/stat field 22 (starttime) against the value
+    captured at spawn/claim time; on mismatch, treat the file as stale, clear it, and proceed.</p>
+  </div>
+
+  <div class="finding crit">
+    <div class="h"><span class="sev crit">Critical</span><span class="t">Negative Content-Length bypasses the body cap</span><span class="id">C2</span></div>
+    <div class="loc">encode_dash/server.py:387-394</div>
+    <p><code>int("-1")</code> parses, <code>-1 &gt; MAX_BODY</code> is false, and
+    <code>self.rfile.read(-1)</code> drains the whole connection until EOF. An unauthenticated
+    tailnet peer can stream unbounded bytes into the daemon. There is also no socket timeout on
+    the <code>ThreadingHTTPServer</code> and no thread cap, so a peer that declares a length and then
+    stalls holds one thread forever.</p>
+    <p class="fix"><b>Fix:</b> reject <code>length &lt; 0</code>, read exactly <code>length</code>
+    bytes, and set a connection read timeout.</p>
+  </div>
+
+  <h2>Main pipeline — Auto-Boost-Av1an.py</h2>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t">VS-ZIP fallback runs unconditionally and discards the fssimu2 result</span><span class="id">I1</span></div>
+    <div class="loc">Auto-Boost-Av1an.py:1337-1396</div>
+    <p>After a successful fssimu2 run (<code>metric_calculated = True</code> at 1338) there is no
+    early return, so the code recomputes SSIMULACRA2 with VS-ZIP and overwrites
+    <code>ssimu2_log_file</code> (1396). In <code>--ssimu2 fssimu2</code> mode the fssimu2 worker
+    results never drive the zone calculation. If the vszip plugin is missing, the fallback raises
+    <code>SystemExit(1)</code> and kills the whole pipeline even after a successful fssimu2 run.
+    Verified in the source.</p>
+    <p class="fix"><b>Fix:</b> guard the fallback with <code>if not metric_calculated:</code> or
+    return after the fssimu2 block writes its log.</p>
+  </div>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t">VPY staleness check covers only one setting</span><span class="id">I2</span></div>
+    <div class="loc">Auto-Boost-Av1an.py:578-582</div>
+    <p>The check only inspects the <code># convert=</code> marker. Changing any other setting baked
+    into the template (<code>--denoise-scunet</code>, <code>--denoise-model</code>,
+    <code>--denoise-rvrt</code>, <code>settings.txt</code> downscale/kernel/target_res, autocrop)
+    silently reuses the stale VPY. If <code>--convert-to-YUV420P10</code> differs, the VPY is
+    regenerated with different crop/denoise settings than produced the existing fast-pass MKV and
+    metrics logs.</p>
+    <p class="fix"><b>Fix:</b> write a hash of every template-relevant argument into the marker and
+    regenerate on mismatch.</p>
+  </div>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t">shell=True on Windows breaks paths and can inject commands</span><span class="id">I3</span></div>
+    <div class="loc">Auto-Boost-Av1an.py:69, 1260-1268</div>
+    <p><code>subprocess.run(cmd, ..., shell=use_shell)</code> uses <code>shell=True</code> on
+    Windows. With a list argument subprocess joins it unquoted, so a source path containing spaces
+    breaks, and shell metacharacters (<code>&amp;</code>, <code>|</code>, <code>;</code>) in a
+    filename inject commands.</p>
+    <p class="fix"><b>Fix:</b> always pass the list with <code>shell=False</code>; subprocess quotes
+    Windows list args correctly.</p>
+  </div>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t"><code>_hr</code> is always False — SD CRF chosen on HD content</span><span class="id">I4</span></div>
+    <div class="loc">Auto-Boost-Av1an.py:988</div>
+    <p><code>_hr = bool(globals().get("hr", False))</code> is always False: <code>hr</code> is never
+    assigned at module scope (it is a local in <code>get_file_info</code> and the VPY <code>exec</code>
+    writes <code>src</code> to the locals dict, not globals). So <code>--no-boosting</code> on 1080p+
+    content always picks the SD CRF. The boosting path is unaffected because the CRF comes from the
+    scenes JSON.</p>
+    <p class="fix"><b>Fix:</b> compute HR from the VPY as <code>fast_pass</code> does at 872, or thread
+    it through <code>get_file_info</code>.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">SIGTERM path waits forever on a stuck child</span><span class="id">M1</span></div>
+    <div class="loc">Auto-Boost-Av1an.py:948-951, 1017-1020</div>
+    <p>After <code>os.killpg(proc.pid, SIGTERM)</code>, <code>proc.wait()</code> has no timeout; if
+    av1an or its children ignore SIGTERM, Ctrl+C hangs the script.</p>
+    <p class="fix"><b>Fix:</b> <code>wait(timeout=...)</code> then escalate to SIGKILL.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">PAM temp files leak on worker crash</span><span class="id">M2</span></div>
+    <div class="loc">Auto-Boost-Av1an.py:1263-1283</div>
+    <p>PAM cleanup sits after the fssimu2 try/except, so a worker crash leaves
+    <code>ref_*.pam</code>/<code>dist_*.pam</code> files accumulating in <code>tmp_dir</code>.</p>
+    <p class="fix"><b>Fix:</b> unlink in a <code>finally</code>.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">Resume crashes on a half-written info cache</span><span class="id">M3</span></div>
+    <div class="loc">Auto-Boost-Av1an.py:754-766, 846-850</div>
+    <p>The cached <code>info_src.txt</code> is read with fixed slices but written in two separate
+    appends. A kill between them (or an empty file) makes resume raise an unhandled
+    <code>IndexError</code>/<code>ValueError</code> instead of rescanning.</p>
+    <p class="fix"><b>Fix:</b> validate the cache (line count / int-parse) and rescan on failure.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">CRF parsed by fixed character slicing</span><span class="id">M4</span></div>
+    <div class="loc">Auto-Boost-Av1an.py:400-412</div>
+    <p>CRF is sliced out of <code>--crf</code> by fixed indices; <code>--crf 100.25</code> mis-parses
+    to 100.2, and the code silently mutates the global <code>quality</code> used by the final pass.</p>
+    <p class="fix"><b>Fix:</b> parse with a regex/split; do not overwrite <code>quality</code> from a
+    fast-pass-only flag.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">Dead code and unused return values</span><span class="id">M5</span></div>
+    <div class="loc">Auto-Boost-Av1an.py:746-780, 1130, 1821, 1857</div>
+    <p><code>get_file_info</code> modes <code>"enc"</code>/<code>"len"</code> are never called;
+    <code>tried_vship</code> is set but never read; width/height/fps return values are discarded at
+    the call sites.</p>
+    <p class="fix"><b>Fix:</b> delete or actually use them.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">Model dir interpolated unescaped into VPY source</span><span class="id">M6</span></div>
+    <div class="loc">Auto-Boost-Av1an.py:570, 661, 740</div>
+    <p><code>denoise_model_dir</code> is interpolated into the generated VPY unescaped; a Windows path
+    with backslashes produces a broken or injected string.</p>
+    <p class="fix"><b>Fix:</b> escape via <code>repr</code> or <code>json.dumps</code>.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">Unvalidated int() casts on user args</span><span class="id">M7</span></div>
+    <div class="loc">Auto-Boost-Av1an.py:281, 353, 361, 370</div>
+    <p><code>int()</code> on <code>--stage</code>, <code>--ssimu2-cpu-workers</code>,
+    <code>--workers</code>, <code>--photon-noise</code> raises a raw traceback instead of an argparse
+    error.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">Duplicated CRF mapping and final-move blocks</span><span class="id">M8</span></div>
+    <div class="loc">Auto-Boost-Av1an.py:881-891, 989-999, 1590-1600, 1829-1841, 1866-1877</div>
+    <p>The quality-to-CRF mapping is duplicated three times with near-identical bodies — finding I4
+    exists precisely because the copies drifted. The final-output move block is also duplicated.</p>
+    <p class="fix"><b>Fix:</b> hoist to one helper.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">Module-level file handle leak; import executes the pipeline</span><span class="id">M9</span></div>
+    <div class="loc">Auto-Boost-Av1an.py:579, 1801-1802, 1878-1880</div>
+    <p><code>open(vpy_file).read()</code> at module level leaks a handle (no <code>with</code>).
+    <code>--no-boosting</code> silently overrides an explicit <code>--stage</code>, and there is no
+    <code>if __name__ == "__main__"</code> guard, so importing the module runs the whole pipeline.</p>
+  </div>
+
+  <h2>Dispatch layer — svtav1 / av1an / pipeline / encode-capacity</h2>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t">Remote teardown kill discards a finished encode</span><span class="id">I5</span></div>
+    <div class="loc">svtav1-dispatch.py:422-436</div>
+    <p>If the remote TRT/VS teardown outlasts the 30s <code>ssh_proc.wait()</code> — the code's own
+    comment notes this teardown lags the last frame — <code>ssh_proc</code> is killed and
+    <code>sys.exit(15)</code> aborts the whole encode with "output is truncated", even though every
+    frame already landed and the IVF is complete. It never muxes, so a finished encode is discarded.</p>
+    <p class="fix"><b>Fix:</b> only abort when the delivered frame count is actually short; treat a
+    teardown kill as a warning.</p>
+  </div>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t">remote_root interpolated raw into remote shell and rsync-path</span><span class="id">I6</span></div>
+    <div class="loc">svtav1-dispatch.py:379-403</div>
+    <p><code>remote_root</code> goes raw into <code>cd {remote_root} &amp;&amp; ... exec {remote_cmd}</code>
+    and into <code>--rsync-path</code>, while every other value is <code>shlex.quote</code>d. A root
+    containing a space breaks <code>cd</code>; shell metacharacters inject into the remote shell.</p>
+    <p class="fix"><b>Fix:</b> <code>shlex.quote(remote_root)</code> and quote <code>remote_dir</code>
+    inside the rsync-path.</p>
+  </div>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t">Video-only source gets an audio pass and fails</span><span class="id">I7</span></div>
+    <div class="loc">av1an-dispatch.py:22-35, 219-220</div>
+    <p><code>get_audio_channels</code> returns 2 for a video-only source (empty stdout →
+    <code>int("")</code> ValueError), and the caller unconditionally injects
+    <code>-a -c:a libopus -b:a 128k</code>, so an encode of a no-audio file fails in av1an's audio
+    pass. The equivalent function in svtav1-dispatch.py was already fixed (498-500).</p>
+    <p class="fix"><b>Fix:</b> return 0 on empty output and skip the <code>-a</code> flag.</p>
+  </div>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t">Ctrl+C during a mux step does not stop the batch</span><span class="id">I8</span></div>
+    <div class="loc">pipeline.py:308-312, 362-366, 585-596</div>
+    <p><code>_interrupted</code> is only checked after scene detection and dispatch. A Ctrl+C during
+    the mkvmerge/ffmpeg mux steps fails that one file and the loop keeps encoding the rest.</p>
+    <p class="fix"><b>Fix:</b> check <code>_interrupted</code> in the main loop after every step.</p>
+  </div>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t">Benchmark ignores decoder failures</span><span class="id">I9</span></div>
+    <div class="loc">encode-capacity.py:309-335</div>
+    <p>The decoder's (<code>p1</code>/ffmpeg) exit code is never checked. If ffmpeg fails (corrupt
+    clip, missing codec), the encoder finalizes a short stream and exits 0, and the run is reported
+    as a successful N-frame encode at inflated fps — silently poisoning every phase of the
+    measurement.</p>
+    <p class="fix"><b>Fix:</b> capture <code>p1.returncode</code> and treat nonzero as an error.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">BSVD thSAD swap misfires on explicit default</span><span class="id">M10</span></div>
+    <div class="loc">svtav1-dispatch.py:990-991</div>
+    <p>The BSVD+SMDegrain thSAD=150 swap triggers on any value equal to the 350 default, including an
+    explicit <code>--denoise-thsad 350</code>, contradicting the comment.</p>
+    <p class="fix"><b>Fix:</b> track whether the flag was given.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">Broken ssh yields a traceback and a 300s stall</span><span class="id">M11</span></div>
+    <div class="loc">svtav1-dispatch.py:397-404</div>
+    <p><code>ssh_proc.stdin.write</code> can raise <code>BrokenPipeError</code> uncaught when ssh dies
+    immediately (connection refused), and a failed ssh leaves the local netstream receiver waiting its
+    full 300s <code>accept_timeout</code>.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">Temp cleanup omissions and doc drift</span><span class="id">M12</span></div>
+    <div class="loc">svtav1-dispatch.py:1254-1261, 727 vs 775</div>
+    <p>Cleanup omits <code>.ffindex</code>, <code>_remote.log</code>, <code>_netstream.log</code>, and
+    windowed <code>_denoise.source.vpy</code>. USAGE documents <code>--bsvd-overlap</code> default 16
+    but the code default is 32. Remote staging uses a shared <code>Temp/_remote/{basename}</code>, so
+    same-named sources from different directories clobber each other.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">dispatch.py auto-detect probe hangs; resume contradicts cleanup</span><span class="id">M13</span></div>
+    <div class="loc">dispatch.py:121-136 · pipeline.py:316-336</div>
+    <p>The non-420 auto-detect <code>ffprobe</code> has no timeout and swallows all exceptions, so a
+    hung probe silently skips the documented YUV420P10 conversion. Hidden av1an working dirs are
+    <code>rmtree</code>d right before dispatch is invoked with <code>--resume</code>, so resume can
+    never pick up state. <code>source.stat()</code> raises uncaught if a file vanishes mid-run.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">encode-capacity children can hang forever</span><span class="id">M14</span></div>
+    <div class="loc">encode-capacity.py:321-326, 418-421, 423-432, 502-507</div>
+    <p>No timeout on Popen/communicate for encoder or denoise phases; a hung child blocks the
+    benchmark indefinitely (worst over ssh). A failed denoise phase with 0 frames is stored but never
+    flagged. <code>Discard.stop()</code> doesn't join its thread before <code>sink.bytes</code> is
+    read.</p>
+  </div>
+
+  <h2>Encode dashboard daemon — encode_dash/*</h2>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t"><code>_record_pid</code> can clobber a live claim</span><span class="id">I10</span></div>
+    <div class="loc">encode_dash/supervisor.py:108-121</div>
+    <p><code>_record_pid</code> is check-then-replace, not compare-and-swap. It reads
+    <code>batch.json</code>, decides it is safe to write, then <code>os.replace</code>s
+    unconditionally. The batch side's claim uses <code>O_EXCL</code> (archive-batch.py:639), the
+    authoritative primitive. A batch started from a shell in the microseconds between the read and the
+    replace wins the claim and then has its file overwritten with the daemon's pid. Both batches then
+    believe they own the run — two schedulers over the same manifest.</p>
+    <p class="fix"><b>Fix:</b> after <code>os.replace</code>, re-read and confirm the file still names
+    our pid; if it does not, kill our own spawn and let the winner stand.</p>
+  </div>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t"><code>status()</code> is dead code; the spawn-to-claim window never reaps</span><span class="id">I11</span></div>
+    <div class="loc">encode_dash/supervisor.py:status() · encode-dash.py:89-97</div>
+    <p>Nothing calls <code>status()</code>; the comment claiming the supervisor's spawned pid is merged
+    into the snapshot is false. The daemon never reaps its child except on a manual <code>start()</code>,
+    so a finished batch stays a zombie for the daemon's whole lifetime, and the page shows "not
+    running" for the entire spawn-to-<code>_mark_claimed</code> window.</p>
+    <p class="fix"><b>Fix:</b> call <code>status()</code> in <code>_snapshot</code> and merge, or drop
+    the comment.</p>
+  </div>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t">Heartbeat pid not type-checked before os.kill — a corrupt row 500s /metrics</span><span class="id">I12</span></div>
+    <div class="loc">encode_dash/model.py:200-203, 244</div>
+    <p><code>row.get("batch_pid")</code> flows straight into <code>_alive</code>. A string value makes
+    <code>os.kill</code> raise <code>TypeError</code>, which <code>_alive</code> does not catch (it only
+    handles <code>OSError</code>). That takes out the Prometheus scrape — the exact failure this module
+    was written to survive (its own comment at 182-187 demands the guard). The primary path at 188
+    type-checks correctly; the heartbeat fallback loop does not. Verified in the source.</p>
+    <p class="fix"><b>Fix:</b> mirror <code>supervisor._pid_from_row</code> in the heartbeat loop.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">Snapshot merge never happens; small protocol gaps</span><span class="id">M15</span></div>
+    <div class="loc">encode_dash/supervisor.py · model.py</div>
+    <p>Beyond the above, the adopt path never clears the <code>_proc</code> reference semantics
+    completely and <code>started_at</code> is written but never consumed. These are consequences of C1
+    and I11 rather than independent defects.</p>
+  </div>
+
+  <h2>Batch runner — archive-batch.py, scheduler, monitor</h2>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t">Stale-claim takeover is a TOCTOU race</span><span class="id">I13</span></div>
+    <div class="loc">archive-batch.py:654</div>
+    <p><code>_claim_run</code> re-checks <code>_alive(other)</code>, then
+    <code>_write_batch_file()</code> does an unconditional <code>os.replace</code>. Two batches that
+    both read a stale file and start concurrently both take over; the loser never re-checks under
+    <code>O_EXCL</code>, so two schedulers run over the same manifest — the exact disaster the
+    <code>O_EXCL</code> claim exists to prevent.</p>
+    <p class="fix"><b>Fix:</b> redo the takeover with
+    <code>os.open(BATCH_FILE, O_WRONLY|O_CREAT|O_EXCL)</code> and, on <code>FileExistsError</code>,
+    re-read and re-decide.</p>
+  </div>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t">Retry duplicate-guard window</span><span class="id">I14</span></div>
+    <div class="loc">archive_batch/scheduler.py:286-366</div>
+    <p>Between <code>queue.get_nowait()</code> and <code>_in_flight.add(clip.src)</code> a clip is in
+    neither the queue nor <code>_in_flight</code>, so a <code>retry</code> control request in that
+    window requeues a second copy. Two lanes then encode and publish to the same destination —
+    precisely what the docstring at 97-101 claims the guard prevents.</p>
+    <p class="fix"><b>Fix:</b> register <code>_in_flight</code> before <code>get_nowait</code> (in the
+    same lock) or gate <code>retry</code> on a flag set at take time.</p>
+  </div>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t">start_trace leaks an fd on Popen failure</span><span class="id">I16</span></div>
+    <div class="loc">archive-batch.py:272-295</div>
+    <p>The CSV <code>handle</code> is opened before <code>Popen</code>; if the local or remote
+    <code>Popen</code> (or the remote <code>proc.stdin.write</code>) raises, the <code>except</code>
+    returns <code>None</code> without closing <code>handle</code>, leaking an fd per clip and leaving
+    the CSV mid-write.</p>
+    <p class="fix"><b>Fix:</b> close in an <code>except</code>/<code>finally</code>.</p>
+  </div>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t">"retry" records counted as failures</span><span class="id">I17</span></div>
+    <div class="loc">archive-monitor.py:117-131</div>
+    <p><code>read_state</code> counts every non-"done" record as a failure, so "retry" records (an
+    instruction, not a result) inflate the failure count and appear in "recent failures".</p>
+    <p class="fix"><b>Fix:</b> <code>elif status == "failed"</code>.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">XML values unescaped in tag.py</span><span class="id">I18</span></div>
+    <div class="loc">tag.py:299-308</div>
+    <p>This one is arguably Important: <code>encoder_name</code> and <code>encoding_settings</code> are
+    interpolated into XML unescaped. Any <code>&amp;</code>/<code>&lt;</code> in a batch flag produces
+    malformed XML; <code>mkvpropedit</code> rejects the whole tag, so every file in the run fails to
+    tag with a confusing error.</p>
+    <p class="fix"><b>Fix:</b> <code>xml.sax.saxutils.escape</code> the two values.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">comp.py robustness</span><span class="id">M16</span></div>
+    <div class="loc">comp.py:700-703, 1113, 1346</div>
+    <p>Bare <code>str.replace</code> instead of <code>re.sub</code> means suffix sanitization never runs
+    (I15). <code>get_suffixes</code> raises <code>IndexError</code> when one filename is a prefix of the
+    other. <code>int(anime_episode_number)</code> raises when no filename carries an episode number.</p>
+  </div>
+
+  <h2>Audio, mux, streaming — opus.py, mux.py, netstream.py</h2>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">Orphaned encoder processes on stderr-read failure</span><span class="id">M17</span></div>
+    <div class="loc">opus.py:388-391, 500-506</div>
+    <p>When the stderr read loop raises (e.g. <code>UnicodeDecodeError</code> on text pipes), the
+    <code>except</code> records the failure and calls <code>task_done()</code> but never kills or reaps
+    the still-running ffmpeg/opusenc, leaving orphans competing for CPU across a large batch.</p>
+    <p class="fix"><b>Fix:</b> terminate <code>proc</code> in the <code>except</code>.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">Mux temp files only removed on success</span><span class="id">M18</span></div>
+    <div class="loc">mux.py:323-324, 372-374</div>
+    <p><code>temp_mkv</code>/<code>timestamp_file</code> are removed only on success; a
+    <code>CalledProcessError</code> from Extract or Merge leaves them behind and the next run's
+    <code>-J</code> globbing can pick up stale <code>*_temp_no_video.mkv</code>.</p>
+    <p class="fix"><b>Fix:</b> clean up in a <code>finally</code>.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">netstream exits via traceback; opusenc presence check wrong</span><span class="id">M19</span></div>
+    <div class="loc">netstream.py:151-163, 199-203 · opus.py:122-124</div>
+    <p><code>recv_into</code> (<code>ConnectionResetError</code>) and <code>out.write</code>/<code>sendall</code>
+    (<code>BrokenPipeError</code>) are uncaught — fail-loudly is the right contract, but a clean
+    nonzero exit is strictly better. <code>USE_FFMPEG_FOR_OPUS</code> tests <code>not
+    Path(OPUSENC_EXE).exists()</code> where <code>OPUSENC_EXE</code> may be the bare name
+    <code>"opusenc"</code>, testing a relative file in CWD rather than the binary on PATH.</p>
+  </div>
+
+  <h2>Shell scripts</h2>
+
+  <div class="finding imp">
+    <div class="h"><span class="sev imp">Important</span><span class="t">Unchecked tag/cleanup exit codes; no set -euo pipefail</span><span class="id">I19</span></div>
+    <div class="loc">av1an-batch-anime-crf32.sh:74-77 · av1an-batch-liveaction-crf32.sh:76-80 · av1an-batch-dance-crf27.sh:76-79 · run_linux_dance_HQ_crf27.sh:254</div>
+    <p>In the batch scripts, <code>python3 tools/tag.py</code> and <code>python3 tools/cleanup.py</code>
+    exit codes are never checked; a tag or cleanup failure still prints "All tasks finished." and exits
+    0. The dance-HQ script checks encode failures but swallows cleanup failures the same way. No
+    primary script uses <code>set -euo pipefail</code>.</p>
+    <p class="fix"><b>Fix:</b> check <code>$?</code> after each and fold into the failure path.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">Worker-count grep yields an empty string unchecked</span><span class="id">M20</span></div>
+    <div class="loc">av1an-batch-*.sh:21-26</div>
+    <p><code>WORKER_COUNT=$(grep "^workers=" "$CONFIG_FILE" | cut -d= -f2 ...)</code> yields an empty
+    string (→ <code>--workers ""</code>) if <code>workercount.py</code> fails or the config has no
+    <code>workers=</code> line; a <code>workercount.py</code> failure is silently ignored and 4 used.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">setup.sh tmpfs leaks on failure; unchecked module sourcing</span><span class="id">M21</span></div>
+    <div class="loc">setup.sh:14, 17-32, 372-384</div>
+    <p>The <code>build_tmp</code> tmpfs is unmounted only on the happy path of
+    <code>install_all_tools</code>; a component failure returns 1 before the unmount block, and the EXIT
+    trap does not unmount, so a failed/interrupted install leaves a tmpfs mounted until reboot. Sourcing
+    of <code>setup/*.sh</code> modules is unchecked, so a missing module surfaces as "command not found"
+    much later.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">activate-venv.sh operational risks</span><span class="id">M22</span></div>
+    <div class="loc">activate-venv.sh:13-15, 125</div>
+    <p><code>LD_PRELOAD</code> of libmimalloc is prepended for every child of the sourcing shell,
+    including unrelated Python tools; a version-incompatible mimalloc can crash children. A missing venv
+    falls back to system python3 with only a WARN; on a host whose system Python is 3.14 (PyO3 packages
+    break), later <code>python3 tools/...</code> invocations fail confusingly.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">Tests pin implementation, not behavior</span><span class="id">M23</span></div>
+    <div class="loc">tests/test_cli.py:42-45, 331-336 · tests/test_encode_dash_model.py:433-447</div>
+    <p>Several tests re-parse <code>inspect.getsource(...)</code> source text or assert signature shape
+    (<code>parameters[:2]</code>); a pure refactor breaks them without a behavior change. The model test
+    can even pass while runtime ordering differs; a correct spy-based version already exists at
+    test_encode_dash_model.py:338-360. <code>test_yield.py:56</code> is a worst-case 70s stall, and
+    <code>test_cli.py:245</code> sleeps a fixed 0.5s before a survivor check instead of polling to a
+    deadline.</p>
+  </div>
+
+  <div class="finding min">
+    <div class="h"><span class="sev min">Minor</span><span class="t">No pytest configuration</span><span class="id">M24</span></div>
+    <div class="loc">repo root</div>
+    <p>No <code>pytest.ini</code>, <code>pyproject.toml</code>, or <code>setup.cfg</code> pins
+    <code>testpaths</code>, markers, or filters. 384 tests collect (verified), but <code>pytest</code>
+    from repo root relies on convention; several tests skip on hosts without vspipe, making pass/fail
+    host-dependent.</p>
+  </div>
+
+  <h2>What was checked and found sound</h2>
+  <div class="note">
+    <h4>No defect found in these areas — verified in source</h4>
+    <ul>
+      <li><b>Path traversal</b> in <code>server._static</code> (server.py:108-136): decode-then-normpath, NUL reject, realpath + prefix check — correct.</li>
+      <li><b>CSRF gate</b> (server.py:359-382): <code>application/json</code> forces an unsatisfiable preflight; the revision requirement on roster writes is coherent.</li>
+      <li><b>XSS</b> in the dashboard UI: <code>app.js</code> escapes all interpolations; banners use <code>textContent</code>.</li>
+      <li><b>Atomicity of the normal-path writes</b>: both <code>_record_pid</code> and <code>_write_batch_file</code>/<code>_mark_claimed</code> are tmp-then-<code>os.replace</code>; a killed batch leaves a dead-pid file that <code>adopt()</code> clears; an empty file from a mid-write kill reads as <code>None</code>.</li>
+      <li><b>No <code>shell=True</code></b> anywhere in the dispatch layer; ffprobe/frame-count verification and source-failure-as-fatal handling are defensive.</li>
+      <li><b>Test hygiene</b>: no fixed ports (loopback bind to port 0), sockets bound before threads start, dead-pid fixtures spawn/reap real children, subprocesses SIGKILLed and reaped in <code>finally</code>, poll loops deadline-bounded.</li>
+      <li><b>Shell quoting</b>: run scripts <code>cd "$(dirname "$0")"</code>, use <code>-print0</code> + <code>read -d ''</code> and quote everything; spaces in clip names are safe. <code>setup.sh</code> re-execs into bash under <code>sudo sh</code> and hands the prefix back on exit.</li>
+    </ul>
+  </div>
+
+  <h2>Priority action list</h2>
+  <table>
+    <tr><th>#</th><th>ID</th><th>Action</th><th>Effort</th></tr>
+    <tr><td>1</td><td>C2</td><td>Reject <code>length &lt; 0</code>, read exactly <code>length</code>, add a socket timeout and thread cap in the HTTP server</td><td>Small</td></tr>
+    <tr><td>2</td><td>C1</td><td>Pin process identity with /proc/<pid>/stat starttime in supervisor and model liveness checks</td><td>Medium</td></tr>
+    <tr><td>3</td><td>I1</td><td>Guard the VS-ZIP fallback so a successful fssimu2 run is never overwritten or killed</td><td>Small</td></tr>
+    <tr><td>4</td><td>I12</td><td>Type-check heartbeat <code>batch_pid</code> before <code>os.kill</code> (mirror <code>_pid_from_row</code>)</td><td>Small</td></tr>
+    <tr><td>5</td><td>I10, I13</td><td>Make both claim paths compare-and-swap under <code>O_EXCL</code>; re-verify after write</td><td>Medium</td></tr>
+    <tr><td>6</td><td>I7</td><td>Return 0 channels for video-only sources; skip the <code>-a</code> flag</td><td>Small</td></tr>
+    <tr><td>7</td><td>I9</td><td>Check the decoder exit code in <code>encode-capacity</code></td><td>Small</td></tr>
+    <tr><td>8</td><td>I5, I6</td><td>Don't abort on teardown kill; <code>shlex.quote</code> remote_root</td><td>Medium</td></tr>
+    <tr><td>9</td><td>I14, I17, I18</td><td>Close the retry guard window; fix the retry-as-failure count; escape XML</td><td>Small</td></tr>
+    <tr><td>10</td><td>I19</td><td>Check <code>$?</code> after tag.py/cleanup.py in the batch scripts</td><td>Small</td></tr>
+  </table>
+
+  <h2>Method</h2>
+  <div class="method">
+    <p>Five parallel review passes, one per subsystem: main pipeline (<code>Auto-Boost-Av1an.py</code>);
+    dispatch layer (<code>svtav1-dispatch.py</code>, <code>dispatch.py</code>, <code>av1an-dispatch.py</code>,
+    <code>pipeline.py</code>, <code>encode-capacity.py</code>); dashboard daemon (<code>encode_dash/*</code>
+    plus the cross-process pid-file contract with <code>archive-batch.py</code>); batch/mux/audio/stream
+    tools; and tests + shell scripts. Every module was read in full and compiled with
+    <code>python3 -m py_compile</code> (all pass). The top Critical and Important claims were re-verified
+    directly in the source before inclusion. Test discovery verified with
+    <code>pytest --collect-only</code> (384 tests). This is a static review; no code was executed except
+    compilation and test collection.</p>
+    <p>Severity definitions: <b>Critical</b> = security boundary bypass or a permanent service failure
+    (cannot restart). <b>Important</b> = wrong output, silent failure, or a race that can corrupt a run.
+    <b>Minor</b> = robustness, cleanup, or test-quality issues with a clear fix.</p>
+  </div>
+
+  <h2 id="verification">Verification addendum — 2026-08-23</h2>
+  <div class="method">
+    <p>Every Critical and Important finding plus the Minors were re-checked against the source
+    at the same head (<code>a061ed8</code>, still HEAD at verification time), in five parallel
+    read-only passes covering the same five subsystems as this review. Verdicts below use the
+    actual current line numbers.</p>
+    <p><b>Overall verdict:</b> the review is accurate. Both Critical findings and every Important
+    finding hold in the source. Four claims are partially correct and are corrected below; one
+    factual claim (the test count) is wrong. One additional defect was found during verification.</p>
+  </div>
+
+  <h3>Verdicts</h3>
+  <table>
+    <tr><th>ID</th><th>Verdict</th><th>Evidence</th></tr>
+    <tr><td class="loc">C1</td><td><span class="sev ok">Confirmed</span></td>
+        <td><code>_alive</code> is a bare <code>os.kill(pid, 0)</code>; no identity check exists anywhere (<code>starttime|/proc.*stat</code> has zero hits in the daemon and batch code). <code>started_at</code> is consumed only for heartbeat elapsed time, never compared to the pid-file record. Actual lines: supervisor.py:20-32/123-169, model.py:196/200-203/243-244, archive-batch.py:617-624. Nuance: the model's primary path also requires the <code>claimed</code> marker, so a false "running" report needs a claimed file.</td></tr>
+    <tr><td class="loc">C2</td><td><span class="sev ok">Confirmed</span></td>
+        <td>server.py:387 parses <code>-1</code>, :391 only checks <code>&gt; MAX_BODY</code>, :394 calls <code>rfile.read(-1)</code>. Server created at :479 with only <code>daemon_threads = True</code>: no socket timeout, no thread cap.</td></tr>
+    <tr><td class="loc">I1, I2, I4-I6, I8-I11, I13-I19</td><td><span class="sev ok">Confirmed</span></td>
+        <td>All verified in source at the cited locations. Exact matches include comp.py:1346 stripping the literal string <code>[\\/:\"*&lt;&gt;|]+</code>, no XML escaping anywhere in tag.py, the scheduler comment at 360-364 admitting the retry window, and <code>metric_calculated = True</code> at 1338 with no early return before the VS-ZIP block.</td></tr>
+    <tr><td class="loc">I3</td><td><span class="sev min">Partial</span></td>
+        <td><code>shell=use_shell</code> with a list arg is real (lines 69, 1260-1266). But CPython applies <code>list2cmdline()</code> before handing args to <code>cmd.exe /c</code>, so paths with spaces do <b>not</b> break. Residual risk: <code>%VAR%</code> expansion survives double quotes, plus pointless risk from <code>shell=True</code> itself. Real defect, much smaller than claimed.</td></tr>
+    <tr><td class="loc">I7</td><td><span class="sev min">Partial (mechanism)</span></td>
+        <td>The empty-stdout <code>int("")</code> ValueError is raised <i>inside</i> <code>get_audio_channels</code> and caught by its own handler, which returns 2 — the caller never sees an exception. The conclusion stands unchanged: video-only source gets 2 channels and an unconditional <code>-a -c:a libopus</code> injection (av1an-dispatch.py:22-35, 219-220); svtav1 counterpart fixed at 498-502.</td></tr>
+    <tr><td class="loc">I20</td><td><span class="sev ok">Confirmed</span></td>
+        <td>tests/test_cli.py:22-23 asserts the constant against its own default literal; it never exercises the env override despite the test name.</td></tr>
+    <tr><td class="loc">M18</td><td><span class="sev min">Partial</span></td>
+        <td>Temp-file leak confirmed: cleanup sits in the <code>try</code> before the <code>except CalledProcessError</code> handlers (mux.py:309-312/367-370 vs 323-324/372-374). But the pickup mechanism is wrong: <code>-J</code> is mkvmerge JSON identification, not globbing; the only globs are <code>*-av1.mkv</code>, which cannot match <code>*_temp_no_video.mkv</code>; a rerun also overwrites the temp. Net effect: stale clutter, not double-processing.</td></tr>
+    <tr><td class="loc">M14</td><td><span class="sev min">Partial</span></td>
+        <td>No timeouts on encoder/denoise communicate confirmed, and <code>Discard.stop()</code> does not join its thread before <code>sink.bytes</code> is read. Correction: the denoise phase <i>does</i> record <code>rc=</code> in its result dict (line 434); nothing acts on it, so the failure surfaces only if someone reads the JSON report. Exit code stays 0 either way.</td></tr>
+    <tr><td class="loc">M15</td><td><span class="sev min">Partial</span></td>
+        <td>Dead <code>started_at</code> confirmed. Refuted subclaim: adopt() explicitly resets all three fields (<code>self._proc = None; self._spawned = False</code>, supervisor.py:135-136); there is no leftover-state defect beyond C1 itself.</td></tr>
+    <tr><td class="loc">M1-M13, M16-M23</td><td><span class="sev ok">Confirmed</span></td>
+        <td>All verified with minor line drift only. Two corrections to stated mechanisms that do not change severity: I4's <code>hr</code> <i>is</i> assigned at module scope (tuple unpacking in stages 0/3), but <code>--no-boosting</code> forces stage 4, which skips both assignments — net effect identical to the claim. M19's opusenc check misfires only when a stray file named <code>opusenc</code> exists in CWD.</td></tr>
+    <tr><td class="loc">M24</td><td><span class="sev min">Test count wrong</span></td>
+        <td>No pytest config: confirmed (no pytest.ini/pyproject.toml/setup.cfg; tests/conftest.py is a 7-line sys.path fix). But collection is <b>401 tests plus 5 errors</b>, not 384. The errors are vendored googletest Python scripts under <code>build_tmp/</code> being collected — itself extra evidence for the missing-config finding.</td></tr>
+  </table>
+
+  <h3>Bonus defect found during verification</h3>
+  <div class="finding imp">
+    <div class="h"><span class="id">V1</span><span class="t">comp.py episode check compares str against int and misfires even when parsing succeeds</span></div>
+    <div class="loc">tools/comp.py:1109-1115</div>
+    <p>Besides the known <code>int("")</code> raise when anitopy finds no episode number, the left
+    side of the comparison (a string taken from <code>generated_frames</code>) is compared against
+    <code>int(anime_episode_number)</code>, so even valid values compare unequal and the mismatch
+    check fires regardless of correctness.</p>
+  </div>
+
+  <h3>Sanity checks reconfirmed</h3>
+  <ul>
+    <li><b>Path traversal protection</b> in <code>server._static</code>: decode-then-normpath, NUL reject, realpath + prefix check — correct as claimed.</li>
+    <li><b>CSRF gate</b>: exact-match <code>application/json</code> enforced before <code>_body()</code> on all three write routes — correct as claimed.</li>
+    <li><b>I10 nuance</b>: HEAD commit a061ed8 already added an own-pid early return to <code>_record_pid</code>; the cross-process check-then-replace race remains unfixed, as the review states.</li>
+  </ul>
+
+</main>
+
+<footer>
+  Generated 2026-08-20 from branch <code>run-control</code> at commit <code>a061ed8</code>.
+  Static review only — findings describe suspected defects, not verified run-time failures.
+  Findings verified against the same head on 2026-08-23; see the
+  <a href="#verification">verification addendum</a>. The Method section's "384 tests" figure is
+  corrected there.
+</footer>
+</body>
+</html>

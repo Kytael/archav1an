@@ -25,14 +25,19 @@ def _path(lanes_dir, lane):
 
 
 def write(lanes_dir, lane, src, frames, state, started_at, batch_pid,
-          attempt, temp_dir):
-    """Publish this lane's claim. Call again to change `state` in place."""
+          attempt, temp_dir, pid_start=None):
+    """Publish this lane's claim. Call again to change `state` in place.
+
+    pid_start pins the writer's /proc identity: a reader that finds this
+    heartbeat after the batch was SIGKILLed must not mistake a recycled pid
+    for a live lane, which would render "working" forever.
+    """
     path = _path(lanes_dir, lane)
     os.makedirs(lanes_dir, exist_ok=True)
     body = json.dumps({"lane": lane, "src": src, "frames": frames,
                        "state": state, "started_at": started_at,
                        "batch_pid": batch_pid, "attempt": attempt,
-                       "temp_dir": temp_dir})
+                       "temp_dir": temp_dir, "pid_start": pid_start})
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(body)
@@ -64,6 +69,9 @@ def read_all(lanes_dir):
                 row = json.load(fh)
         except (OSError, ValueError):
             continue        # a torn file costs one row, not the page
+        if not isinstance(row, dict):
+            continue        # "[]" parses fine and has no .get: AttributeError
+                            # here escapes the handler above and 500s the page
         lane = row.get("lane")
         if lane:
             out[lane] = row

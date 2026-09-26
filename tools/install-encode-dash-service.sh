@@ -1,10 +1,12 @@
 #!/bin/bash
 # Install the encode dashboard as a systemd --user service on this host.
 #
-# The daemon is a sidecar, so nothing in a run depends on it. Without a unit it
-# still dies at the next reboot, and a fifteen-day run outlives more than one
-# reboot -- gpu1 reboots itself for Windows Update. A page that is missing
-# exactly when a run goes wrong is worse than no page.
+# The daemon starts and adopts the batch, but a running batch does not depend
+# on it: KillMode=process below leaves the batch alive when the unit stops, and
+# the next daemon adopts it. Without a unit the page still dies at the next
+# reboot, and a fifteen-day run outlives more than one reboot -- gpu1 reboots
+# itself for Windows Update. A page that is missing exactly when a run goes
+# wrong is worse than no page.
 #
 # This is not part of setup.sh on purpose. setup.sh builds encode dependencies
 # into a prefix and runs on every host that denoises or encodes. The dashboard
@@ -56,6 +58,11 @@ After=network-online.target
 
 [Service]
 Type=simple
+# The daemon spawns the batch as its own child, and the batch runs in this
+# unit's cgroup. The default KillMode=control-group kills the whole cgroup on
+# restart or stop; KillMode=process kills only the daemon, so the batch
+# survives and is adopted by the next daemon.
+KillMode=process
 # The daemon binds this host's Tailscale address, and at boot tailscaled does
 # not have one yet. A user unit cannot order itself after a system unit, so the
 # wait belongs here. It matters more than it looks: without it the daemon does

@@ -17,6 +17,12 @@ never retries mid-stream: BSVD carries state across frames and SvtAv1EncApp
 sees one continuous y4m, so a broken connection means the encode is dead and
 must fail loudly rather than resume with a hole in it.
 
+"Loudly" needs keepalive to be true of a peer that vanishes without closing.
+The receiver has nothing to send, so it never learns the peer is gone and sits
+in recv() until the lane burns its whole dispatch timeout -- 4.5h on a
+12427-frame clip. See _enable_keepalive for why it is keepalive and not a
+stall timeout.
+
 Access control is the firewall's job: the listener accepts one connection from
 anyone the host lets through, so scope the inbound rule to the denoise host.
 
@@ -34,6 +40,31 @@ def _report(label, nbytes, elapsed):
     rate = nbytes / elapsed / 1e6 if elapsed > 0 else 0.0
     print(f"[netstream] {label} {nbytes / 1e6:.0f} MB in {elapsed:.1f}s "
           f"({rate:.0f} MB/s)", file=sys.stderr)
+
+
+def _enable_keepalive(sock):
+    """Make an idle peer's death detectable in about two minutes.
+
+    The receiver has nothing to send, so without this it never learns that the
+    peer is gone: no RST is exchanged, the socket stays `established` and
+    recv() blocks until the lane burns its whole dispatch timeout. Measured on
+    gpu3 2026-08-31, whose ethernet renegotiates at a random speed on every
+    flap -- the socket sat established with lastrcv at 5.8 minutes.
+
+    Keepalive rather than an application-level stall timeout, because a
+    tile-sequential lane legitimately emits nothing until the last tile pass of
+    a window. A timeout would fail those lanes for working correctly. Keepalive
+    cannot: the peer's kernel answers a probe whatever its application is doing,
+    so this only ever fires on a peer that is really unreachable.
+
+    60s idle + 6 probes 10s apart, so a dead peer costs at most 120s.
+    """
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    for name, value in (("TCP_KEEPIDLE", 60), ("TCP_KEEPINTVL", 10),
+                        ("TCP_KEEPCNT", 6)):
+        opt = getattr(socket, name, None)
+        if opt is not None:
+            sock.setsockopt(socket.IPPROTO_TCP, opt, value)
 
 
 class _FrameCounter:
@@ -115,7 +146,7 @@ def recv(args):
     srv = socket.socket()
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        srv.bind(("0.0.0.0", args.port))
+        srv.bind((args.bind, args.port))
     except OSError as e:
         print(f"[netstream] Error: cannot listen on port {args.port} ({e})",
               file=sys.stderr)
@@ -136,6 +167,7 @@ def recv(args):
     total = 0
     t0 = time.monotonic()
     conn.settimeout(None)
+    _enable_keepalive(conn)
     # A remote denoise lane has no local frame counter otherwise: the remote
     # host's vspipe writes its log on the remote disk, and the ssh channel this
     # side captures carries only the remote dispatch's own output. Counting
@@ -148,7 +180,14 @@ def recv(args):
     next_report = t0 + args.progress_interval
     reported = -1
     while True:
-        n = conn.recv_into(view)
+        try:
+            n = conn.recv_into(view)
+        except OSError as e:
+            out.flush()
+            print(f"[netstream] Error: connection from {peer[0]} broke after "
+                  f"{total / 1e6:.0f} MB ({e}); the encode is truncated",
+                  file=sys.stderr)
+            return 1
         if not n:
             break
         out.write(view[:n])
@@ -191,6 +230,7 @@ def send(args):
           f"(attempt {attempt})", file=sys.stderr)
 
     conn.settimeout(None)
+    _enable_keepalive(conn)
     src = sys.stdin.buffer
     view = memoryview(bytearray(BUF))
     total = 0
@@ -199,7 +239,12 @@ def send(args):
         n = src.readinto(view)
         if not n:
             break
-        conn.sendall(view[:n])
+        try:
+            conn.sendall(view[:n])
+        except OSError as e:
+            print(f"[netstream] Error: connection to {args.host}:{args.port} "
+                  f"broke after {total / 1e6:.0f} MB ({e})", file=sys.stderr)
+            return 1
         total += n
     conn.shutdown(socket.SHUT_WR)
     conn.close()
@@ -214,6 +259,7 @@ def main():
     r = sub.add_parser("recv", help="listen, then copy the socket to stdout")
     r.add_argument("--port", type=int, required=True)
     r.add_argument("--accept-timeout", type=float, default=300.0)
+    r.add_argument("--bind", default="", help="address to bind; empty means any")
     r.add_argument("--progress", action="store_true",
                    help="print 'Frame: N' to stderr as frames arrive, for "
                         "the encode dashboard's live rate. Off by default so "

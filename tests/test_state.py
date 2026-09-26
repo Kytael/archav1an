@@ -88,3 +88,72 @@ def test_loaded_state_still_compares_and_reads_like_a_set_and_dict(tmp_path):
     assert st.done == {"a"}
     assert st.failures == {"b": 1}
     assert "a" in st.done and st.failures.get("b", 0) == 1
+
+
+def test_a_retry_record_resets_that_clips_failure_count(tmp_path):
+    """Spec 5.4. Two failures put a clip past MAX_ATTEMPTS and out of the run
+    for good. A retry record is how the operator overrules that without
+    editing an append-only file by hand."""
+    p = tmp_path / "state.jsonl"
+    append_record(p, Record("SetA/2001/a/x.MOV", "failed", "igpu", 1.0, 0.0, 0))
+    append_record(p, Record("SetA/2001/a/x.MOV", "failed", "gpu2", 1.0, 0.0, 0))
+    assert load_state(p).failures == {"SetA/2001/a/x.MOV": 2}
+    append_record(p, Record("SetA/2001/a/x.MOV", "retry", "", 0.0, 0.0, 0))
+    assert load_state(p).failures == {"SetA/2001/a/x.MOV": 0}
+
+
+def test_a_retried_clip_is_pending_again(tmp_path):
+    p = tmp_path / "state.jsonl"
+    clip = _clip("x")
+    for _ in range(2):
+        append_record(p, Record(clip.src, "failed", "igpu", 1.0, 0.0, 0))
+    assert pending_clips((clip,), load_state(p)) == ()
+    append_record(p, Record(clip.src, "retry", "", 0.0, 0.0, 0))
+    assert pending_clips((clip,), load_state(p)) == (clip,)
+
+
+def test_a_failure_after_a_retry_counts_from_zero(tmp_path):
+    """The history stays in the file -- the run is append-only -- but the
+    counter that governs eligibility starts again."""
+    p = tmp_path / "state.jsonl"
+    clip = _clip("x")
+    for _ in range(2):
+        append_record(p, Record(clip.src, "failed", "igpu", 1.0, 0.0, 0))
+    append_record(p, Record(clip.src, "retry", "", 0.0, 0.0, 0))
+    append_record(p, Record(clip.src, "failed", "igpu", 1.0, 0.0, 0))
+    assert load_state(p).failures == {clip.src: 1}
+    assert pending_clips((clip,), load_state(p)) == (clip,)
+
+
+def test_a_retry_does_not_resurrect_a_finished_clip(tmp_path):
+    """done is a set and retry does not touch it. A clip that succeeded is
+    finished, and re-encoding it would overwrite a good output with an
+    identical one at the cost of three hours."""
+    p = tmp_path / "state.jsonl"
+    clip = _clip("x")
+    append_record(p, Record(clip.src, "done", "igpu", 1.0, 1.0, 10))
+    append_record(p, Record(clip.src, "retry", "", 0.0, 0.0, 0))
+    st = load_state(p)
+    assert clip.src in st.done
+    assert pending_clips((clip,), st) == ()
+
+
+def test_record_carries_the_encode_host(tmp_path):
+    from tools.archive_batch.state import Record, append_record
+    import json
+    p = tmp_path / "state.jsonl"
+    append_record(str(p), Record(src="a.MOV", status="done", denoiser="igpu",
+                                 wall_s=1.0, fps=2.0, out_bytes=3,
+                                 encode_host="gpu2"))
+    row = json.loads(p.read_text().strip())
+    assert row["encode_host"] == "gpu2"
+
+
+def test_encode_host_defaults_to_empty(tmp_path):
+    from tools.archive_batch.state import Record, append_record
+    import json
+    p = tmp_path / "state.jsonl"
+    append_record(str(p), Record(src="a.MOV", status="failed", denoiser="igpu",
+                                 wall_s=1.0, fps=0.0, out_bytes=0))
+    row = json.loads(p.read_text().strip())
+    assert row["encode_host"] == ""

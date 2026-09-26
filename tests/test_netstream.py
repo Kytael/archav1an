@@ -1,3 +1,4 @@
+import struct
 import re
 import socket
 import subprocess
@@ -81,3 +82,70 @@ def test_an_unparseable_header_disables_counting_rather_than_failing():
                  ["--progress", "--progress-interval", "0"])
     assert "Frame:" not in err
     assert "received" in err
+
+
+# --- Keepalive on the data connection ---------------------------------------
+# A link flap on a remote lane leaves the receiver blocked in recv() forever:
+# it has nothing to send, so it never learns the peer is gone and no RST is
+# ever exchanged. Measured on gpu3 2026-08-31 -- the socket sat `established`
+# with lastrcv at 5.8 minutes while the lane burned its 4.5h dispatch timeout.
+#
+# Keepalive is the fix rather than an application-level stall timeout, because
+# a tile-sequential lane legitimately emits nothing until the last tile pass of
+# a window. A timeout would fail those lanes; keepalive cannot, because the
+# peer's kernel answers probes whatever its application is doing.
+
+def test_keepalive_is_enabled_with_a_bounded_detection_time():
+    """A dead peer must be detected in about two minutes, not never."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("netstream", NETSTREAM)
+    ns = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ns)
+
+    s = socket.socket()
+    try:
+        ns._enable_keepalive(s)
+        assert s.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) == 1
+        idle = s.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE)
+        intvl = s.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL)
+        cnt = s.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT)
+        assert (idle, intvl, cnt) == (60, 10, 6), (idle, intvl, cnt)
+        # Bounded: idle + intvl*cnt is how long a dead peer can go unnoticed.
+        assert idle + intvl * cnt <= 180
+    finally:
+        s.close()
+
+
+def test_a_peer_that_dies_mid_stream_fails_loudly():
+    """The module contract says a broken connection must fail rather than
+    resume with a hole. A truncated stream must not exit 0."""
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+
+    proc = subprocess.Popen(
+        [sys.executable, str(NETSTREAM), "recv", "--port", str(port)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+    def client():
+        for _ in range(40):
+            try:
+                s = socket.create_connection(("127.0.0.1", port), timeout=5)
+                break
+            except OSError:
+                threading.Event().wait(0.05)
+        else:
+            return
+        s.sendall(HEADER + FRAME * 2)
+        # RST, not FIN: the abrupt death a flap produces.
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                     struct.pack("ii", 1, 0))
+        s.close()
+
+    t = threading.Thread(target=client)
+    t.start()
+    err = proc.communicate(timeout=60)[1].decode()
+    t.join(5)
+    assert proc.returncode != 0, f"a reset peer exited 0; stderr: {err}"
+    assert "connection" in err.lower(), err

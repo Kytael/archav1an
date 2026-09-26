@@ -5,9 +5,15 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
-SOURCES["vapoursynth:vapoursynth"]="https://github.com/vapoursynth/vapoursynth.git|R76"
+# R79 is the ceiling. R80 refuses API3 plugins outright ("uses API 3, which is
+# no longer supported"), and vstrt/vsmigx, KNLMeansCL, CTMF and WWXD are all
+# API3 -- vs-mlrt closed its port request as not planned (vs-mlrt#171).
+# BestSource is pinned for the same reason: R22 builds its GPU export against
+# R80's API 4.3 unconditionally, so R21 is the last one R79 can build, and
+# tracking master is what broke the R76 install once R22 landed.
+SOURCES["vapoursynth:vapoursynth"]="https://github.com/vapoursynth/vapoursynth.git|R79"
 SOURCES["vapoursynth:ffms2"]="https://github.com/FFMS/ffms2.git|5.0"
-SOURCES["vapoursynth:bestsource"]="https://github.com/vapoursynth/bestsource.git|master"
+SOURCES["vapoursynth:bestsource"]="https://github.com/vapoursynth/bestsource.git|R21"
 ARTIFACTS["vapoursynth"]="bin/vspipe lib/libvapoursynth.so.4 lib/vapoursynth/libffms2.so lib/vapoursynth/libbestsource.so"
 
 install_vapoursynth() {
@@ -35,7 +41,7 @@ install_vapoursynth() {
     mkdir -p "$BUILD_DIR"
     cd "$BUILD_DIR" || exit 1
 
-    # 1. VapourSynth R76 (meson build, against the uv-managed Python in $VENV_DIR).
+    # 1. VapourSynth R79 (meson build, against the uv-managed Python in $VENV_DIR).
     # R74 migrated the build system from autotools to meson; libvapoursynth.so
     # now has a SONAME (libvapoursynth.so.4 from soversion derived from
     # VAPOURSYNTH_API_MAJOR). Isolation continues to work because activate-venv.sh
@@ -55,7 +61,7 @@ install_vapoursynth() {
 
     local _vs_py_ver
     _vs_py_ver="$("$VENV_DIR/bin/python" -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-    log_info "VS R76 build: targeting Python $_vs_py_ver from $VENV_DIR (via $VENV_DIR/bin/meson)"
+    log_info "VS R79 build: targeting Python $_vs_py_ver from $VENV_DIR (via $VENV_DIR/bin/meson)"
 
     # meson resolves cython with find_program, but the ninja rule it writes
     # records the bare command "cython" -- so the PATH that decides which
@@ -113,7 +119,7 @@ install_vapoursynth() {
     # work; the rest of this function builds ffms2 and BestSource, which link
     # nothing static and should keep the shared flags.
     export LDFLAGS="$_vs_ldflags"
-    log_info "VS R76 build: cython $(PATH="$VENV_DIR/bin:$PATH" command -v cython) $(PATH="$VENV_DIR/bin:$PATH" cython --version 2>&1)"
+    log_info "VS R79 build: cython $(PATH="$VENV_DIR/bin:$PATH" command -v cython) $(PATH="$VENV_DIR/bin:$PATH" cython --version 2>&1)"
     PATH="$VENV_DIR/bin:$PATH" "$VENV_DIR/bin/meson" compile -C build \
         || { cd "$ORIG_DIR"; log_error "VapourSynth meson compile failed"; return 1; }
     PATH="$VENV_DIR/bin:$PATH" "$VENV_DIR/bin/meson" install -C build \
@@ -133,7 +139,19 @@ install_vapoursynth() {
     # the old python3.X/ tree until manually cleaned, and grabbing the
     # stale one would wire the bridge to the wrong build.
     local VS_PKG_DIR="$VS_PREFIX/lib/python${_vs_py_ver}/site-packages/vapoursynth"
-    if [ -d "$VS_PKG_DIR" ] && [ -f "$VS_PKG_DIR"/vapoursynth.abi*.so ]; then
+    # A loop, not `[ -f "$VS_PKG_DIR"/vapoursynth.abi*.so ]`. test takes one
+    # operand: two matching files make it print "binary operator expected" and
+    # report false, so a second ABI in that directory would silently skip the
+    # whole bridge and leave every later plugin build looking for headers that
+    # were never linked.
+    local _vs_abi_so=""
+    local _vs_candidate
+    for _vs_candidate in "$VS_PKG_DIR"/vapoursynth.abi*.so; do
+        [ -f "$_vs_candidate" ] || continue
+        _vs_abi_so="$_vs_candidate"
+        break
+    done
+    if [ -d "$VS_PKG_DIR" ] && [ -n "$_vs_abi_so" ]; then
         # Sweep older python3.X/ install_dirs from prior venvs to avoid
         # ambiguity for anything that does `find ... -name vapoursynth.abi*.so`
         # (e.g. our own pre-bridge code in older revisions of this script).
@@ -144,7 +162,7 @@ install_vapoursynth() {
             log_info "Removing stale vapoursynth install dir from a prior venv: $_old"
             rm -rf "$_old"
         done
-        log_info "Bridging R76 package layout to traditional prefix from $VS_PKG_DIR..."
+        log_info "Bridging R79 package layout to traditional prefix from $VS_PKG_DIR..."
         mkdir -p "$VS_PREFIX/bin" "$VS_PREFIX/lib" "$VS_PREFIX/include" "$VS_PREFIX/lib/pkgconfig"
 
         # vspipe binary
@@ -162,6 +180,18 @@ install_vapoursynth() {
         ln -sf "$VS_PKG_DIR/libvapoursynth.so.4" "$VS_PREFIX/lib/libvapoursynth.so.4"
         ln -sf "libvapoursynth.so.4"             "$VS_PREFIX/lib/libvapoursynth.so"
         rm -f "$VS_PREFIX/lib/libvsscript.so"
+
+        # R78 split the core filters out into libvapoursynthfilters.so plus
+        # _avx2 and _zn4 builds, and the core dlopens whichever the CPU takes
+        # from the directory it was loaded from. Under LD_LIBRARY_PATH that is
+        # $VS_PREFIX/lib, where the core is only a symlink, so the filters have
+        # to sit beside it or vspipe dies with "Failed to load
+        # .../lib/libvapoursynthfilters.so" before it reads a script.
+        local _vs_filters
+        for _vs_filters in "$VS_PKG_DIR"/libvapoursynthfilters*.so; do
+            [ -f "$_vs_filters" ] || continue
+            ln -sf "$_vs_filters" "$VS_PREFIX/lib/$(basename "$_vs_filters")"
+        done
 
         # Headers — point a directory symlink at the package's include/ subtree.
         # R76 only installs the V4 headers (VapourSynth4.h, VSHelper4.h,
@@ -192,11 +222,11 @@ libdir=\${prefix}
 
 Name: vapoursynth
 Description: A frameserver for the 21st century
-Version: 76
+Version: 79
 Cflags: -I\${includedir}
 Libs: -L\${libdir} -lvapoursynth
 EOF
-        log_success "R76 layout bridged: bin/vspipe, lib/libvapoursynth.so.4, include/vapoursynth/, lib/pkgconfig/vapoursynth.pc all wired."
+        log_success "R79 layout bridged: bin/vspipe, lib/libvapoursynth.so.4, include/vapoursynth/, lib/pkgconfig/vapoursynth.pc all wired."
     else
         log_warn "Source-built vapoursynth abi*.so not found under $VS_PREFIX/lib — bridge symlinks NOT created."
     fi
@@ -222,7 +252,7 @@ EOF
 
         # That file is per-user, under $HOME. A `sudo ./setup.sh` writes it to
         # /root/.config and the person who owns the machine gets none: on
-        # spark2 both vspipe and av1an then failed with "Python executable and
+        # gpu5 both vspipe and av1an then failed with "Python executable and
         # library path couldn't be determined", on an install that had just
         # reported success. Write it for the invoking user as well. -H because
         # sudo keeps the caller's HOME otherwise, which is the whole bug.

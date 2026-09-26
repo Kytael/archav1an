@@ -26,8 +26,59 @@ ENCODER_PARAMS = ("--tune 3 --hbd-mds 1 --keyint 305 --ac-bias 0.8 --sharp-tx 1 
                   "--variance-octile 7 --enable-dlf 2")
 
 
-def build_command(denoiser, encode, staged, out, remote_src, callback):
-    """Return (argv, env_overlay) for one clip on one denoiser."""
+def build_encode_command(encoder, slot, staged, out, temp_tag, preset=None):
+    """Return (argv, env_overlay) for an ENCODE JOB: no denoiser at all.
+
+    Today's command minus the BSVD half. The batch host decodes and streams
+    y4m over the existing --remote-encode path, so there is no new dispatch
+    mode -- only a shorter argv.
+
+    The interpreter is always MANAGED_PYTHON. The MIGraphX venv exists for
+    BSVD and no encode job runs it.
+
+    `temp_tag` is <encoder>-<slot>, because there is no lane name here and two
+    slot workers on one host must not share a temp directory.
+
+    `preset` is one entry from presets.py and replaces the four settings for
+    THIS job. Encode jobs alone take one: a folder of anime and a folder of
+    live footage want different numbers, while an archive clip's output must
+    not depend on which device took it (spec 5.1, 5.5(d)) -- and a per-job
+    setting there would make it depend on when it was queued instead. Without
+    one the fleet-fixed values below apply, which is what every encode job got
+    before presets existed.
+    """
+    quality, noise, speed, params = "27", "6", "4", ENCODER_PARAMS
+    if preset is not None:
+        quality = preset["quality"]
+        noise = preset["photon_noise"]
+        speed = preset["speed"]
+        # A script that sets no params at all keeps the fleet's, rather than
+        # handing dispatch an empty --encoder-params.
+        params = preset["params"] or ENCODER_PARAMS
+
+    argv = [MANAGED_PYTHON, DISPATCH,
+            "-i", staged, "-o", out,
+            "--quality", quality,
+            "--photon-noise", noise,
+            "--lp", str(encoder.lp_level),
+            "--speed", speed,
+            "--temp-tag", temp_tag,
+            "--encoder-params", params]
+    if encoder.is_remote:
+        argv += ["--remote-encode", encoder.host,
+                 "--remote-encode-ip", encoder.stream_ip,
+                 "--remote-port", str(encoder.port_for(slot))]
+        if encoder.root:
+            argv += ["--remote-encode-root", encoder.root]
+    return argv, {}
+
+
+def build_command(denoiser, encoder, slot, staged, out, remote_src, callback):
+    """Return (argv, env_overlay) for one clip on one denoiser and one encoder.
+
+    `slot` picks the port inside the encoder's block, so two clips on one
+    encode host never share a listener.
+    """
     env = {}
     if denoiser.backend == "migraphx":
         # BSVD's MIGraphX wheels stop at cp312, so this lane needs its own
@@ -42,7 +93,7 @@ def build_command(denoiser, encode, staged, out, remote_src, callback):
             "-i", staged, "-o", out,
             "--quality", "27",
             "--photon-noise", "6",
-            "--lp", str(encode.lp_level),
+            "--lp", str(encoder.lp_level),
             "--speed", "4",
             "--denoise-bsvd",
             "--bsvd-sigma", BSVD_SIGMA,
@@ -57,6 +108,12 @@ def build_command(denoiser, encode, staged, out, remote_src, callback):
                  "--bsvd-window", str(denoiser.window),
                  "--bsvd-margin", str(denoiser.margin)]
 
+    if encoder.is_remote:
+        argv += ["--remote-encode", encoder.host,
+                 "--remote-encode-ip", encoder.stream_ip]
+        if encoder.root:
+            argv += ["--remote-encode-root", encoder.root]
+
     if denoiser.is_remote:
         argv += ["--remote-denoise", denoiser.host]
         # dispatch defaults to ~/archav1an. Any host that keeps its checkout
@@ -68,6 +125,16 @@ def build_command(denoiser, encode, staged, out, remote_src, callback):
         # into argv and subprocess rejected the whole command.
         if remote_src:
             argv += ["--remote-source", remote_src]
-        argv += ["--remote-port", str(denoiser.port),
-                 "--remote-callback", callback]
+        # The denoise half streams to whichever host is encoding. Only when
+        # that host is this one does it need an address from here: with a
+        # remote encoder, --remote-encode-ip above is the single source of it
+        # and dispatch does not read --remote-callback at all. Passing both was
+        # the same address twice, agreeing only because each side happened to
+        # read encoder.stream_ip. The port is the encoder's either way, because
+        # the listener lives on the encode host.
+        if not encoder.is_remote:
+            argv += ["--remote-callback", callback]
+
+    if denoiser.is_remote or encoder.is_remote:
+        argv += ["--remote-port", str(encoder.port_for(slot))]
     return argv, env

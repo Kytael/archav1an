@@ -4,14 +4,23 @@ A figure derived from completed clips cannot be the live one: state.jsonl gains
 a record only when a clip finishes, and the longest clip here is tens of thousands of frames.
 So the live rate is read from a frame counter instead.
 
-Two producers write that counter and both emit the same shape:
+Three producers write that counter, in two shapes:
 
-  local lane    vspipe -p            -> <stem>_vspipe.log
-  remote lane   netstream recv       -> <stem>_netstream.log
+  local encode    vspipe -p          -> <stem>_vspipe.log      "Frame: N"
+  local encode    netstream recv     -> <stem>_netstream.log   "Frame: N"
+  remote encode   SvtAv1EncApp       -> <stem>_encode.log      "Encoding: N Frames"
 
-A remote lane is counted at the receiving socket on purpose. Its denoiser runs
+A lane is counted at the receiving end of the y4m on purpose. Its denoiser runs
 on another host and writes its vspipe log on that host's disk, while the ssh
 channel captured locally carries only the remote dispatch's own output.
+
+With a remote encoder the receiving end moves off this host too: netstream recv
+now runs beside SvtAv1EncApp on the encode host and writes its log there, so
+neither of the first two files exists here. What does reach this host is the
+encode ssh's stderr, and the encoder's own counter is in it. Counting that
+keeps the same meaning -- frames the receiver has taken delivery of -- which is
+why it is read rather than left blank. Without it every remote-encode lane
+renders as unknown, which is what the pool shipped as.
 """
 import os
 import re
@@ -25,9 +34,35 @@ from collections import deque
 # disagreeing about what that format is invites exactly one silent bug.
 _PROGRESS = re.compile(r"^Frame:\s*(\d+)", re.MULTILINE)
 
-# Both logs for one clip, most specific first. Order only breaks ties that
-# mtime cannot, which in practice does not happen: a clip is local or remote.
-_SUFFIXES = ("_vspipe.log", "_netstream.log")
+# SvtAv1EncApp's counter, which colours its output unconditionally: the line is
+# "Encoding: <ESC>[33m   1 Frames" early on and "<ESC>[33m3258/3289 Frames" once
+# it knows the total. Both give the done count first, so one group covers them.
+# The escapes are skipped rather than stripped from the whole tail, because a
+# strip would have to run over every byte read on every poll.
+_ENCODE_PROGRESS = re.compile(r"^Encoding:(?:\s|\x1b\[[0-9;]*m)*(\d+)",
+                              re.MULTILINE)
+
+# Every log that can hold a counter, each with the shape it writes, in the
+# order that decides between producers writing at the same moment: the one
+# nearest the front of this lane's pipeline wins.
+#
+# A clip does write more than one of these at once. A lane that denoises here
+# and encodes on another host has vspipe's log and the encode ssh's stderr
+# side by side, both live, their counters a pipe's depth apart. Picking the
+# newer alternated between them once per poll -- see the test named for it.
+# The denoiser's count is the lane's own production, so it comes first, and
+# the encoder's is what remains when the denoise happens elsewhere.
+_SUFFIXES = (("_vspipe.log", _PROGRESS),
+             ("_netstream.log", _PROGRESS),
+             ("_encode.log", _ENCODE_PROGRESS))
+
+# How far behind the newest log a log may be and still count as a producer of
+# this clip. Order alone cannot decide, because a retry reuses the per-clip
+# directory and an abandoned attempt's log keeps its last count for ever;
+# first place would then pin the lane at zero. Generous on purpose: the gap
+# between two live producers is milliseconds, and the gap to a leftover is the
+# length of the attempt that wrote it.
+_STALE_S = 300.0
 
 # Enough to hold the last progress lines without reading a log that has grown
 # to a quarter of a megabyte over three hours.
@@ -48,8 +83,8 @@ def frames_from_log(temp_dir, stem):
     holds no counter, and a lane that has produced nothing yet must not render
     the same as one that has stalled.
     """
-    best, best_mtime = None, None
-    for suffix in _SUFFIXES:
+    found_at = []
+    for suffix, pattern in _SUFFIXES:
         path = os.path.join(temp_dir, f"{stem}{suffix}")
         try:
             mtime = os.path.getmtime(path)
@@ -64,12 +99,39 @@ def frames_from_log(temp_dir, stem):
                 text = fh.read().decode("utf-8", "replace").replace("\r", "\n")
         except OSError:
             continue
-        found = _PROGRESS.findall(text)
+        found = pattern.findall(text)
         if not found:
             continue
-        if best_mtime is None or mtime > best_mtime:
-            best, best_mtime = int(found[-1]), mtime
-    return best
+        found_at.append((int(found[-1]), mtime))
+    if not found_at:
+        return None
+    newest = max(mtime for _, mtime in found_at)
+    # found_at is in _SUFFIXES order, and the newest log is always fresh
+    # against itself, so this can never be empty.
+    fresh = [count for count, mtime in found_at if newest - mtime <= _STALE_S]
+    return fresh[0]
+
+
+def _burst_edges(pts):
+    """The samples at which a burst of frames starts, oldest first.
+
+    A windowed lane's counter is flat while the GPU works a sweep and then
+    climbs while the encoder drains the window it just got, so a burst starts
+    at the first sample whose count moves after one that did not. Returning the
+    START of each burst rather than its end keeps the interval between two
+    edges equal to a whole number of sweeps however long a drain takes.
+
+    Fewer than two edges means the counter never paused -- a lane draining
+    continuously, or a series shorter than one sweep. The caller falls back to
+    the raw endpoints, which is what it always did.
+    """
+    edges, rising = [], True
+    for i in range(1, len(pts)):
+        moved = pts[i][1] > pts[i - 1][1]
+        if moved and not rising:
+            edges.append(pts[i - 1])
+        rising = moved
+    return edges
 
 
 class RateTracker:
@@ -102,7 +164,7 @@ class RateTracker:
         # for the same reason.
         self._lock = threading.Lock()
 
-    def sample(self, lane, frames, now, smooth_s=None):
+    def sample(self, lane, frames, now, smooth_s=None, min_span_s=None):
         """Record a count and return the current rate, or None if unknown.
 
         `smooth_s` overrides the default for this lane only. One global value
@@ -110,6 +172,16 @@ class RateTracker:
         and wants a short window so its figure is current, while a windowed lane
         steps by a whole window and needs several sweeps. The caller knows which
         it is, because the roster says so.
+
+        `min_span_s` refuses to answer until the series covers that long. The
+        series is cleared at every change of clip, so early in each clip a
+        windowed lane's slope spans less than one sweep -- and a sweep is the
+        smallest interval over which it produces anything at all. Measured
+        2026-08-26: the 2070s lane at window 750 read 23.6 fps against a true
+        4.6, because its counter had gone from 1 to 669 in the 28 s the encoder
+        spent draining the first delivered window. Smoothing cannot fix that;
+        there is nothing yet to smooth. None is the honest answer, and the
+        caller shows the completed-clip average instead.
         """
         smooth_s = smooth_s or self.smooth_s
         with self._lock:
@@ -128,10 +200,32 @@ class RateTracker:
                 series.popleft()
             if len(series) < 2:
                 return None
-            t0, f0 = series[0]
-            t1, f1 = series[-1]
+            pts = list(series)
+        # Snap a windowed lane's slope to whole bursts. Between the raw
+        # endpoints the span holds N or N+1 bursts depending on where the
+        # series happens to start, and at SWEEPS_SMOOTHED = 2.5 that is 2 or 3
+        # bursts of `window` frames over the same seconds -- a +-20% swing by
+        # phase alone, with no change in the lane. Measuring edge to edge holds
+        # a whole number of bursts by construction, so the phase cancels
+        # exactly instead of being averaged down.
+        #
+        # Only for a lane the caller called windowed. A full-frame lane streams
+        # evenly, has no edges to find, and wants every sample it has.
+        edges = _burst_edges(pts) if min_span_s else []
+        if len(edges) >= 2:
+            t0, f0 = edges[0]
+            t1, f1 = edges[-1]
+        else:
+            t0, f0 = pts[0]
+            t1, f1 = pts[-1]
         span = t1 - t0
         if span <= 0:
+            return None
+        # Against the RAW span, not the snapped one. min_span_s asks whether
+        # this lane has produced anything measurable yet, and snapping shortens
+        # the span by up to one burst -- judging the snapped span would reject
+        # series that have genuinely covered a sweep.
+        if min_span_s and (pts[-1][0] - pts[0][0]) < min_span_s:
             return None
         return (f1 - f0) / span
 

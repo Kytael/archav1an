@@ -8,13 +8,18 @@ Reads .archive-run/ and serves a page, a JSON snapshot and a Prometheus
 endpoint. It holds no state of its own except the rate history, so it can be
 restarted at any point in a fifteen-day run without touching the run.
 
-Part 1 is read-only: it cannot change the roster and cannot signal the batch.
+It writes denoisers.toml and one request file per action into
+.archive-run/control/. It also spawns the batch when the page asks and adopts
+an existing run on restart, but it never signals the batch process directly:
+the scheduler re-reads the roster per clip, and the batch polls that directory.
+Stop stays graceful, through the control channel, not a signal.
 
 Binding: the default is the Tailscale address, because that is how the fleet
 reaches this host and because encoder-host's firewall already refuses high ports on
 the LAN. There is no authentication, which matches every other service here --
 llama-swap, ComfyUI, Datasette and opencode are all open on the tailnet. Unlike
-those, from part 2 this one can stop a run; the tailnet is the trust boundary.
+those, this one edits the roster a running job reads, so anything on the
+tailnet can park a lane; the tailnet is the trust boundary.
 """
 import argparse
 import os
@@ -29,6 +34,14 @@ from tools.encode_dash import DEFAULT_PORT, Paths          # noqa: E402
 from tools.encode_dash.liverate import RateTracker         # noqa: E402
 from tools.encode_dash.model import snapshot               # noqa: E402
 from tools.encode_dash.server import make_server           # noqa: E402
+from tools.encode_dash.supervisor import Supervisor        # noqa: E402
+
+# The checkout root. This file sits in tools/, so two dirname hops land on the
+# root. The batch script lives in the same checkout, and the batch computes its
+# own paths from its own __file__ -- but spawning with this cwd keeps every
+# relative path a subprocess sees identical to the daemon's view.
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BATCH_SCRIPT = os.path.join(REPO, "tools", "archive-batch.py")
 
 
 def _tailscale_address():
@@ -45,6 +58,42 @@ def _tailscale_address():
     # -4 prints one line per IPv4 address. A host with a second one would be
     # unusual here, and the first is the tailnet address in either case.
     return out[0].strip() if out else None
+
+
+def make_snapshot(paths, tracker, supervisor, grafana_url):
+    """The function the server calls for every poll.
+
+    grafana_url is added here rather than inside snapshot() because it is not
+    a measurement. Everything model.py produces is read off the run; this is a
+    command-line flag, and mixing the two would put deployment settings in the
+    middle of the thing that reports facts.
+
+    A module-level factory rather than a closure in main() so it can be
+    tested: every route the daemon serves goes through this one call, and the
+    first version of it shipped a crash that no test could reach.
+    """
+    def _snapshot():
+        # Reaps the batch this daemon spawned, if it has exited. Nothing else
+        # waits on it -- there is no SIGCHLD handler here, and Popen only
+        # reaps inside the next Popen -- so without this call a SIGKILLed
+        # batch stays a zombie, os.kill(pid, 0) keeps succeeding on it, and
+        # the stale batch.json it left behind reads as a live run for ever:
+        # encode_batch_up pinned at 1, EncodeBatchDown never fired, Stop
+        # offered for a run that is over.
+        #
+        # The result is deliberately not merged into the snapshot. The page
+        # must call the run running only once the batch itself has claimed
+        # batch.json, because a Stop written before that point is cleared as
+        # stale by the batch's own startup.
+        if supervisor is not None:
+            supervisor.status()
+        # time.time(), not monotonic: the heartbeat records wall clock because
+        # a person reads it, and model._lane subtracts the two. Mixing the
+        # clocks would give every lane a nonsense elapsed time. A run measured
+        # in days does not care about a one-second NTP correction.
+        return dict(snapshot(paths, tracker, time.time()),
+                    grafana_url=grafana_url)
+    return _snapshot
 
 
 def main():
@@ -68,18 +117,19 @@ def main():
     paths = Paths.from_env()
     tracker = RateTracker(smooth_s=args.smooth)
 
-    # grafana_url is added here rather than inside snapshot() because it is not
-    # a measurement. Everything model.py produces is read off the run; this is
-    # a command-line flag, and mixing the two would put deployment settings in
-    # the middle of the thing that reports facts.
+    # Own or adopt the batch process. Spawned with this checkout's interpreter
+    # and the same environment, so ARCHIVE_RUN_DIR and friends reach the batch
+    # exactly as the daemon sees them.
+    supervisor = Supervisor([sys.executable, BATCH_SCRIPT], cwd=REPO,
+                            batch_file=paths.batch)
+    supervisor.adopt()
+
     srv = make_server(host, args.port,
-                      # time.time(), not monotonic: the heartbeat records wall
-                      # clock because a person reads it, and model._lane
-                      # subtracts the two. Mixing the clocks would give every
-                      # lane a nonsense elapsed time. A run measured in days
-                      # does not care about a one-second NTP correction.
-                      lambda: dict(snapshot(paths, tracker, time.time()),
-                                   grafana_url=args.grafana_url))
+                      make_snapshot(paths, tracker, supervisor,
+                                    args.grafana_url),
+                      roster_path=paths.roster,
+                      control_dir=paths.control,
+                      supervisor=supervisor)
     # Flushed, like the error path in server.py. This daemon's stdout is a log
     # file or a journal, never a terminal, and print block-buffers when it is
     # not a tty -- so without this the address line stays in the buffer for the

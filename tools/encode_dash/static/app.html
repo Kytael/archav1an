@@ -22,18 +22,56 @@
 <section>
   <h2>Lanes</h2>
   <table id="lanes"><tbody></tbody></table>
-  <p class="note">Switches arrive in part 2, together with the scheduler change
-     that gives a lane added mid-run a worker.</p>
+  <div class="controls">
+    <label>encoder --lp
+      <select id="lp"></select>
+    </label>
+    <!-- Spec 5.7 requires this sentence. Level 6 beat level 4 at 2 slots and
+         level 4 nearly closed the gap at 3, for 35% less memory; nobody has
+         measured either at 6. The control is offered; the answer is not. -->
+    <span class="note">Level 4 budgets about 13 GB across the 6-slot pool and
+      level 6 about 29 GB. The throughput effect at 6 slots is unmeasured.
+      Takes effect at the next clip.</span>
+    <button id="add-lane-open" type="button">Add a lane</button>
+    <button id="start-run" type="button">Start the run</button>
+    <button id="stop-run" type="button">Stop the run</button>
+  </div>
+  <form id="add-lane" hidden></form>
+  <p id="roster-msg" class="msg" hidden></p>
+  <ul id="acks" class="acks" hidden></ul>
+</section>
+
+<section>
+  <h2>Encode hosts <span class="dim">the pool the lanes encode on</span></h2>
+  <table id="hosts"><tbody></tbody></table>
+  <div class="controls">
+    <button id="add-host-open" type="button">Add an encode host</button>
+  </div>
+  <form id="add-host" hidden></form>
+</section>
+
+<section>
+  <h2>Encode jobs <span class="dim">no denoise, straight to AV1 on a host's CPU</span></h2>
+  <table id="jobs" hidden><tbody></tbody></table>
+  <p id="jobs-empty" class="note">Nothing encoding. Pick a folder below and
+    every .MOV and .MP4 directly in it is queued, with no denoise pass.</p>
+  <div class="controls">
+    <button id="add-job-open" type="button">Encode a folder</button>
+  </div>
+  <form id="add-job" hidden></form>
 </section>
 
 <div class="split">
   <section>
     <h2>Next up <span id="queued" class="dim"></span></h2>
-    <table id="queue"><tbody></tbody></table>
+    <div class="scroll"><table id="queue"><tbody></tbody></table></div>
   </section>
   <section>
-    <h2>Failed <span id="failed" class="dim"></span></h2>
-    <table id="failures"><tbody></tbody></table>
+    <h2>Failed <span id="failed" class="dim"></span>
+      <label class="filter"><input id="failed-exhausted-only" type="checkbox">
+        out of attempts only</label>
+      <button id="retry-all" class="filter" type="button" disabled>Retry all</button></h2>
+    <div class="scroll"><table id="failures"><tbody></tbody></table></div>
   </section>
 </div>
 

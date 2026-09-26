@@ -5,6 +5,7 @@ import tempfile
 import time
 from pathlib import Path
 
+
 REPO = Path(__file__).resolve().parent.parent
 
 
@@ -32,20 +33,6 @@ def test_summary_with_no_failures_omits_the_failure_block():
     cli = _load_cli()
     text = cli.format_summary(done=5, failed=0, failures=[], elapsed_s=60.0)
     assert "failed" in text and "FAILED CLIPS" not in text
-
-
-def test_make_runner_takes_the_encode_pool_rather_than_reading_it():
-    """A clip in flight must survive the roster's last denoiser being disabled.
-
-    Re-reading the roster mid-clip made load_roster raise once the user turned
-    off the last device, failing a clip that was encoding fine.
-    """
-    import inspect
-    cli = _load_cli()
-    params = list(inspect.signature(cli.make_runner).parameters)
-    assert params[0] == "encode", "the encode pool must be handed in, not read"
-    src = inspect.getsource(cli.make_runner)
-    assert "_roster()" not in src, "runner must not re-read the roster per clip"
 
 
 def test_sweep_clears_staged_leftovers(tmp_path, monkeypatch):
@@ -142,14 +129,22 @@ def test_an_incomplete_run_exits_nonzero(tmp_path, monkeypatch):
     manifest.write_text("SetA/2001/f/a.MOV\t100\t30000/1001,50\t1.6\n")
     monkeypatch.setattr(cli, "MANIFEST", str(manifest))
     monkeypatch.setattr(cli, "STATE", str(tmp_path / "state.jsonl"))
+    # main() claims the run before anything else, and the unpatched names are
+    # the live .archive-run. Without these the test exits 3 for the wrong
+    # reason whenever a real batch holds the claim, and writes into that
+    # directory whenever one does not.
+    monkeypatch.setattr(cli, "RUN_DIR", str(tmp_path))
+    monkeypatch.setattr(cli, "BATCH_FILE", str(tmp_path / "batch.json"))
+    monkeypatch.setattr(cli, "CONTROL", str(tmp_path / "control"))
     assert cli.main() == 3
 
 
 def _roster_stub():
-    from tools.archive_batch.roster import Denoiser, EncodePool, Roster
+    from tools.archive_batch.roster import Denoiser, Encoder, Roster
     return Roster(denoisers=(Denoiser(name="d", host="local", backend="trt",
                                       device=0, tiling="none", enabled=True),),
-                  encode=EncodePool(host="local", slots=1, lp_level=6))
+                  encoders=(Encoder(name="local", host="local", slots=1,
+                                    lp_level=6, port_base=5300),))
 
 
 def test_dispatch_timeout_scales_with_clip_length():
@@ -276,6 +271,61 @@ def test_log_tail_without_a_recognised_cause_still_returns_the_tail(tmp_path):
     assert "line three" in out and "CAUSE:" not in out
 
 
+def test_log_tail_reports_the_encode_half_when_that_is_what_failed(tmp_path):
+    """With a remote encoder the encode half logs to _encode.log alone, and
+    _remote.log always has content. Returning at the first non-empty file
+    therefore blamed the denoise host every time.
+
+    Seen on 2026-08-26: an encode refused with "cannot bind ... Address already
+    in use" was recorded as a vstrt TensorRT version warning from gpu1, on a
+    clip whose denoise half had finished cleanly."""
+    cli = _load_cli()
+    d = tmp_path / "MVI_9"
+    d.mkdir()
+    (d / "MVI_9_remote.log").write_text("\n".join([
+        "vstrt: TensorRT version mismatch, built with 110100 but loaded with"
+        " 110201; continue but fingers crossed...",
+        "Traceback (most recent call last):",
+        "Script evaluation done in 4.84 seconds",
+    ]))
+    (d / "MVI_9_encode.log").write_text(
+        "[svtav1-dispatch] Error: cannot bind 10.0.0.14:5320"
+        " ([Errno 98] Address already in use).\n")
+    out = cli.log_tail(str(d), "MVI_9")
+    assert "cannot bind" in out, f"encode cause missing from: {out}"
+    assert "TensorRT version mismatch" not in out, out
+
+
+def test_log_tail_still_prefers_the_denoise_half_when_that_is_what_failed(tmp_path):
+    """Scanning _encode.log first must not mask a denoise failure. A healthy
+    encode log has content but names no cause, so it never wins."""
+    cli = _load_cli()
+    d = tmp_path / "MVI_10"
+    d.mkdir()
+    (d / "MVI_10_encode.log").write_text(
+        "[svtav1-dispatch] encode-serve: netstream recv on 10.0.0.16:5330\n"
+        "Svt[info]: SVT [version]: v2.3.0-C\n")
+    (d / "MVI_10_remote.log").write_text(
+        "[dispatch] vspipe (BSVD)\n"
+        "RuntimeError: CUDA failure 700: an illegal memory access\n")
+    out = cli.log_tail(str(d), "MVI_10")
+    assert "CUDA failure 700" in out, out
+    assert out.startswith("remote.log:"), out
+
+
+def test_log_tail_falls_back_to_the_remote_log_not_the_encode_log(tmp_path):
+    """With no cause anywhere the denoise half is still the likely story, so
+    the fallback keeps the original preference even though the cause scan puts
+    _encode.log first."""
+    cli = _load_cli()
+    d = tmp_path / "MVI_11"
+    d.mkdir()
+    (d / "MVI_11_encode.log").write_text("encoder chatter\n")
+    (d / "MVI_11_remote.log").write_text("denoise chatter\n")
+    out = cli.log_tail(str(d), "MVI_11")
+    assert out.startswith("remote.log:"), out
+
+
 def test_log_tail_is_empty_when_there_is_no_log(tmp_path):
     cli = _load_cli()
     assert cli.log_tail(str(tmp_path), "nothing") == ""
@@ -328,3 +378,33 @@ def test_a_failed_trace_does_not_fail_the_clip(monkeypatch, tmp_path):
     assert cli.start_trace(types.SimpleNamespace(name="n", host="h", is_remote=True),
                            types.SimpleNamespace(stem="s"), 60) is None
     cli.stop_trace(None)      # must also tolerate the None it just returned
+
+
+def test_the_batch_file_says_what_the_daemon_reads(tmp_path, monkeypatch):
+    """A cross-process contract with a process on each side of it, so nothing
+    else would catch a rename. If the writer emitted "pid" and the reader
+    looked for "batch_pid", every test here would still pass: _batch would
+    simply fall through to the heartbeat scan and report a parked run dead,
+    which is the exact bug batch.json exists to fix.
+    """
+    from tools.encode_dash.model import _batch
+
+    cli = _load_cli()
+    where = tmp_path / "batch.json"
+    monkeypatch.setattr(cli, "RUN_DIR", str(tmp_path))
+    monkeypatch.setattr(cli, "BATCH_FILE", str(where))
+
+    # A live run's file carries the claimed marker; the reader must see it.
+    cli._mark_claimed()
+    assert _batch({}, str(where)) == {"running": True, "pid": os.getpid()}
+
+    # An unclaimed file (the startup window, or a stale takeover before the
+    # batch marks claimed) must not report running: the dashboard offers Stop
+    # only once the batch has cleared the control dir and claimed the run.
+    cli._clear_batch_file()
+    cli._write_batch_file()
+    assert _batch({}, str(where)) == {"running": False, "pid": None}
+
+    cli._clear_batch_file()
+    assert not where.exists()
+    assert _batch({}, str(where)) == {"running": False, "pid": None}

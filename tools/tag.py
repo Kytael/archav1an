@@ -8,6 +8,7 @@ import tempfile
 import shlex
 import time
 from datetime import datetime, timezone
+from xml.sax.saxutils import escape
 # Anything we compile is the default. This has to run before any module-level
 # shutil.which() resolves, so it sits with the imports. See tools/prefix_env.py.
 import os as _os, sys as _sys
@@ -296,13 +297,16 @@ def apply_tag_to_file(filepath, encoding_settings, encoder_name):
     """Writes encoding settings and track statistics to the MKV file."""
     stat = os.stat(filepath)
     encoding_date = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).strftime("%Y-%m-%d")
+    # The encoder strings embed the operator's encoder flags, so an & or < in
+    # any batch flag would otherwise produce malformed XML and mkvpropedit
+    # would reject the whole tag for every file in the run.
     xml_content = f"""<?xml version="1.0"?>
 <Tags>
   <Tag>
     <Targets/>
-    <Simple><Name>DATE_ENCODED</Name><String>{encoding_date}</String></Simple>
-    <Simple><Name>ENCODER</Name><String>{encoder_name}</String></Simple>
-    <Simple><Name>ENCODER_SETTINGS</Name><String>{encoding_settings}</String></Simple>
+    <Simple><Name>DATE_ENCODED</Name><String>{escape(encoding_date)}</String></Simple>
+    <Simple><Name>ENCODER</Name><String>{escape(encoder_name)}</String></Simple>
+    <Simple><Name>ENCODER_SETTINGS</Name><String>{escape(encoding_settings)}</String></Simple>
   </Tag>
 </Tags>
 """

@@ -5,12 +5,13 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
-SOURCES["ffvship:vship"]="https://codeberg.org/Line-fr/Vship.git|v5.0.1"
+SOURCES["ffvship:vship"]="https://codeberg.org/Line-fr/Vship.git|v5.1.1"
 ARTIFACTS["ffvship"]="bin/FFVship lib/vapoursynth/libvship.so"
 
 install_ffvship() {
-    if command -v FFVship &> /dev/null && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
-        log_info "FFVship is already installed."
+    # The prefix copy only; see is_installed in setup.sh.
+    if [ -x "$VS_PREFIX/bin/FFVship" ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
+        log_info "FFVship is already installed at $VS_PREFIX."
         return 0
     fi
 

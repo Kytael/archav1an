@@ -12,9 +12,9 @@ SOURCES["denoiser:mvsfunc"]="https://github.com/HomeOfVapourSynthEvolution/mvsfu
 SOURCES["denoiser:havsfunc-legacy"]="https://github.com/HomeOfVapourSynthEvolution/havsfunc.git|r33"
 # The three SMDegrain plugins. Arch takes these from the AUR; Ubuntu has no
 # AUR, so it builds the same upstreams the AUR packages track. mvtools is
-# pinned to v29 to match Arch's vapoursynth-plugin-mvtools 29, and the other
+# pinned to v29_2 (the v29 depan fix release; Arch ships 29), and the other
 # two follow master because their Arch counterparts are -git packages.
-SOURCES["denoiser:mvtools"]="https://github.com/dubhater/vapoursynth-mvtools.git|v29"
+SOURCES["denoiser:mvtools"]="https://github.com/dubhater/vapoursynth-mvtools.git|v29_2"
 SOURCES["denoiser:removegrain"]="https://github.com/vapoursynth/vs-removegrain.git|master"
 SOURCES["denoiser:ctmf"]="https://github.com/HomeOfVapourSynthEvolution/VapourSynth-CTMF.git|master"
 ARTIFACTS["denoiser"]="lib/vapoursynth/libvstrt.so lib/vapoursynth/libvsmigx.so lib/vapoursynth/libknlmeanscl.so lib/vapoursynth/libmvtools.so lib/vapoursynth/libremovegrain.so lib/vapoursynth/libctmf.so"
@@ -245,8 +245,8 @@ install_denoiser() {
 
             clone_src denoiser vs-mlrt vs-mlrt || { cd "$ORIG_DIR"; return 1; }
 
-            cd vs-mlrt/vstrt
-            mkdir -p build && cd build
+            cd vs-mlrt/vstrt || { log_error "vs-mlrt checkout has no vstrt directory"; cd "$ORIG_DIR"; return 1; }
+            mkdir -p build && cd build || { log_error "cannot enter the vstrt build directory"; cd "$ORIG_DIR"; return 1; }
             cmake .. \
                 -DCMAKE_BUILD_TYPE=Release \
                 -G Ninja \
@@ -656,7 +656,7 @@ for sigma in [15, 25, 50]:
     mkdir -p build_tmp && cd build_tmp || return 1
 
     clone_src denoiser knlmeanscl KNLMeansCL || { cd "$ORIG_DIR2"; return 1; }
-    cd KNLMeansCL
+    cd KNLMeansCL || { log_error "KNLMeansCL checkout is missing"; cd "$ORIG_DIR2"; return 1; }
     meson setup build --buildtype=release || { log_error "KNLMeansCL meson setup failed"; cd "$ORIG_DIR2"; return 1; }
     ninja -C build || { log_error "KNLMeansCL build failed"; cd "$ORIG_DIR2"; return 1; }
 

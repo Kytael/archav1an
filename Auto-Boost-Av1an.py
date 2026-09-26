@@ -1338,6 +1338,20 @@ def calculate_metric() -> None:
                 metric_calculated = True
 
     # FALLBACK CPU (VS-ZIP)
+    if metric_calculated:
+        # A successful fssimu2 run already produced scores: write them and
+        # leave. Falling through from here recomputed everything with VS-ZIP,
+        # overwrote the log, and -- with no vszip plugin -- raised SystemExit
+        # and killed the pipeline even though valid metrics were on hand.
+        with open(ssimu2_log_file, "w") as file:
+            skip_offset = 0
+            for index, score in enumerate(score_list):
+                final_score = score if score is not None else 0.0
+                for i in range(skip):
+                    file.write(f"{index + skip_offset + i}: {final_score}\n")
+                skip_offset += skip - 1
+        return
+
     console.print(
         f"[yellow]Calculating SSIMULACRA2 (VS-ZIP Fallback | {ssimu2_cpu_workers} workers)...[/yellow]"
     )

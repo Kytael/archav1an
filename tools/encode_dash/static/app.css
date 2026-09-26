@@ -20,6 +20,10 @@ a { color: var(--accent); text-decoration: none; margin-left: auto; }
             letter-spacing: 0; text-transform: none; }
 .dim { color: var(--dim); font-weight: 400; text-transform: none;
        letter-spacing: 0; }
+/* Sits in the h2, so it has to shed the heading's uppercase and tracking. */
+.filter { float: right; font-weight: 400; text-transform: none;
+          letter-spacing: 0; cursor: pointer; user-select: none; }
+.filter input { vertical-align: -1px; margin-right: .3rem; cursor: pointer; }
 .banner { background: rgba(224,90,79,.14); border: 1px solid var(--bad);
           color: #ffb4ad; padding: .6rem .8rem; border-radius: 7px;
           margin: 1rem 0; font-size: .85rem; }
@@ -34,7 +38,7 @@ tr:last-child td { border-bottom: none; }
    ignores width, height and the box the background paints -- leaving only the
    absolutely positioned knob, and no green to say the lane is enabled. */
 .sw { display: inline-block; width: 32px; height: 18px; border-radius: 9px;
-      background: var(--line); position: relative; opacity: .45; }
+      background: var(--line); position: relative; }
 .sw.on { background: var(--ok); }
 .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px;
              height: 14px; border-radius: 50%; background: #fff; }
@@ -53,3 +57,128 @@ tr:last-child td { border-bottom: none; }
 .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.6rem; }
 @media (max-width: 820px) { .split { grid-template-columns: 1fr; } }
 footer { margin-top: 2rem; font-size: .72rem; }
+.controls { display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap;
+            margin-top: .5rem; }
+.sw { cursor: pointer; }
+.sw:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+/* A colour, not an opacity. At opacity .5 the row's --fg text lands near
+   #7b7d84 on the panel, which is under 4.5:1 and reads as greyed-out rather
+   than as a control -- "yield" in particular, which is the one word here
+   nobody can guess from context. --dim is the same weight the .sub lines
+   already use and clears 6:1. */
+button.rm { background: none; border: 0; cursor: pointer; font: inherit;
+            color: var(--dim); }
+button.rm:hover { color: var(--fg); }
+#add-lane, #add-host, #add-job { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+            gap: .5rem; margin-top: .75rem; }
+/* Required, not redundant. The rule above is an ID selector, which outranks the
+   user agent's `[hidden] { display: none }`, so without this the `hidden`
+   attribute on the form does nothing and all ten inputs sit permanently open. */
+#add-lane[hidden], #add-host[hidden], #add-job[hidden] { display: none; }
+#add-lane label, #add-host label, #add-job label { display: flex; flex-direction: column; font-size: .8rem; }
+/* The preset picker owns a whole row: its note is a sentence, not a field
+   label, and it would be unreadable in an 11rem grid cell. */
+#add-lane label.preset, #add-job label.preset { grid-column: 1 / -1; }
+/* Required, not redundant, for the same reason as #add-lane[hidden] above:
+   the rule two lines up is `#add-lane label`, which outranks the user agent's
+   `[hidden] { display: none }`. Without this, a catalogue that will not load
+   leaves an empty picker sitting open at the top of the form.
+   #add-host has no picker, but shares the rule so its note behaves. */
+#add-lane label[hidden], #add-host label[hidden], #add-job label[hidden] { display: none; }
+/* Its own grid row, above the fields, in both modes. No display property, so
+   the `hidden` attribute still removes it -- unlike the label rules above,
+   which had to be undone by hand for exactly that reason. */
+#add-lane .note, #add-host .note, #add-job .note { grid-column: 1 / -1; margin: 0; color: var(--dim);
+                  font-size: .74rem; max-width: 74ch; }
+/* An edit cannot rename a lane, and cannot rename an encode host either, so
+   the name box is read-only in both forms. It has to LOOK read-only, or the
+   refusal only arrives after the operator has typed. */
+#add-lane input[readonly], #add-host input[readonly], #add-job input[readonly] { opacity: .55; cursor: not-allowed; }
+/* Capped: the label owns the full grid row so the note can wrap at a readable
+   width, and a select stretched to 1240px reads as a text field. */
+#add-lane label.preset select,
+#add-job label.preset select { max-width: 32rem; }
+.msg { margin-top: .5rem; }
+.actions { white-space: nowrap; text-align: right; }
+.actions button + button { margin-left: .4rem; }
+/* Still clearly disabled, but legible: at opacity .2 the word was a smudge,
+   and an operator cannot tell a disabled control from a rendering fault. */
+button.rm[disabled] { opacity: .45; cursor: default; }
+button.rm[disabled]:hover { color: var(--dim); }
+/* The text here was never the problem -- var(--dim) is 6.2:1 on --bg. The
+   BORDER was: var(--line) is #2b2f37, which is 1.40:1 against the background
+   and so is not visibly there at all. A bordered button whose border cannot be
+   seen reads as low-contrast label text, which is exactly what stopping a run
+   should not look like. --dim on the edge clears the 3:1 that non-text UI
+   wants, and --fg on the label makes it a control rather than a caption. */
+#stop-run { background: none; border: 1px solid var(--dim); cursor: pointer;
+            font: inherit; color: var(--fg); border-radius: 5px;
+            padding: .2rem .6rem; }
+#stop-run:hover:not([disabled]) { border-color: var(--fg); }
+/* .35 of --fg is about 4.5:1 and already hard to read; .55 stays obviously
+   inert beside the enabled state without becoming a smudge. */
+#stop-run[disabled] { opacity: .55; cursor: default; }
+#stop-run.armed { color: var(--bad); border-color: var(--bad); }
+/* :hover:not([disabled]) is (1,2,0) and outranks .armed at (1,1,0), so without
+   this the armed button loses its red edge exactly while the pointer is on it
+   -- the one moment the warning has to hold. */
+#stop-run.armed:hover:not([disabled]) { border-color: var(--bad); }
+.acks { list-style: none; margin: .6rem 0 0; padding: 0; font-size: .76rem;
+        color: var(--dim); }
+/* Required, not redundant. The rule above is an ID-adjacent class rule, but
+   the list is toggled by the `hidden` attribute and a `display` set here would
+   outrank the user agent's `[hidden] { display: none }`. See #add-lane. */
+.acks[hidden] { display: none; }
+.ack { padding: .12rem 0; }
+.ack.no { color: var(--warn); }
+
+/* Routing. The allowlist owns a whole grid row: it is a set of short names
+   that wrap, not a labelled field, and an 11rem cell would column them. */
+#add-lane .routing { grid-column: 1 / -1; border: 1px solid var(--line);
+                     border-radius: 4px; padding: .4rem .6rem .6rem; margin: 0; }
+#add-lane .routing legend { font-size: .8rem; color: var(--dim); padding: 0 .3rem; }
+#add-lane .routing[hidden] { display: none; }
+/* Overrides `#add-lane label { flex-direction: column }` above, which would
+   otherwise stack each checkbox on top of its own name. */
+#add-lane .routing label.box { flex-direction: row; align-items: center;
+                               gap: .25rem; font-size: .8rem; white-space: nowrap; }
+#add-lane .routing .boxes { display: flex; flex-wrap: wrap; gap: .3rem .9rem;
+                            margin-top: .35rem; }
+/* A name the lane routes to that is no longer in the pool. Shown rather than
+   dropped: the roster already refuses that lane, and hiding the name would
+   make the refusal unexplainable from this page. */
+#add-lane .routing label.box.gone { color: var(--bad); font-style: italic; }
+
+/* An encode job in the shared queue. Its own colour, not the lane state
+   colours: it says which KIND of work a row is, not how that work is going. */
+.tag.encode { background: rgba(224,163,58,.16); color: var(--warn); }
+
+/* The queue and failure panels are windows onto a list, not the list itself.
+   Failed carries up to 50 rows and each one has a reason block under it, so
+   unbounded it pushes everything below it off the page -- and the two panels
+   sit side by side, where unequal heights read as a layout bug. A fixed
+   viewport keeps both honest and the page one screen tall.
+
+   The height is in rows, not pixels: enough to see the shape of the list and
+   short enough that the footer stays reachable. */
+.scroll { max-height: 26rem; overflow-y: auto; overscroll-behavior: contain; }
+/* The scrollbar is a control, so it has to be visible against the panel. */
+.scroll { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.scroll::-webkit-scrollbar { width: 10px; }
+.scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; }
+.scroll::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+
+/* Sits in the Failed h2 beside the filter, so it sheds the heading's uppercase
+   and tracking the same way .filter does -- but it is a control that resets
+   the failure count of every abandoned clip, so it gets a visible edge rather
+   than reading as another caption. Same reasoning as #stop-run: var(--line) is
+   1.40:1 on the background and is not visibly there at all. */
+#retry-all { margin-right: 1rem; background: none; border: 1px solid var(--dim);
+             color: var(--fg); border-radius: 5px; padding: .1rem .5rem; }
+#retry-all:hover:not([disabled]) { border-color: var(--fg); }
+#retry-all[disabled] { opacity: .55; cursor: default; }
+#retry-all.armed { color: var(--warn); border-color: var(--warn); }
+/* :hover:not([disabled]) is (1,2,0) and outranks .armed at (1,1,0), so without
+   this the armed button loses its warning edge exactly while the pointer is on
+   it -- the one moment it has to hold. Same trap as #stop-run.armed. */
+#retry-all.armed:hover:not([disabled]) { border-color: var(--warn); }

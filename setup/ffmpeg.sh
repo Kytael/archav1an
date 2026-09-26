@@ -5,7 +5,7 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
-SOURCES["ffmpeg:dav1d"]="https://code.videolan.org/videolan/dav1d.git|1.5.3"
+SOURCES["ffmpeg:dav1d"]="https://code.videolan.org/videolan/dav1d.git|1.5.4"
 # Each nv-codec-headers release declares a minimum driver, and FFmpeg enforces
 # it at runtime rather than at build time: too-new headers compile cleanly and
 # then fail the first time anything touches NVENC, with "Driver does not

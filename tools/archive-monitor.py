@@ -125,7 +125,11 @@ def read_state(path):
                     # fps*wall recovers the frame count the record does not store.
                     d["frames"] += row.get("fps", 0.0) * row.get("wall_s", 0.0)
                     d["bytes"] += row.get("out_bytes", 0)
-                else:
+                elif row.get("status") == "failed":
+                    # "retry" is an instruction (the dashboard's retry button
+                    # wrote it), not a result; counting it as a failure
+                    # inflated the summary and filled "recent failures" with
+                    # clips nobody saw fail.
                     failed += 1
                     recent.append((row.get("src", "?"), name,
                                    row.get("reason", "")[:70]))

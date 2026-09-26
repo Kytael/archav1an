@@ -18,8 +18,13 @@ _write_lock = threading.Lock()
 
 @dataclass(frozen=True)
 class Record:
+    """A "retry" record carries only `src` and the status; every other field is
+    left at its default. It is not a result, it is an instruction: the run
+    tried this clip twice, and the operator decided the reason was transient.
+    The failed records stay in the file, so the history survives the override.
+    """
     src: str
-    status: str        # "done" or "failed"
+    status: str        # "done", "failed" or "retry"
     denoiser: str
     wall_s: float
     fps: float
@@ -37,6 +42,12 @@ class Record:
     stage_s: float = 0.0
     work_s: float = 0.0
     publish_s: float = 0.0
+    # Which host encoded this clip. Under any-to-any pairing a lane's fps is a
+    # property of BOTH ends, so without this column the fps figures stop
+    # describing anything -- and they are what the ETA and
+    # docs/encode-capacity.md are computed from. Defaulted, so records written
+    # before the encode pool existed still load.
+    encode_host: str = ""
 
 
 @dataclass(frozen=True)
@@ -91,9 +102,28 @@ def load_state(path):
                     done.add(src)
                 elif status == "failed":
                     failures[src] = failures.get(src, 0) + 1
+                elif status == "retry":
+                    # Spec 5.4. Zero, not a pop: a failure recorded after this
+                    # line must count from one, and popping would make the very
+                    # next failure indistinguishable from the first one ever.
+                    # The earlier failed records stay in the file either way --
+                    # this is append-only, and the history is the point.
+                    failures[src] = 0
     except FileNotFoundError:
         pass
     return State(done=frozenset(done), failures=MappingProxyType(failures))
+
+
+def exhausted_clips(state):
+    """Every clip the run has given up on, in the order it first gave up.
+
+    The one question a mass retry has to answer, and it cannot be answered from
+    the dashboard's failure panel: that panel carries a capped preview, so a
+    retry driven from the rendered rows would silently skip whatever did not
+    fit. This reads the state file, which is the same thing the `N exhausted`
+    count is computed from, so the button means exactly what the number says.
+    """
+    return tuple(src for src, n in state.failures.items() if n >= MAX_ATTEMPTS)
 
 
 def pending_clips(clips, state):

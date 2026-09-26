@@ -49,10 +49,56 @@ def stage_cmd(host, rel_src, dest_dir):
     return ["rsync", "-a", f"{host}:{ARCHIVE_ROOT}/{rel_src}", f"{dest_dir}/"]
 
 
+def stage_job_cmd(host, src, dest_dir):
+    """Stage an ENCODE JOB's source, which is an absolute path on `host`.
+
+    Separate from stage_cmd, and stage_cmd keeps refusing an absolute path.
+    For an archive clip `src` is relative to ARCHIVE_ROOT and an absolute one
+    would silently escape the root -- that refusal is load-bearing and stays.
+    An encode job's source is a path an operator named, anywhere on any host.
+
+    "local" is a roster host NAME, not a machine. Left in an rsync prefix it
+    becomes the ssh target `local:/path`, which resolves to nothing; the empty
+    string does the same. Both mean "no host" here.
+    """
+    if not src.startswith("/"):
+        raise TransferError(f"an encode job's source must be absolute: {src}")
+    remote = host and host != "local"
+    source = f"{host}:{src}" if remote else src
+    return ["rsync", "-a", source, f"{dest_dir}/"]
+
+
+def safe_dest(dest):
+    """The destination subpath under encoded/, or raise.
+
+    REFUSES an absolute path rather than stripping it. Stripping turns
+    /mnt/media/dance -- the path an operator reaches for -- into
+    encoded/mnt/media/dance and publishes there without a word.
+    """
+    dest = (dest or "").strip().rstrip("/")
+    if not dest:
+        raise TransferError("a destination under encoded/ is required")
+    if dest.startswith("/"):
+        raise TransferError(
+            f"the destination is a subpath under {ENCODED_SUBDIR}/, not an "
+            f"absolute path: {dest}")
+    parts = dest.split("/")
+    if ".." in parts:
+        raise TransferError(f"the destination must not escape {ENCODED_SUBDIR}/: {dest}")
+    return dest
+
+
 def publish_cmd(host, local_out, rel_dir):
     if rel_dir.startswith("/"):
         raise TransferError(f"rel_dir must be relative: {rel_dir}")
     remote_dir = f"{ARCHIVE_ROOT}/{ENCODED_SUBDIR}/{rel_dir}"
+    # "local" is a roster host name, not a machine: as an rsync prefix it makes
+    # the ssh target local:/path, which resolves to nothing.
+    if not host or host == "local":
+        # --rsync-path is a REMOTE SHELL argument and does nothing locally, so
+        # a local publish has to make its own directory.
+        os.makedirs(remote_dir, exist_ok=True)
+        return ["rsync", "-a", local_out, f"{remote_dir}/"]
     # --rsync-path is the one argument rsync hands to the remote shell verbatim,
     # so it needs quoting of its own. Every other path rides protect-args.
     return ["rsync", "-a", "--rsync-path",

@@ -5,7 +5,7 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
-SOURCES["subtext:subtext"]="https://github.com/vapoursynth/subtext.git|R6"
+SOURCES["subtext:subtext"]="https://github.com/vapoursynth/subtext.git|R7"
 ARTIFACTS["subtext"]="lib/vapoursynth/libsubtext.so"
 
 install_subtext() {

@@ -3,9 +3,14 @@ import os
 import sys
 
 from tools import encode_dash
-from tools.encode_dash import Paths
+from tools.archive_batch import pidfile
+from tools.encode_dash import Paths, model, rosterio
 from tools.encode_dash.liverate import RateTracker
 from tools.encode_dash.model import snapshot
+
+# This process's real /proc identity, so live-lane fixtures pass the same
+# identity check production rows are read through.
+_PID_START = pidfile.start_time(os.getpid())
 
 
 def test_run_dir_follows_the_env_var(monkeypatch):
@@ -41,7 +46,7 @@ host    = "gpu1"
 backend = "trt"
 device  = 0
 tiling  = "none"
-port    = 5300
+root    = "/home/user/archav1an"
 enabled = true
 
 [[denoiser]]
@@ -79,7 +84,9 @@ def _run_dir(tmp_path, records=(), lanes=()):
     return Paths(run_dir=str(run), state=str(run / "state.jsonl"),
                  roster=str(run / "denoisers.toml"),
                  manifest=str(run / "manifest-raw.tsv"),
-                 lanes=str(run / "lanes"), control=str(run / "control"))
+                 lanes=str(run / "lanes"), control=str(run / "control"),
+                 roster_error=str(run / "roster-error.txt"),
+                 batch=str(run / "batch.json"))
 
 
 def _done(src, denoiser, fps, frames_wall=1.0):
@@ -107,6 +114,40 @@ def test_every_rostered_lane_appears_even_when_disabled(tmp_path):
     assert snap["lanes"][1]["state"] == "off"
 
 
+def test_a_lane_carries_every_field_the_edit_form_can_write(tmp_path):
+    """The page fills the edit form from this, so it has to be the whole
+    writable set and not the four columns the row happens to render."""
+    from tools.encode_dash import rosterio
+    snap = snapshot(_run_dir(tmp_path), RateTracker(), now=0.0)
+    lane = snap["lanes"][0]
+    assert set(lane["fields"]) <= set(rosterio.FIELDS)
+    assert lane["fields"]["name"] == "gpu1_4090"
+    assert lane["fields"]["root"] == "/home/user/archav1an"
+
+
+def test_a_field_the_lane_never_set_is_absent_not_zero(tmp_path):
+    """The 2070s lane sets no root and does not stage. The gpu1_4090 lane is
+    untiled, so it sets no window. Reporting window 0 would put a 0 in the
+    form's box, and one save later the roster would carry a window nobody
+    typed -- which roster.py then refuses on an untiled lane."""
+    snap = snapshot(_run_dir(tmp_path), RateTracker(), now=0.0)
+    assert "window" not in snap["lanes"][0]["fields"]
+    fields = snap["lanes"][1]["fields"]
+    assert "root" not in fields
+    assert "stage_source" not in fields
+    # Set on this lane, so it is here. device 0 is a real value, not an
+    # absence, so it is here too.
+    assert fields["window"] == 750
+    assert fields["device"] == 0
+
+
+def test_a_lane_never_reports_enabled_among_its_editable_fields(tmp_path):
+    """The switch owns `enabled`. If the edit form could carry it, a save
+    would silently undo a toggle made while the form was open."""
+    snap = snapshot(_run_dir(tmp_path), RateTracker(), now=0.0)
+    assert "enabled" not in snap["lanes"][0]["fields"]
+
+
 def test_a_lane_with_no_completed_clips_has_no_rate(tmp_path):
     """Never borrow a figure from another lane or from the docs: those are the
     short-run numbers docs/encode-capacity.md withdrew."""
@@ -119,6 +160,7 @@ def test_a_working_lane_reports_its_clip_and_elapsed(tmp_path):
     lane = {"lane": "gpu1_4090", "src": "SetA/2001/a/three.MOV",
             "frames": 1000, "state": "working", "started_at": 40.0,
             "batch_pid": os.getpid(), "attempt": 1,
+            "pid_start": _PID_START,
             "temp_dir": str(tmp_path / "temp")}
     snap = snapshot(_run_dir(tmp_path, lanes=[lane]), RateTracker(), now=100.0)
     row = snap["lanes"][0]
@@ -140,7 +182,7 @@ def test_a_heartbeat_from_a_dead_process_is_unknown_not_working(tmp_path):
 
     lane = {"lane": "gpu1_4090", "src": "SetA/2001/a/one.MOV", "frames": 600,
             "state": "working", "started_at": 1.0, "batch_pid": dead.pid,
-            "attempt": 1, "temp_dir": str(tmp_path / "temp")}
+            "pid_start": 1, "attempt": 1, "temp_dir": str(tmp_path / "temp")}
     snap = snapshot(_run_dir(tmp_path, lanes=[lane]), RateTracker(), now=10.0)
     assert snap["lanes"][0]["state"] == "unknown"
 
@@ -198,6 +240,7 @@ def _working(paths, temp, src):
     """Rewrite the one lane's heartbeat, as the batch does between clips."""
     row = {"lane": "gpu1_4090", "src": src, "frames": 1000, "state": "working",
            "started_at": 0.0, "batch_pid": os.getpid(), "attempt": 1,
+           "pid_start": _PID_START,
            "temp_dir": str(temp)}
     with open(os.path.join(paths.lanes, "gpu1_4090.json"), "w") as fh:
         json.dump(row, fh)
@@ -315,10 +358,515 @@ def test_a_windowed_lane_is_smoothed_over_sweeps_and_a_full_frame_lane_is_not():
     windowed = Denoiser(name="2070s", host="local", backend="trt", device=0,
                         tiling="auto", enabled=True, window=750, margin=32)
     full = Denoiser(name="gpu1_4090", host="gpu1", backend="trt", device=0,
-                    tiling="none", enabled=True, port=5300)
+                    tiling="none", enabled=True)
 
     assert _smooth_for(full, 15.2) is None, "a streaming lane needs no sweeps"
     assert _smooth_for(windowed, 5.5) > 136.0, "must span more than one sweep"
     # With no history yet it must guess slow, because guessing fast gives a
     # window too short to contain a sweep and brings the burst straight back.
     assert _smooth_for(windowed, None) > _smooth_for(windowed, 5.5)
+
+
+def test_snapshot_carries_the_roster_revision(tmp_path):
+    paths = _run_dir(tmp_path)
+    snap = snapshot(paths, RateTracker(), now=1000.0)
+    assert snap["roster_rev"] == rosterio.rev(paths.roster)
+    # A string, not [mtime_ns, size]: a JSON number that big is rounded by the
+    # browser, and a page echoing a rounded revision made every write a 409.
+    assert isinstance(snap["roster_rev"], str)
+
+
+def test_the_revision_is_read_before_the_roster_content(tmp_path, monkeypatch):
+    """A write landing mid-snapshot must give a stale pair, never a falsely
+    current one. Content from version N stamped with the revision of N+1 would
+    let the page compute an edit from N and quote a revision the server
+    accepts, which is the clobber the whole guard exists to stop. Reading the
+    revision first can only give N+1's content under N's revision -- a 409.
+    """
+    paths = _run_dir(tmp_path)
+    seen = []
+    real_rev, real_roster = rosterio.rev, model._roster
+
+    def spy_rev(path):
+        seen.append("rev")
+        return real_rev(path)
+
+    def spy_roster(path):
+        seen.append("content")
+        return real_roster(path)
+
+    monkeypatch.setattr(model.rosterio, "rev", spy_rev)
+    monkeypatch.setattr(model, "_roster", spy_roster)
+    snapshot(paths, RateTracker(), now=1000.0)
+    assert seen == ["rev", "content"]
+
+
+def test_roster_revision_changes_when_the_file_is_edited(tmp_path):
+    paths = _run_dir(tmp_path)
+    before = snapshot(paths, RateTracker(), now=1000.0)["roster_rev"]
+    rosterio.set_enabled(paths.roster, "2070s", True)
+    after = snapshot(paths, RateTracker(), now=1000.0)["roster_rev"]
+    # "false" -> "true" changes the size as well as the mtime, so this holds
+    # even on a filesystem whose timestamp resolution is coarse.
+    assert before != after
+
+
+def test_roster_revision_is_none_with_no_roster(tmp_path):
+    paths = _run_dir(tmp_path)
+    os.unlink(paths.roster)
+    snap = snapshot(paths, RateTracker(), now=1000.0)
+    assert snap["roster_rev"] is None
+    assert snap["roster_error"]
+
+
+def test_the_snapshot_carries_the_batchs_roster_error(tmp_path):
+    """Spec 5.5. The batch is a separate process, so its parse failure reaches
+    the page only through the file it writes."""
+    paths = _run_dir(tmp_path)
+    snap = snapshot(paths, RateTracker(), 1000.0)
+    assert snap["batch_roster_error"] is None
+    with open(paths.roster_error, "w", encoding="utf-8") as fh:
+        fh.write("roster is not valid TOML: line 3\n")
+    snap = snapshot(paths, RateTracker(), 1000.0)
+    assert snap["batch_roster_error"] == "roster is not valid TOML: line 3"
+
+
+def test_the_batchs_roster_error_is_separate_from_the_daemons(tmp_path):
+    """They are usually the same fault seen twice, and occasionally are not.
+    encode_roster_error is a live alert on the Pi with stored samples; folding
+    a second source into it would widen what that alert means without anyone
+    deciding to."""
+    paths = _run_dir(tmp_path)
+    # Break the roster so the daemon fails to parse it.
+    with open(paths.roster, "w", encoding="utf-8") as fh:
+        fh.write("[[denoiser]]\nname = \n")
+    # Write a different message for what the batch says.
+    with open(paths.roster_error, "w", encoding="utf-8") as fh:
+        fh.write("the batch says line 3\n")
+    snap = snapshot(paths, RateTracker(), 1000.0)
+    # Both are non-None and different; the daemon's failure and the batch's.
+    assert snap["roster_error"]  # daemon's parse failure
+    assert snap["batch_roster_error"] == "the batch says line 3"
+    assert snap["roster_error"] != snap["batch_roster_error"]
+
+
+def test_the_snapshot_carries_the_recent_acks(tmp_path):
+    from tools.archive_batch import control
+
+    paths = _run_dir(tmp_path)
+    assert snapshot(paths, RateTracker(), 1000.0)["acks"] == []
+    control.ack(paths.control, "a1", True, "killed igpu's dispatch", 999.0)
+    snap = snapshot(paths, RateTracker(), 1000.0)
+    assert snap["acks"] == [{"id": "a1", "accepted": True, "at": 999.0,
+                             "note": "killed igpu's dispatch"}]
+
+
+def test_an_unreadable_roster_error_file_does_not_break_the_snapshot(tmp_path):
+    """Every reader in this module degrades rather than raising, because a
+    500 on /metrics kills the Pi's scrape and the scrape is what tells you the
+    run is in trouble."""
+    paths = _run_dir(tmp_path)
+    os.makedirs(paths.roster_error)      # a directory where a file belongs
+    snap = snapshot(paths, RateTracker(), 1000.0)
+    assert snap["batch_roster_error"] is None
+
+
+def test_the_roster_revision_is_still_read_before_anything_else(tmp_path):
+    """A regression guard on the ordering comment in snapshot(). The revision
+    must be read before the content, or the page computes an edit from version
+    N and quotes the revision of N+1."""
+    import inspect
+
+    from tools.encode_dash import model
+
+    body = inspect.getsource(model.snapshot)
+    lines = [ln.strip() for ln in body.splitlines()
+             if ln.strip() and not ln.strip().startswith("#")]
+    reads = [ln for ln in lines
+             if "rosterio.rev(" in ln or "_roster(" in ln or "_clips(" in ln]
+    assert reads and "rosterio.rev(" in reads[0], reads
+
+
+def test_every_lane_disabled_is_not_a_roster_error(tmp_path):
+    """The alert guard. encode_roster_error is a live alert on the Pi with
+    stored samples, and it is driven by snap["roster_error"]. Yielding the last
+    enabled lane writes exactly this roster, so if it read as a parse failure
+    the operator would be paged for doing what the page offered them.
+
+    The lanes must still be listed, or there would be no switch to turn one
+    back on with.
+    """
+    paths = _run_dir(tmp_path)
+    with open(paths.roster, "w", encoding="utf-8") as fh:
+        fh.write(ROSTER.replace("enabled = true", "enabled = false"))
+    snap = snapshot(paths, RateTracker(), now=0.0)
+    assert snap["roster_error"] is None
+    assert [l["name"] for l in snap["lanes"]] == ["gpu1_4090", "2070s"]
+    assert [l["enabled"] for l in snap["lanes"]] == [False, False]
+
+
+def test_a_parked_run_with_no_heartbeat_still_reads_as_running(tmp_path):
+    """The whole point of batch.json. A run parked because every lane was
+    yielded holds no clip, so lanes/ is empty and there is no heartbeat to
+    read. Without this the daemon calls a live process dead: encode_batch_up
+    goes to 0 with clips still queued, which is EncodeBatchDown after five
+    minutes, and app.js disables the Stop button on the same field.
+    """
+    paths = _run_dir(tmp_path)
+    with open(paths.batch, "w", encoding="utf-8") as fh:
+        json.dump({"batch_pid": os.getpid(), "started_at": 1.0,
+                   "pid_start": _PID_START, "claimed": True}, fh)
+    snap = snapshot(paths, RateTracker(), now=0.0)
+    assert snap["batch"] == {"running": True, "pid": os.getpid()}
+
+
+def test_a_batch_file_left_by_a_killed_run_is_not_running(tmp_path):
+    """SIGKILL skips the cleanup, so the file outlives the process. The pid it
+    names is dead, and that is what has to be checked rather than the file
+    merely existing."""
+    import subprocess
+    # Reaped rather than invented, for the reason spelled out in
+    # test_a_lane_whose_batch_is_gone_is_unknown: pid_max is large enough that
+    # a made-up number can belong to a real process and make this flap.
+    dead = subprocess.Popen([sys.executable, "-c", ""])
+    dead.wait()
+    paths = _run_dir(tmp_path)
+    with open(paths.batch, "w", encoding="utf-8") as fh:
+        json.dump({"batch_pid": dead.pid, "started_at": 1.0}, fh)
+    snap = snapshot(paths, RateTracker(), now=0.0)
+    assert snap["batch"] == {"running": False, "pid": None}
+
+
+def _pre_upgrade_batch(tmp_path, name="archive-batch.py"):
+    """A live stand-in for a batch started before this version was installed.
+
+    Named so its command line is what pidfile.alive checks, because that is
+    the only identity a record with no pid_start carries. Waits for exec:
+    /proc/<pid>/cmdline is empty for the instant between fork and exec.
+    """
+    import subprocess
+    import time as _time
+    script = tmp_path / name
+    script.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
+    proc = subprocess.Popen([sys.executable, str(script)])
+    deadline = _time.monotonic() + 10
+    while _time.monotonic() < deadline and not pidfile.cmdline(proc.pid):
+        _time.sleep(0.01)
+    assert pidfile.cmdline(proc.pid), "the stand-in never reached exec"
+    return proc
+
+
+def test_a_live_pre_upgrade_heartbeat_reads_as_running(tmp_path):
+    """A batch that was already running when the checkout was upgraded keeps
+    its old code, so it writes neither pid_start nor the claimed marker.
+
+    Reading that as dead is the worse direction of this bug: encode_batch_up
+    drops to 0 and fires EncodeBatchDown for a fleet that is encoding, app.js
+    greys out Stop and RE-ENABLES Start, and one click puts a second batch
+    over the live one -- two lanes publishing to one destination path.
+    """
+    child = _pre_upgrade_batch(tmp_path)
+    try:
+        paths = _run_dir(tmp_path, lanes=[
+            {"lane": "gpu1_4090", "src": "SetA/2001/a/one.MOV", "frames": 10,
+             "state": "working", "started_at": 0.0, "batch_pid": child.pid,
+             "attempt": 1, "temp_dir": "/tmp/t"}])
+        assert not os.path.exists(paths.batch)
+        snap = snapshot(paths, RateTracker(), now=0.0)
+        assert snap["batch"] == {"running": True, "pid": child.pid}
+        # And the lane it holds renders, rather than every lane reading
+        # "unknown" with no rate, no progress and no ETA for the rest of the run.
+        assert snap["lanes"][0]["state"] == "working"
+    finally:
+        child.kill()
+        child.wait()
+
+
+def test_a_batch_file_naming_a_zombie_is_not_running(tmp_path):
+    """A SIGKILLed batch the daemon spawned stays a zombie until the daemon
+    waits on it, and os.kill(pid, 0) succeeds on a zombie. Read as alive, the
+    stale batch.json it left behind would hold encode_batch_up at 1 for the
+    rest of the daemon's life and keep offering Stop for a finished run."""
+    import subprocess
+    import time as _time
+    script = tmp_path / "archive-batch.py"
+    script.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
+    child = subprocess.Popen([sys.executable, str(script)])
+    start = pidfile.start_time(child.pid)
+    child.kill()                # no wait(): that is what leaves the zombie
+    deadline = _time.monotonic() + 10
+    while _time.monotonic() < deadline:
+        fields = pidfile._stat_after_comm(child.pid)
+        if fields and fields[0] == b"Z":
+            break
+        _time.sleep(0.01)
+    assert fields and fields[0] == b"Z", "the fixture never became a zombie"
+    try:
+        paths = _run_dir(tmp_path)
+        with open(paths.batch, "w", encoding="utf-8") as fh:
+            json.dump({"batch_pid": child.pid, "pid_start": start,
+                       "started_at": 1.0, "claimed": True}, fh)
+        snap = snapshot(paths, RateTracker(), now=0.0)
+        assert snap["batch"] == {"running": False, "pid": None}
+    finally:
+        child.wait()
+
+
+def test_a_pre_upgrade_heartbeat_whose_pid_was_recycled_reads_as_dead(tmp_path):
+    """The other half. The batch never sweeps lanes/, so a SIGKILLed old run
+    leaves its heartbeats behind; once the kernel hands that pid to an ffmpeg,
+    an existence-only probe would hold encode_batch_up at 1 for ever."""
+    child = _pre_upgrade_batch(tmp_path, name="ffmpeg-ish.py")
+    try:
+        paths = _run_dir(tmp_path, lanes=[
+            {"lane": "gpu1_4090", "src": "SetA/2001/a/one.MOV", "frames": 10,
+             "state": "working", "started_at": 0.0, "batch_pid": child.pid,
+             "attempt": 1, "temp_dir": "/tmp/t"}])
+        snap = snapshot(paths, RateTracker(), now=0.0)
+        assert snap["batch"] == {"running": False, "pid": None}
+        assert snap["lanes"][0]["state"] == "unknown"
+    finally:
+        child.kill()
+        child.wait()
+
+
+def test_a_live_pre_upgrade_batch_json_reads_as_running(tmp_path):
+    """The same run through the primary path. A pre-upgrade batch.json holds
+    batch_pid and started_at only: no claimed marker, because its writer had
+    none. Gating it on that marker would call the live run dead, which is the
+    finding above by another route."""
+    child = _pre_upgrade_batch(tmp_path)
+    try:
+        paths = _run_dir(tmp_path)
+        with open(paths.batch, "w", encoding="utf-8") as fh:
+            json.dump({"batch_pid": child.pid, "started_at": 1.0}, fh)
+        snap = snapshot(paths, RateTracker(), now=0.0)
+        assert snap["batch"] == {"running": True, "pid": child.pid}
+    finally:
+        child.kill()
+        child.wait()
+
+
+def test_an_unclaimed_post_upgrade_batch_json_still_reads_as_not_running(tmp_path):
+    """The startup window the claimed marker exists for is unchanged: a
+    record that carries pid_start comes from a writer that also writes the
+    marker, so its absence means the batch has not cleared the control dir
+    yet and Stop must not be offered."""
+    paths = _run_dir(tmp_path)
+    with open(paths.batch, "w", encoding="utf-8") as fh:
+        json.dump({"batch_pid": os.getpid(), "started_at": 1.0,
+                   "pid_start": _PID_START}, fh)
+    snap = snapshot(paths, RateTracker(), now=0.0)
+    assert snap["batch"] == {"running": False, "pid": None}
+
+
+def test_a_non_dict_heartbeat_does_not_take_the_snapshot_down(tmp_path):
+    """A lanes/*.json holding "[]" parses fine and has no .get. Unguarded it
+    raises AttributeError out of heartbeat.read_all, which 500s the page and
+    /metrics -- and an absent encode_batch_up series never fires
+    EncodeBatchDown, so the alert is lost rather than raised."""
+    paths = _run_dir(tmp_path)
+    (tmp_path / ".archive-run" / "lanes" / "gpu1_4090.json").write_text("[]")
+    snap = snapshot(paths, RateTracker(), now=0.0)
+    assert snap["batch"] == {"running": False, "pid": None}
+    assert snap["lanes"][0]["state"] == "idle"
+
+
+# --- The --lp control is only offered where set_lp_level can succeed ---------
+
+POOL_ROSTER = """
+[[denoiser]]
+name    = "igpu"
+host    = "local"
+backend = "migraphx"
+device  = 0
+tiling  = "none"
+enabled = true
+
+[[encoder]]
+name      = "encoder-host"
+host      = "local"
+stream_ip = "10.0.0.10"
+port_base = 5300
+slots     = 6
+lp_level  = 4
+enabled   = true
+
+[[encoder]]
+name      = "gpu4"
+host      = "gpu4"
+root      = "/home/user/reposetc/ubuntav1an"
+stream_ip = "10.0.0.14"
+port_base = 5320
+slots     = 3
+lp_level  = 4
+enabled   = true
+"""
+
+
+def test_a_pool_roster_reports_its_lp_level_but_not_as_editable(tmp_path):
+    """rosterio can only write the legacy [encode] table, and per-encoder
+    editing is a separate plan. The pool still AGREES on a level, so the
+    status line may name it -- but offering the select would offer a save
+    that cannot succeed."""
+    paths = _run_dir(tmp_path)
+    open(paths.roster, "w").write(POOL_ROSTER)
+    snap = snapshot(paths, RateTracker(), now=0.0)
+    assert snap["encode"]["slots"] == 9
+    assert snap["encode"]["lp_level"] == 4
+    assert snap["encode"]["lp_editable"] is False
+
+
+def test_a_legacy_roster_still_offers_the_lp_control(tmp_path):
+    snap = snapshot(_run_dir(tmp_path), RateTracker(), now=0.0)
+    assert snap["encode"]["lp_editable"] is True
+
+
+def test_the_page_disables_the_lp_select_on_that_field(tmp_path):
+    """Asserted against app.js itself, the way test_lane_presets asserts
+    LANE_FIELDS: the daemon can send lp_editable forever and the control is
+    still live if renderLp never reads it."""
+    source = (os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "tools", "encode_dash", "static", "app.js"))
+    text = open(source, encoding="utf-8").read()
+    body = text[text.index("function renderLp"):text.index("const LANE_FIELDS")]
+    assert "lp_editable" in body, "renderLp ignores lp_editable"
+    assert "title" in body, "a disabled control must say why it is disabled"
+
+
+def test_a_pool_roster_lists_every_host_including_the_disabled_ones(tmp_path):
+    """The switch has to be able to turn a host back ON, so the row for a
+    disabled host must exist. enabled_encoders(), which the slot count uses,
+    cannot supply it."""
+    paths = _run_dir(tmp_path)
+    open(paths.roster, "w").write(POOL_ROSTER.replace(
+        '''name      = "gpu4"
+host      = "gpu4"
+root      = "/home/user/reposetc/ubuntav1an"
+stream_ip = "10.0.0.14"
+port_base = 5320
+slots     = 3
+lp_level  = 4
+enabled   = true''',
+        '''name      = "gpu4"
+host      = "gpu4"
+root      = "/home/user/reposetc/ubuntav1an"
+stream_ip = "10.0.0.14"
+port_base = 5320
+slots     = 3
+lp_level  = 4
+enabled   = false'''))
+    snap = snapshot(paths, RateTracker(), now=0.0)
+    hosts = {h["name"]: h for h in snap["encode"]["hosts"]}
+    assert set(hosts) == {"encoder-host", "gpu4"}
+    assert hosts["gpu4"]["enabled"] is False
+    assert hosts["encoder-host"]["enabled"] is True
+    # And the slot count still counts only what can actually take work.
+    assert snap["encode"]["slots"] == 6
+
+
+def test_a_legacy_roster_sends_no_host_rows(tmp_path):
+    """load_roster synthesizes an Encoder named "local" from the [encode]
+    table, but there is no [[encoder]] block for rosterio to write. A row for
+    it would render a switch whose POST answers 404."""
+    snap = snapshot(_run_dir(tmp_path), RateTracker(), now=0.0)
+    assert snap["encode"]["hosts"] == []
+
+
+def test_the_page_renders_a_switch_for_each_encode_host(tmp_path):
+    """Asserted against app.js itself, the way the lp_editable test is: the
+    daemon can send hosts forever and there is still no switch if renderHosts
+    never reads them, or posts to the lane route by mistake."""
+    source = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "tools", "encode_dash", "static", "app.js")
+    text = open(source, encoding="utf-8").read()
+    body = text[text.index("function renderHosts"):text.index("function renderLp")]
+    assert "encode.hosts" in body, "renderHosts ignores the hosts the daemon sends"
+    assert "/api/encoder/" in body, "the switch must post to the encoder route"
+    assert "/api/lane/" not in body, \
+        "the encode host switch must never write the lane table"
+
+
+def test_host_rows_carry_the_writable_fields_the_edit_form_needs(tmp_path):
+    paths = _run_dir(tmp_path)
+    open(paths.roster, "w").write(POOL_ROSTER)
+    snap = snapshot(paths, RateTracker(), now=0.0)
+    fields = {h["name"]: h["fields"] for h in snap["encode"]["hosts"]}
+    assert fields["gpu4"]["port_base"] == 5320
+    assert fields["gpu4"]["slots"] == 3
+    # `enabled` never travels in fields: the row's switch owns it, and an edit
+    # carrying it would let a save undo a toggle made in between.
+    assert "enabled" not in fields["gpu4"]
+    # A local encoder needs no checkout path, so the key is absent rather than
+    # empty -- typed into the form, "" would be saved as a real empty root.
+    assert "root" not in fields["encoder-host"]
+
+
+def test_the_page_offers_the_allowlist_and_the_host_form(tmp_path):
+    """Asserted against app.js, like the lp_editable test: the daemon can send
+    hosts and allowlists forever and neither control exists if the page never
+    builds them."""
+    source = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "tools", "encode_dash", "static", "app.js")
+    text = open(source, encoding="utf-8").read()
+
+    # Routing lives in the lane form.
+    lane_form = text[text.index("function buildAddForm"):
+                     text.index("function renderList")]
+    assert "encoders" in lane_form, "the lane form cannot set an allowlist"
+    assert "buildRouting" in lane_form
+    # An edit must send an EMPTY list, or clearing every tick can never put the
+    # lane back on "any encoder".
+    assert "body.encoders = picked" in lane_form
+
+    # Host editing lives in its own form and posts to the encoder routes.
+    host_form = text[text.index("function buildHostForm"):
+                     text.index("function renderHosts")]
+    assert "/api/encoder" in host_form
+    assert "/api/lane/" not in host_form, \
+        "the host form must never write the lane table"
+
+    # ENCODER_FIELDS is a copy of rosterio's, the way LANE_FIELDS is. A key
+    # added there and not here can never be set from the page.
+    from tools.encode_dash import rosterio as rio
+    for key in rio.ENCODER_FIELDS:
+        assert f'["{key}"' in text or f'["{key}",' in text, \
+            f"ENCODER_FIELDS in app.js is missing '{key}'"
+
+
+def test_the_panel_orders_by_the_newest_failure_not_the_first(tmp_path):
+    """`failed[src] = row` reassigns, and reassigning a dict key keeps its
+    FIRST insertion position. So slicing the tail selected the newest first-
+    failures rather than the newest failures, and a clip that failed early and
+    again late sat at its early position -- outside the window, invisible."""
+    from tools.encode_dash.model import FAILURE_PREVIEW
+    early = {"src": "SetA/2001/a/one.MOV", "status": "failed",
+             "denoiser": "2070s", "wall_s": 1.0, "fps": 0.0, "out_bytes": 0,
+             "reason": "the first failure, long ago"}
+    filler = [{"src": f"SetA/2001/a/c{i}.MOV", "status": "failed",
+               "denoiser": "2070s", "wall_s": 1.0, "fps": 0.0, "out_bytes": 0,
+               "reason": f"filler {i}"} for i in range(FAILURE_PREVIEW + 10)]
+    late = dict(early, reason="the newest failure in the whole run")
+    snap = snapshot(_run_dir(tmp_path, records=[early] + filler + [late]),
+                    RateTracker(), now=0.0)
+    reasons = [f["reason"] for f in snap["failures"]]
+    assert "the newest failure in the whole run" in reasons
+
+
+def test_an_exhausted_clip_is_listed_however_old_its_last_failure(tmp_path):
+    """The `out of attempts only` filter exists to show the clips that stopped
+    for good, and those are the ones a run leaves behind early. Capping the
+    panel by recency alone dropped every one of them, so ticking the box
+    emptied the panel instead of narrowing it."""
+    from tools.encode_dash.model import FAILURE_PREVIEW
+    dead = [{"src": "SetA/2001/a/one.MOV", "status": "failed",
+             "denoiser": "2070s", "wall_s": 1.0, "fps": 0.0, "out_bytes": 0,
+             "reason": "out of attempts"}] * 2
+    filler = [{"src": f"SetA/2001/a/c{i}.MOV", "status": "failed",
+               "denoiser": "2070s", "wall_s": 1.0, "fps": 0.0, "out_bytes": 0,
+               "reason": f"filler {i}"} for i in range(FAILURE_PREVIEW + 10)]
+    snap = snapshot(_run_dir(tmp_path, records=dead + filler),
+                    RateTracker(), now=0.0)
+    assert snap["totals"]["failed"] == 1
+    shown = [f for f in snap["failures"] if f["exhausted"]]
+    assert [f["src"] for f in shown] == ["SetA/2001/a/one.MOV"]

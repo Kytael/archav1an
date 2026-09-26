@@ -7,9 +7,10 @@ The `setup.sh` script builds and installs everything into a single isolated pref
 | Path | Contents |
 | :--- | :--- |
 | `bin/` | `vspipe`, `ffmpeg`, `ffprobe`, `ffplay`, `SvtAv1EncApp`, `av1an`, `oxipng`, `FFVship`, `dav1d`, `ffmsindex` |
-| `lib/libvapoursynth.so.4`, `libvapoursynth-script.so` | R76 core (SONAME `libvapoursynth.so.4`; wins over pacman's v75 via `LD_LIBRARY_PATH` set by `activate-venv.sh`) |
+| `lib/libvapoursynth.so.4`, `libvapoursynth-script.so` | R79 core (SONAME `libvapoursynth.so.4`; wins over pacman's copy via `LD_LIBRARY_PATH` set by `activate-venv.sh`) |
+| `lib/libvapoursynthfilters{,_avx2,_zn4}.so` | R78+ core filters, split out of the core; symlinked beside it because the core loads them from its own directory |
 | `lib/vapoursynth/*.so` | VS plugins (see table below) |
-| `lib/python3.X/site-packages/vapoursynth/` | R76 Python module (versioned per interpreter, currently 3.14), wired into the venv via `_vapoursynth_native.pth` |
+| `lib/python3.X/site-packages/vapoursynth/` | R79 Python module (versioned per interpreter, currently 3.14), wired into the venv via `_vapoursynth_native.pth` |
 | `lib/python3/site-packages/` (deprecated) | (Empty placeholder; the actual site-packages is versioned per-Python.) |
 | `include/{vapoursynth,ffms2,libav*,libsw*,dav1d,svt-av1}/` | Headers for downstream plugin builds |
 | `lib/pkgconfig/*.pc` | pkg-config metadata for the prefix |
@@ -19,27 +20,27 @@ The `setup.sh` script builds and installs everything into a single isolated pref
 
 | Software | Version | Source |
 | :--- | :--- | :--- |
-| **VapourSynth** | **R76 (pinned)** | [vapoursynth/vapoursynth](https://github.com/vapoursynth/vapoursynth) — meson build, installed under `$VS_PREFIX/lib/python<X.Y>/site-packages/vapoursynth/` (R74+ ships everything as a Python package) and bridged into the traditional `bin/lib/include` layout via symlinks |
+| **VapourSynth** | **R79 (pinned)** — R80 removed API3 plugin loading, and vs-mlrt (vstrt/vsmigx), KNLMeansCL, CTMF and WWXD are all still API3; vs-mlrt declined to port (AmusementClub/vs-mlrt#171) | [vapoursynth/vapoursynth](https://github.com/vapoursynth/vapoursynth) — meson build, installed under `$VS_PREFIX/lib/python<X.Y>/site-packages/vapoursynth/` (R74+ ships everything as a Python package) and bridged into the traditional `bin/lib/include` layout via symlinks |
 | **FFMS2** | tag `5.0` | [FFMS/ffms2](https://github.com/FFMS/ffms2) |
-| **BestSource** | latest git (master) | [vapoursynth/bestsource](https://github.com/vapoursynth/bestsource) (meson+ninja, native opts) |
+| **BestSource** | tag `R21` — R22 builds its GPU export unconditionally and needs R80's API 4.3 | [vapoursynth/bestsource](https://github.com/vapoursynth/bestsource) (meson+ninja, native opts) |
 | **FFmpeg** | latest git (master) | [FFmpeg/FFmpeg](https://github.com/FFmpeg/FFmpeg) — Clang + PGO + LTO + NVENC/NVDEC/CUDA (auto-detected) |
 | **nv-codec-headers** | latest git (master) | [FFmpeg/nv-codec-headers](https://github.com/FFmpeg/nv-codec-headers) — required for FFmpeg NVENC/NVDEC |
 | **SVT-AV1-PSY** | tag `v2.3.0-C` | [5fish/svt-av1-psy](https://github.com/5fish/svt-av1-psy) — Clang, PGO, LTO, AVX512, NATIVE |
-| **dav1d** | tag `1.5.3` | [VideoLAN/dav1d](https://code.videolan.org/videolan/dav1d) — required for FFmpeg `--enable-libdav1d` |
+| **dav1d** | tag `1.5.4` | [VideoLAN/dav1d](https://code.videolan.org/videolan/dav1d) — required for FFmpeg `--enable-libdav1d` |
 | **Av1an** | latest git (master) | [rust-av/Av1an](https://github.com/rust-av/Av1an) |
 | **oxipng** | latest crates.io | `cargo install oxipng` |
-| **fssimu2** | tag `0.1.3` | [gianni-rosato/fssimu2](https://github.com/gianni-rosato/fssimu2) — Zig 0.15.2 build |
-| **vship / FFVship** | tag `v5.0.1` | [Line-fr/Vship](https://codeberg.org/Line-fr/Vship) — GPU SSIMU2 (CUDA/Vulkan; HIP discouraged by upstream) |
+| **fssimu2** | tag `0.2.0` | [gianni-rosato/fssimu2](https://github.com/gianni-rosato/fssimu2) — Zig 0.16.0 build |
+| **vship / FFVship** | tag `v5.1.1` | [Line-fr/Vship](https://codeberg.org/Line-fr/Vship) — GPU SSIMU2 (CUDA/Vulkan; HIP discouraged by upstream) |
 
 Plugin tags (built into `$VS_PREFIX/lib/vapoursynth/`):
 
 | Plugin | Version |
 | :--- | :--- |
 | WWXD | tag `v1.0` (only tag) |
-| VSZIP | tag `R13` |
-| SubText | tag `R6` |
+| VSZIP | tag `22.1.0` |
+| SubText | tag `R7` |
 
-**Pin policy:** dependencies that ship release tags are pinned to a known-good tag; tag-less projects (FFmpeg, BestSource, nv-codec-headers, Av1an) track master. To bump a pin, edit the `--branch <tag>` arg in the relevant `setup/*.sh` file and re-run `./setup.sh --install <component>`.
+**Pin policy:** dependencies that ship release tags are pinned to a known-good tag; tag-less projects (FFmpeg, nv-codec-headers, Av1an) track master. BestSource has tags now and is pinned: master moves with VapourSynth master, which is how R22 broke the R76 build. To bump a pin, edit the `--branch <tag>` arg in the relevant `setup/*.sh` file and re-run `./setup.sh --install <component>`.
 
 ## System packages (pacman / paru)
 
@@ -80,7 +81,7 @@ These are installed via the host package manager. `setup.sh` runs `pacman -Q <pk
 | **FFMS2** | (above) | Symlinked from `$VS_PREFIX/lib/libffms2.so` |
 | **BestSource** | (above) | Symlinked from the meson install location |
 | **WWXD** | [dubhater/vapoursynth-wwxd](https://github.com/dubhater/vapoursynth-wwxd) | Scene detection; linked with `-lm` |
-| **VSZIP** | [dnjulek/vapoursynth-zip](https://github.com/dnjulek/vapoursynth-zip) | SSIMULACRA2/XPSNR metrics; Zig 0.15.2 build |
+| **VSZIP** | [dnjulek/vapoursynth-zip](https://github.com/dnjulek/vapoursynth-zip) | SSIMULACRA2/XPSNR metrics; Zig 0.16.0 build |
 | **SubText** | [vapoursynth/subtext](https://github.com/vapoursynth/subtext) | Subtitles |
 | **vs-mlrt (vstrt)** | [AmusementClub/vs-mlrt](https://github.com/AmusementClub/vs-mlrt) | TensorRT backend for SCUNet/STA-SUNet (NVIDIA) |
 | **vs-mlrt (vsmigx)** | (same repo) | MIGraphX backend (AMD ROCm) |
@@ -89,7 +90,7 @@ These are installed via the host package manager. `setup.sh` runs `pacman -Q <pk
 | **removegrain** (symlink) | pacman/AUR | Symlinked from `/usr/lib/vapoursynth/libremovegrain.so` |
 | **ctmf** (symlink) | AUR | Optional, for SMDegrain ContraSharpening |
 
-The pacman v75 vapoursynth library coexists with our R76 build by both having SONAME `libvapoursynth.so.4` (the v74+ ABI). `activate-venv.sh` sets `LD_LIBRARY_PATH=$VS_PREFIX/lib`, which the dynamic linker searches *before* the ldconfig cache — so inside the activated env you get R76, outside the env you get pacman's v75. The bridge deliberately skips creating `$VS_PREFIX/lib/libvsscript.so`: `libvsscript` uses `dladdr()` to find itself and looks the result up in `~/.config/vapoursynth/vapoursynth.toml`; a symlink would be loaded via `LD_LIBRARY_PATH` first, `dladdr` would return the symlink path, and the toml lookup (keyed by the real path) would miss.
+The pacman vapoursynth library coexists with our R79 build by both having SONAME `libvapoursynth.so.4` (the v74+ ABI). `activate-venv.sh` sets `LD_LIBRARY_PATH=$VS_PREFIX/lib`, which the dynamic linker searches *before* the ldconfig cache — so inside the activated env you get R79, outside the env you get pacman's. The bridge deliberately skips creating `$VS_PREFIX/lib/libvsscript.so`: `libvsscript` uses `dladdr()` to find itself and looks the result up in `~/.config/vapoursynth/vapoursynth.toml`; a symlink would be loaded via `LD_LIBRARY_PATH` first, `dladdr` would return the symlink path, and the toml lookup (keyed by the real path) would miss.
 
 ## Python <a id="python"></a>
 
@@ -98,7 +99,7 @@ The venv at `$VS_PREFIX/venv` is created and managed by **uv** (not pip + `pytho
 - Default Python: whatever `python3` resolves to on PATH (typically the latest pacman version).
 - Override: `PYTHON_VERSION=3.13 ./setup.sh --install python_libs` — uv downloads the specified interpreter if missing. Useful when a newer Python breaks a binary dep (e.g. PyO3-based packages typically lag a release behind).
 - Upgrade detection: if you set `PYTHON_VERSION` to something different from what's already in the venv, `install_python_libs` warns and rebuilds the venv; you must rerun `--install vapoursynth` after because the source-built VS module is binary-linked to the venv's interpreter.
-- The pip-published `vapoursynth` stub package is removed from the venv on every install, otherwise it would shadow the source-built R76 module.
+- The pip-published `vapoursynth` stub package is removed from the venv on every install, otherwise it would shadow the source-built R79 module.
 
 ### Python packages
 

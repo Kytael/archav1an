@@ -4,37 +4,57 @@
 # boundary: nothing is killed and no progress is lost. Every rostered denoiser
 # gets a worker, so a device disabled at startup can be switched on mid-run.
 #
-# Encoding is ALWAYS local. A remote host contributes a GPU and nothing else
-# (spec 2). encode.host must be "local" or the roster is rejected.
+# Encoding is a POOL. Any lane can encode on any host in it, so a host may
+# denoise, encode, both or neither. See the [[encoder]] entries at the bottom
+# of this file, and the 2026-08-25 design note for why this stopped being one
+# machine.
 
 # --- lane 1: gpu1's RTX 4090, over the network -----------------------------
 # Denoises on gpu1 and streams y4m back over raw TCP. The source is read in
 # place on gpu1 via --remote-source, so no part of the 2.5 TB archive is
-# copied to gpu1's root. Needs a port, and ports must be unique per remote.
+# copied to gpu1's root. The listening port is not set here: it belongs to the
+# encoder that receives the stream, as port_base on an [[encoder]] entry.
+#
+# encoders is an allowlist: this lane may use only the hosts it names. gpu2 is
+# left out on purpose. Its 16.23 fps is a HOST ceiling and not a per-stream
+# rate -- it measures 15.84 / 16.23 / 15.76 / 16.45 fps at one, two, three and
+# five streams -- and this lane denoises at 17.74 fps, so gpu2 cannot keep up
+# with it and a second slot there would only halve the first. An allowlist on
+# the lane rather than a denylist on the encoder fails safe: add a fifth, slow
+# encoder later and this lane will not use it until it is named here.
+#
+# An enabled lane whose allowlist names no ENABLED encoder is refused at load.
+# It could never take a clip, and the rest of the fleet would keep draining the
+# queue and hide it. Turning all three of the encoders below off is enough to
+# reach that. Every encoder off is a different case and is still accepted:
+# there the whole run parks together and one toggle starts it again.
 [[denoiser]]
-name    = "gpu1_4090"
-host    = "gpu1"
-backend = "trt"
-device  = 0
-tiling  = "none"
-port    = 5300
-enabled = true
+name     = "gpu1_4090"
+host     = "gpu1"
+backend  = "trt"
+device   = 0
+tiling   = "none"
+encoders = ["encoder-host", "gpu4", "gpu5"]
+enabled  = true
 
 # A remote that does NOT hold the archive sets stage_source = true. dispatch
 # then rsyncs each clip to its Temp/_remote instead of reading it in place.
 # That is the only mode a GPU-only host can use, and it costs one source
-# transfer per clip. dispatch does not clean Temp/_remote up, so a long run
-# accumulates every clip that host processed -- watch its disk.
+# transfer per clip. dispatch deletes each copy once both halves have exited,
+# on the failure path too, so a long run no longer accumulates every clip that
+# host processed. It did until 2026-08-26, and 69 gate clips left 3.3 GB on
+# gpu2 and 775 MB on gpu4. A retry therefore re-stages, which is the trade.
+# Only a copy dispatch made itself is deleted; a lane reading the archive in
+# place through --remote-source is never touched.
 #
 #   [[denoiser]]
 #   name         = "gpu2"
-#   host         = "gpu2"
+#   host         = "gpu2-wsl"
 #   backend      = "trt"
 #   device       = 0
 #   tiling       = "auto"
 #   window       = 500
 #   margin       = 32
-#   port         = 5301
 #   stage_source = true
 #   enabled      = false
 
@@ -96,10 +116,71 @@ margin  = 32
 enabled = false
 
 # --- the encode pool --------------------------------------------------------
+# Encoding is no longer pinned to this machine. Any lane may encode on any host
+# in the pool, so a host can denoise, encode, both or neither. encoder-host does
+# both; gpu2 and the two Sparks only encode. The loader refuses a roster with
+# no encoder at all.
+#
+# port_base is the first port of this encoder's y4m listener block, and slot N
+# listens on port_base + N. Blocks are ten wide so that a slot-count change
+# needs no firewall edit, and two blocks may not overlap -- the loader refuses
+# that, because the second listener would fail to bind long after the run
+# started. A slot-count change needs no firewall edit; a NEW BLOCK does. The
+# loader checks collisions, never reachability, so a new encoder whose port is
+# closed fails every clip with "could not connect to <ip>:<port> after 11
+# attempts" while its receiver sits listening on 0.0.0.0. Open the whole block:
+# `ufw allow from 10.0.0.0/24 to any port 5340:5349 proto tcp`.
+#
+# Two encoder entries MAY share a host, needing only separate port blocks, and
+# that is how one lane gets a wider encoder than the rest. Three cautions. The
+# picker counts slots per encoder NAME, not per host, so a host with two entries
+# runs both at once -- budget its memory for the sum. A NEW entry needs a batch
+# restart: `enabled` and the allowlists are re-read before every clip, but the
+# semaphore pool and the slot/port table are built once at startup, and an
+# encoder with no semaphore is silently skipped, so the edit looks applied and
+# does nothing. And `encoders` on a lane is an allowlist where an EMPTY list
+# allows EVERY encoder, so reserving one entry for one lane means naming
+# encoders on all the other lanes too. The port used to sit on the [[denoiser]]; it moved here because the
+# listener runs on the encode host, not on the denoise host.
+#
+# port_base is required on every encoder, local one included. A local encoder
+# still receives from a REMOTE denoiser -- that is the gpu1_4090 lane above --
+# and the port it listens on is its own.
+#
+# stream_ip is the address the listener binds to and the address the denoise
+# host connects to -- ON A REMOTE ENCODER. There it is never 0.0.0.0: gpu2 is a
+# laptop, and a bind that fails off-LAN is the point, because the lane must
+# refuse to start rather than listen on an untrusted network. A host whose
+# address moves sets stream_net instead, and the bind address is picked out of
+# that network per clip. Setting both is refused, because it hides which one is
+# in effect.
+#
+# On a LOCAL encoder stream_ip is read by nothing. dispatch_cmd passes it only
+# under encoder.is_remote, so on the local entry below the listener is dispatch's
+# own `netstream recv` with no --bind, which is 0.0.0.0, and the address the
+# denoise host connects to is CALLBACK_IP in tools/archive-batch.py
+# (ARCHIVE_CALLBACK_IP overrides it). The entry may simply omit stream_ip; the
+# loader requires an address only on a remote encoder. It is kept here because it
+# is the right address to inherit the day encoder-host stops being the orchestrator,
+# and it is documented rather than deleted because a reader would otherwise take
+# it for the bind address it is not. stream_net is a different case: it is
+# resolved on a local encoder too, and an empty result refuses the clip there
+# exactly as it does remotely.
+#
+# A host that holds no address in its stream_net is off the trusted network. Its
+# clip goes back on the queue untouched -- no attempt is spent and nothing is
+# recorded failed -- and the host leaves the pool for five minutes. It rejoins by
+# itself, so a laptop that comes home needs no restart and no roster edit.
+#
+# root names the checkout on a REMOTE encode host, exactly as it does on a
+# remote denoiser. A local encoder must not set it.
+#
 # slots is NOT just an encoder count. A slot is held for a whole clip -- stage,
 # denoise and publish included -- so slots below the number of enabled denoisers
-# leaves a lane blocked with nothing to do. That is the reason for 6: it is one
-# per lane the fleet can field, so the ceiling never starves a card.
+# leaves a lane blocked with nothing to do. One slot per lane the fleet can
+# field is the target, so the ceiling never starves a card. Prefer to SPREAD
+# them -- 2 on encoder-host, 2 on gpu4, 2 on gpu5 -- rather than stack six on
+# the batch host, which also stages, publishes and runs two denoise lanes.
 #
 # It used to say 2, on an idle-machine measurement: the encode curve saturates
 # at 3 with nothing else running. Under load it does not. docs/encode-capacity.md
@@ -110,13 +191,30 @@ enabled = false
 # fast enough to keep even 5 encoders saturated, so a spare slot costs nothing
 # until a clip actually occupies it.
 #
+# A spare slot costs nothing only because the picker no longer reaches for it
+# first. Since 2026-08-26 a lane prefers an encoder carrying NOTHING and takes a
+# second slot on a busy host only once every allowed host has a clip. Before
+# that, a big slot count on the first encoder in this file swallowed the whole
+# run: the gate run measured gpu4 at load 18 on 20 cores with two encodes,
+# feeding gpu1's 4090 at 10.0 fps against the 14.2 it produces, while gpu5
+# sat at load 1.7 with no encode at all.
+#
+# Two tiebreaks decide between encoders that are equally idle. Since 2026-09-02
+# a lane prefers an encoder on its OWN host: the y4m then goes to a listener on
+# the lane's own address, which never reaches the LAN. Order in this file breaks
+# what that leaves, so it is worth putting the host you would rather load first.
+# Own-host is only a tiebreak -- it never outranks the idle rule above, or one
+# spark would take its own second slot while the other sat empty.
+#
 # Memory is the thing to watch, not threads. Budget about 4.8 GB a slot at
 # lp_level 6, so a full 6 is ~29 GB, and the 2070S lane at window 750 measured
 # 40.6 GB peak RSS on its own. Both come out of the same 124 GB.
 #
 # The slot count is fixed when the run starts -- unlike `enabled`, which is
 # re-read before every clip. Changing it needs a restart. 6 is chosen so that
-# tuning it is not something anyone has to do mid-run.
+# tuning it is not something anyone has to do mid-run. port_base is fixed the
+# same way and for the same reason: a live edit to either would disagree with
+# the slot bookkeeping the run already holds.
 #
 # lp_level is SVT-AV1's --lp: a parallelism LEVEL in [0, 6], NOT a thread count.
 # It costs memory, not quality -- every level produced a bit-identical bitstream,
@@ -134,14 +232,67 @@ enabled = false
 # 25.88 for 35% less memory. Those are saturated-encoder figures and they stop
 # applying once the denoisers are the limit.
 #
-# One thing to watch on the first real run: the table has no single-slot level-4
-# point, so whether one level-4 stream keeps up with the 4090's 14.24 fps while
-# other slots are busy is untested. If that lane looks throttled, raise this.
+# That watch item is now settled, and the answer was no. Measured over gpu1's
+# last 40 clips on 2026-09-02: 12.67 fps of work against the 14.24 the card
+# produces under load, about 11% short, with the scheduler's notes recording it
+# held to 10.0 fps by a consumer sharing cores. Every other lane runs 2.3-5.1
+# fps and cannot saturate an lp-4 slot. The fix is a SECOND encoder entry on one
+# host at lp_level 6 with its own port block and a single slot, reserved for
+# that lane by an allowlist -- not raising lp_level across the pool.
 #
 # 0 lets the encoder choose from the core count. That is level 5 on a 16-thread
 # host and reaches 6 only at 24 threads, so 0 is not a synonym for 6.
 # See docs/lp-and-encoder-parallelism.md.
-[encode]
-host     = "local"
-slots    = 6
-lp_level = 4
+
+# encoder 1: encoder-host itself, the host this roster runs on.
+# It holds the archive, so its output never crosses the network. It also runs
+# the igpu and 2070s denoise lanes above, which is why the encode side and the
+# denoise side compete for the same CPU here -- see the 4.08 against 2.37 fps
+# figures on lane 2.
+[[encoder]]
+name      = "encoder-host"
+host      = "local"
+stream_ip = "10.0.0.10"
+port_base = 5300
+slots     = 6
+lp_level  = 4
+enabled   = true
+
+# encoder 2: gpu2, a laptop on Wi-Fi.
+# stream_net, not stream_ip: its lease moves, and a literal address goes stale
+# and kills the lane until someone edits this file. 2 slots, because it is a
+# laptop and its cores are shared with whatever its owner is doing.
+[[encoder]]
+name       = "gpu2"
+host       = "gpu2-wsl"
+root       = "/home/user/reposetc/archav1an"
+stream_net = "10.0.0.0/24"
+port_base  = 5310
+slots      = 2
+lp_level   = 4
+enabled    = true
+
+# encoders 3 and 4: the two DGX Spark boxes.
+# Their checkout is ubuntav1an, not archav1an, so root has to say so: a wrong
+# root rsyncs into a directory that is created happily and then holds no
+# dispatch, and the lane goes quiet instead of failing loudly. Their addresses
+# are static, so a literal stream_ip is safe here.
+[[encoder]]
+name      = "gpu4"
+host      = "gpu4"
+root      = "/home/user/reposetc/ubuntav1an"
+stream_ip = "10.0.0.14"
+port_base = 5320
+slots     = 3
+lp_level  = 4
+enabled   = true
+
+[[encoder]]
+name      = "gpu5"
+host      = "gpu5"
+root      = "/home/user/reposetc/ubuntav1an"
+stream_ip = "10.0.0.16"
+port_base = 5330
+slots     = 2
+lp_level  = 4
+enabled   = true

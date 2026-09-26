@@ -5,19 +5,19 @@ if [ -z "$COMMON_SOURCED" ]; then
     source "$(dirname "$0")/common.sh"
 fi
 
-SOURCES["fssimu2:fssimu2"]="https://github.com/gianni-rosato/fssimu2.git|0.1.3"
+SOURCES["fssimu2:fssimu2"]="https://github.com/gianni-rosato/fssimu2.git|0.2.0"
 ARTIFACTS["fssimu2"]="bin/fssimu2"
 
 install_fssimu2() {
-    if { [ -x "$VS_PREFIX/bin/fssimu2" ] || command -v fssimu2 &> /dev/null; } \
-        && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
-        log_info "fssimu2 is already installed."
+    # The prefix copy only; see is_installed in setup.sh.
+    if [ -x "$VS_PREFIX/bin/fssimu2" ] && [ "${FORCE_REINSTALL:-0}" != "1" ]; then
+        log_info "fssimu2 is already installed at $VS_PREFIX."
         return 0
     fi
 
     log_info "Installing fssimu2 (Zig Build)..."
 
-    local ZIG_VERSION="0.15.1"
+    local ZIG_VERSION="0.16.0"
     local ARCH=$(uname -m)
     local ZIG_ARCH="x86_64"
     if [ "$ARCH" = "aarch64" ]; then

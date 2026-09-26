@@ -81,15 +81,21 @@ is_installed() {
             [ -f "$VS_PREFIX/bin/SvtAv1EncApp" ]
             ;;
         "ffvship")
-            # Installed to $VS_PREFIX/bin, which is never on setup's PATH
-            [ -x "$VS_PREFIX/bin/FFVship" ] || command -v FFVship &> /dev/null
+            # Only the prefix copy counts. A FFVship elsewhere on PATH (an old
+            # /usr/local build, a distro package) is not the pinned one, and
+            # accepting it made --install A skip the build and --update report
+            # a prefix with no FFVship as "up to date".
+            [ -x "$VS_PREFIX/bin/FFVship" ]
             ;;
         "oxipng")
             [ -f "$VS_PREFIX/bin/oxipng" ]
             ;;
         "fssimu2")
-            # Installed to $VS_PREFIX/bin, which is never on setup's PATH
-            [ -x "$VS_PREFIX/bin/fssimu2" ] || command -v fssimu2 &> /dev/null
+            # Only the prefix copy counts. A fssimu2 elsewhere on PATH (an old
+            # /usr/local build, a distro package) is not the pinned one, and
+            # accepting it made --install A skip the build and --update report
+            # a prefix with no fssimu2 as "up to date".
+            [ -x "$VS_PREFIX/bin/fssimu2" ]
             ;;
         "wwxd")
             local wwxd_path
@@ -169,6 +175,12 @@ update_check() {
                 echo "$component|UPDATE|$_n of $_total package specs unsatisfied: $(printf '%s' "$_short" | tr '\n' ' ' | cut -c1-70)"
                 return 0
             fi
+        fi
+        # An install record with the files gone is a broken install, not an
+        # absent one: the sweep has to rebuild it, where MISSING skips it.
+        if [ -f "$MANIFEST_DIR/$component.src" ]; then
+            echo "$component|BROKEN|install record present but its files are gone from $VS_PREFIX"
+            return 0
         fi
         echo "$component|MISSING|not installed"
         return 0

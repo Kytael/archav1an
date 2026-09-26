@@ -1,8 +1,11 @@
 # Window size and denoise throughput
 
-Status: measured 2026-08-16 — 8 runs on gpu3, 4 on encoder-host. **The window curve
-this document used to report does not exist. Window 750 does not regress; it is
-the faster value on both cards tested. See "What was wrong before".**
+Status: measured 2026-08-16 — 8 runs on gpu3, 4 on encoder-host; extended
+2026-09-03 with gpu2's own two-point fit and 28 clips at window 750 across
+gpu2 and gpu3. **The window curve this document used to report does not
+exist. Window 750 does not regress; it is the faster value on every card
+tested, and it is the largest that fits in 47 GB. Above the RAM ceiling the
+curve bends — see "The 47 GB ceiling, and the cliff at it".**
 
 A card that cannot hold the full-frame BSVD state runs tile-sequential and
 windowed. `window` is how many output frames one sweep produces. It sets
@@ -97,6 +100,68 @@ host, not throughput. Nothing in the traces shows the headroom hurting: swap
 stayed at zero, and `pgscan_direct`, `pgsteal_direct` and `allocstall_*` stayed
 at **zero for every run**, sampled at 1 Hz. There is no reclaim pressure at
 7 GB of headroom on this host.
+
+## Measured: gpu3 on Thunderbolt 4 power — 54 W ceiling, 641-667 MHz mean
+
+Same clip, same instrument, same tile and margin as the section above, measured
+2026-08-17. The one difference is how the laptop was powered: a Thunderbolt 4
+connection rather than the factory 230 W adapter. That is not a setting anyone
+chose in software, and it is invisible to every query that usually answers this
+question — the machine reports AC power, a 100% battery and the Balanced Windows
+plan, exactly as it does on the adapter.
+
+**What it actually does is cap the GPU at 54 W.** `nvidia-smi --query-gpu=power.limit`
+returns `[N/A]` on this card, which is easy to read as "not knowable"; it is not.
+`nvidia-smi -q -d POWER` reports it:
+
+```
+Current Power Limit : 54.00 W      <- Thunderbolt 4
+Default Power Limit : 80.00 W      <- this card's base TGP
+Max Power Limit     : 105.00 W     <- base + Dynamic Boost
+```
+
+`SW Power Cap` sits Active for the whole run. One run at each window:
+
+| window | overhead | wall | end-to-end | sustained | mean clock | mean draw | temp | util |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 750 | 275.38 s | 3250.90 s | 2.069 | 2.743 | 667 MHz | 53.0 W | 60-81 °C | 94% |
+| 500 | 192.67 s | 2614.75 s | **2.572** | **2.823** | 641 MHz | 53.5 W | 63-83 °C | 96% |
+
+Against the full-power rows above, at the same window, cooldown and position:
+
+| window | end-to-end | of baseline | sustained | of baseline | mean clock | of baseline |
+|---:|---:|---:|---:|---:|---:|---:|
+| 750 | 2.069 vs 5.069 | 40.8% | 2.743 vs 5.165 | 53.1% | 667 vs 1292 MHz | 51.6% |
+| 500 | 2.572 vs 4.899 | 52.5% | 2.823 vs 4.934 | 57.2% | 641 vs 1292 MHz | 49.6% |
+
+**The sustained rate tracks the clock, and the clock is what 54 W buys.** 53.1%
+and 57.2% of the baseline rate at 51.6% and 49.6% of the baseline clock. This is
+a power ceiling and nothing else: utilisation held at 94-96% throughout, and the
+card ran *cooler* than it does on the adapter — 81-83 °C against the 85-87 °C
+that `docs/encode-capacity.md` records for a full-power denoise — because at 54 W
+it cannot generate the heat. `HW Thermal Slowdown` never activated in either run.
+
+Neither run has a slow patch. Sampled at 0.5 Hz and split into deciles, the clock
+falls gently from about 720 MHz to about 640 MHz as the card warms, with
+utilisation flat at 94-97% and no stall anywhere. The sporadic slow run this host
+is known for did not appear in either.
+
+**The window ordering reverses here, and one run each is not enough to claim it.**
+At full power 750 beat 500 on both rates. On Thunderbolt power 500 is ahead:
+clearly on end-to-end, by 24%, and slightly on sustained, by 2.9%. The end-to-end
+half of that is not in doubt and needs no repeat — a larger window costs more
+first-window wait, and at half the clock that fixed cost is paid at half the rate,
+so 750 takes 275 s against 193 s to reach its first frame. The sustained half is
+2.9% on single runs of a host whose clean runs spread wider than that, so treat it
+as unresolved rather than as a reversal. What is safe to say is that **750's
+advantage does not survive the loss of power, and its overhead penalty grows.**
+
+For a roster entry this argues for window 500 on a Thunderbolt-powered gpu3, on
+the end-to-end figure alone, which is the one that decides how long a clip takes.
+
+These runs need no rescaling. The `sustained` column of the full-power section is
+rescaled by 5226/5380 because those runs predate the final anchor fix; these were
+taken on `de48247`, which carries `bfbe330`. Do not apply that factor here.
 
 ## Measured: encoder-host, RTX 2070 SUPER, tile auto, margin 32
 
@@ -207,20 +272,75 @@ only discarded. Window 250 has no current figure.
 
 ## Measured: gpu2, RTX 5070 Laptop
 
-| window | result |
-|---|---|
-| 300 | overhead 76.6 s, sustained 4.78, end-to-end 4.34, wall 773.5 s |
-| 750 | **0 of 8 attempts completed** |
+| window | result | when |
+|---|---|---|
+| 300 | overhead 76.6 s, sustained 4.78, end-to-end 4.34, wall 773.5 s | 2026-08-16, **sustained superseded** |
+| 750 | **0 of 8 attempts completed** | 2026-08-16 |
+| 300 | overhead 76.67 / 76.09 s, sustained 5.826 / 5.809, end-to-end 4.246 / 4.238 | 2026-09-03, n=2 |
+| 1000 | overhead 214.62 s, sustained ~4.37, peak RSS 46.0 GB, **8-10 GB swapped** | 2026-09-03, live |
+| 750 | overhead 163.1 s (n=12, 161.1-164.1), peak RSS 39.2 GB, 0 swap | 2026-09-03, live |
 
-At 750 seven attempts faulted inside the first window and one produced exactly
-one window (749 frames) before faulting at the boundary.
+At 750 on 2026-08-16, seven attempts faulted inside the first window and one
+produced exactly one window (749 frames) before faulting at the boundary. That
+was the driver fault, not the window: the same setting ran 14 clips and about
+140,000 frames clean on 2026-09-03 with no CUDA fault, Xid or segfault.
 
-These numbers predate all three fixes above, so the sustained figure is
-inflated by an unknown amount and there was one run per cell. The one fact that
-survives is the fault count, which is not a rate: this card faults on its own
-(see `docs/encode-capacity.md`), and a longer sweep appears to make it more
-likely, which is consistent with a fault of roughly constant probability per
-unit of GPU work. That is inference, not measurement.
+**The 4.78 sustained is withdrawn; 5.82 replaces it.** The 2026-08-16 row
+predates all three fixes above, and it is the SUSTAINED column the broken
+metric moved. Overhead came through untouched, which is why 76.6 s then and
+76.67 s now agree to under a tenth of a second on a different clip three weeks
+apart: overhead is time-to-first-frame and never went through the ramp-skipping
+logic that was wrong.
+
+### gpu2's own intercept
+
+Two window sizes measured on this card give it the decomposition gpu3 already
+had. vspipe prints the figure itself — `Script evaluation done in N seconds` is
+the same quantity `denoise-rate.py` reports as `overhead_s`, and the two agree
+to 0.4 s — so no benchmark is needed to collect it, only a running lane.
+
+| window | overhead |
+|---:|---:|
+| 300 | 75.68 s |
+| 1000 | 214.62 s |
+
+That is **0.1985 s per window frame (5.04 fps) and a 16.1 s intercept.** The
+intercept is VapourSynth startup plus the TensorRT engine load; ffms2 indexing
+is not a meaningful part of it, measured at under a second. So the first window
+is 79% of startup at window 300 and 92% at window 1000, and gpu2 sits about
+8 s above gpu3's 8 s intercept.
+
+The fit predicted 165 s at window 750. Twelve clips measured **163.1 s**, range
+161.1-164.1. gpu3 runs consistently ~6 s higher than gpu2 at the same window,
+158-175 s over eleven clips, which is a stable per-host difference rather than
+noise.
+
+### The 47 GB ceiling, and the cliff at it
+
+Both gpu2 and gpu3 have 47 GB. The four-buffer model puts window 1000 at
+51.2 GB, which does not fit, and both lanes ran it anyway on swap: 46.0 and
+45.8 GB resident with 8-10 GB paged out. It cost about a quarter of the lane.
+
+| | window 1000 | window 750 |
+|---|---:|---:|
+| gpu2, settled vspipe fps | 4.39 | 5.10 |
+| gpu3, settled vspipe fps | 4.22 | ~5.50 |
+| whole-clip fps | 4.15-4.27 | 4.49-4.89 |
+| peak RSS | 45.8-46.0 GB | 39.1-39.3 GB |
+| swap | 8-10 GB | 0 |
+
+This is backwards from the model, which predicts window 1000 should be ~17%
+FASTER — redundant context falls from 380/300 to 1080/1000. It is 22% slower
+instead, because the swapping costs more than the larger window gains.
+
+gpu3's overhead curve shows the same cliff independently: **0.204 s** per
+window frame on the 500→750 leg, **0.230 s** on 750→1000. Linear up to the
+ceiling, bending above it.
+
+So 750 is the largest window that is still on the linear part of the curve for
+a 47 GB box: `4*window + 128` frames at 12.4 MB is 38.8 GB, leaving ~8 GB. Sizing
+a window is therefore a memory question first and a throughput question second,
+and the memory answer is the four-buffer model, not a guess.
 
 ## For contrast: full-frame lanes pay none of this
 
@@ -236,9 +356,14 @@ unwindowed, so the burst defect never applied to them and their figures stand.
 
 - **gpu2 300** was adopted because the lane "dies at the first window
   boundary" at 500. That was the driver fault, not the window: it faulted at
-  300 too. The rationale is void.
+  300 too. The rationale is void. Superseded 2026-09-03: gpu2 and gpu3 both
+  run **750**, chosen from the four-buffer model rather than from a fault —
+  38.8 GB of 47, the largest window still below the ceiling. Measured 163 s
+  overhead and ~5.1-5.5 fps settled, against 4.4 at window 1000, which does not
+  fit and swaps.
 - **gpu3 500** carries the comment "the same windowed settings as gpu2",
-  which is not true — gpu2 is 300. On the measurements above it is also the
+  which is not true — gpu2 was 300. Both are 750 since 2026-09-03, so the
+  comment is true now for a reason it was not then. On the measurements above it is also the
   slower of the two values tested, by about 3% end-to-end. It is defensible
   only as the low-memory choice: 27.8 GB against 39.3 GB.
 - **2070s 750** had no recorded rationale, and now has one: measured on the
@@ -272,7 +397,87 @@ unwindowed, so the burst defect never applied to them and their figures stand.
    610.88 — and bought fault-free runs with it. See `encode-capacity.md`. The
    5.78 was measured on a driver that faulted in 6 of 12 runs, so treat it as a
    number from an unreliable lane, not as a target to get back to. Both figures
-   also predate the metric fix and are single runs.
+   also predate the metric fix and are single runs. Re-run on 616.56 on
+   2026-09-01: 0 clean runs of 12 that morning, the same Xid 13 on the same SM,
+   but 22 clean runs of 22 that evening on the same driver after a reinstall.
+   A clean run there is 5.9 fps sustained, so the rate is not what makes the
+   lane unusable. Do not read a driver bump as a fix, and do not read one clean
+   streak as one either; measure it. Details in `docs/encode-capacity.md`.
+7. **Convert late, as an investigation option only.** The windowed feed sends
+   RGBH over the pipe, so a 1000-frame window costs 12.4 MB a frame and the
+   transport is a real share of the head: 12.31 s on gpu2, and on gpu3 a flat
+   0.55 GB/s where doubling the bytes doubled the time. Moving the YUV to RGB
+   conversion out of the vspipe subprocess and onto the receiving side would cut
+   those bytes and, holding the source buffers as YUV, take a window-1000 lane
+   from 38.9 GB to 19.0 GB -- halved, not quartered, because only the SOURCE
+   buffers can be YUV; the output buffer is RGB fp16 by construction.
+
+   **Measured 2026-09-02, and as designed it is a net loss. Do not build it
+   without a new plan.** zimg on arrival is exact -- 64/64 and 32/32
+   bit-identical -- but only if seven frame props travel with the frame;
+   dropping them silently costs max abs 0.0977. A torch fallback is not exact
+   at all: max 0.539, mean 0.0304. The blocker is the injection, not zimg. A
+   `ModifyFrame` selector is a Python callback copying 3.11 MB a frame under the
+   GIL, and it never approaches vspipe's 0.5 ms/frame:
+
+   | path | ms/frame | per window-1000 sweep | share of a 181 s sweep |
+   |---|---:|---:|---:|
+   | sequential `get_frame` | 6.68 | 14.4 s | 8.0% |
+   | `frames(prefetch=4)` | 9.28 | 20.0 s | 11.1% |
+   | `frames(prefetch=8)` | 11.39 | 24.6 s | 13.6% |
+   | `frames(prefetch=16)` | 5.86 | 12.7 s | 7.0% |
+
+   Tiles are the outer loop because the sweep resets streamer state per tile, so
+   a window-1000 sweep needs 2160 conversions, not 1064. Best case therefore
+   costs 7-11% of the sweep to save the 2-2.8% that the memory pressure is
+   actually worth (measured: 2.8% on gpu2, 1.0% on gpu3, at 39.5 GB against
+   12.1 GB). Converting only the pipe, leaving buffers RGB, is likewise marginal:
+   about 6.4 s of conversion against roughly 8 s of transport saved on gpu2.
+
+   The current design is the right one and now has a reason: converting inside
+   the subprocess keeps zimg fed natively by ffms2 in C, and the wider pipe is
+   the price of never touching a frame from Python. The only route left is to
+   call zimg's C API directly and bypass the GIL-bound frame copy. That is a
+   project, not an afternoon, and it should be costed before it is started.
+
+   **Still not worth it — but know which side of the ceiling that was measured
+   on.** The 2-2.8% saving above compares 39.5 GB against 12.1 GB, and both are
+   under the 47 GB the two windowed hosts have, so neither run was swapping. In
+   that regime memory pressure is nearly free and halving it buys nothing. It is
+   not linear: at window 1000 the same boxes sit at 46 GB with 8-10 GB paged out
+   and lose about 24% of sustained throughput, which is more than the 7-11% this
+   would cost. See "The 47 GB ceiling, and the cliff at it" above.
+
+   That does not revive the idea, because there is a free alternative on this
+   fleet: window 750 fits in 39 GB and stays below the cliff, so nothing needs
+   buying. It would only pay on a host whose RAM ceiling arrives at a window
+   size somebody actually wants — less memory than these two, or a model with a
+   bigger per-frame footprint — where no free fix exists. Anyone reaching for
+   this should check that condition holds first, because on the fleet as it
+   stands it does not.
+
+   Two side results worth keeping. NVDEC is a dead end here: 0.90x on gpu2, and
+   on gpu3 the apparent 1.06x is BestSource against ffms2, not hardware --
+   `bs_sw` 26.00 s against `bs_cuda` 26.07 s, with every decoder byte-identical
+   at `4e367cdc27ba3d04`. And a per-run ONNX session buys nothing: session
+   creation is 1.39 s to build plus 0.19 s to load the engine, not the ~213 s
+   once assumed.
+
+The dashboard's live fps had the same burst artefact until 2026-09-02, in a
+second form. Its slope was taken between the raw ends of the sample series, and
+a 2.5-sweep smoothing window holds two OR three whole bursts depending only on
+where the series happened to start. At window 1000 and a true 4.20 fps that is
+3.33 fps or 5.00 fps -- a 50% spread with nothing about the lane changing, and
+the reason a windowed lane's live figure could sit far above the end-to-end
+column beside it. The slope is now snapped to burst edges, which holds a whole
+number of sweeps by construction, so the phase cancels rather than being
+averaged down: the same simulation reads 4.17 fps at every phase. Smoothing
+harder would only have shrunk the swing as 1/N and cost lag.
+
+Note the lane already knows its own rate and the dashboard cannot see it:
+`vspipe -p` writes `Frame: 2999/12937 (5.65 fps)` into `<stem>_vspipe.log` on
+the DENOISE host, while the only log a remote lane leaves on encoder-host is
+netstream's, which carries frame numbers and no rate at all.
 
 Measure with `tools/denoise-rate.py`, which separates the fixed overhead from
 the sustained rate. A single fps number blends the two and depends on clip

@@ -246,17 +246,24 @@ def encode_until(stop_event, clip, frames, preset, crf, lp, label, streams=1):
     number describes the two of them together.
     """
     total_frames, total_wall, passes = 0, 0.0, 0
+    error = None
     while not stop_event.is_set():
         r = encode_phase(clip, frames, preset, crf, lp, f"{label}#{passes}",
                          streams)
         if r.get("rc") not in (0, None) or r.get("error"):
+            # Propagate the reason: a clean 0.0 fps in the JSON report would
+            # silently drive roster planning with a number nobody can trust.
+            error = r.get("error") or f"stream rc={r.get('rc')}"
             break
         total_frames += r["frames"]
         total_wall += r["wall_s"]
         passes += 1
-    return dict(frames=total_frames, wall_s=round(total_wall, 2), passes=passes,
-                streams=streams,
-                fps=round(total_frames / total_wall, 2) if total_wall else 0.0)
+    out = dict(frames=total_frames, wall_s=round(total_wall, 2), passes=passes,
+               streams=streams,
+               fps=round(total_frames / total_wall, 2) if total_wall else 0.0)
+    if error:
+        out["error"] = error
+    return out
 
 
 def lp_auto_level(svt):
@@ -295,9 +302,14 @@ def encode_phase(clip, frames, preset, crf, lp, label, streams=1):
         wall = time.monotonic() - t0
         runs = [r for r in box if r]
         bad = [r for r in runs if r.get("error") or r.get("rc") not in (0, None)]
-        out = dict(streams=streams, frames=sum(r.get("frames", 0) for r in runs),
+        # Only streams that completed cleanly contribute frames: a dead
+        # decoder's short stream would otherwise be summed with the requested
+        # count and divided by a sub-second window into an absurd fps.
+        good = [r for r in runs if r not in bad]
+        out = dict(streams=streams,
+                   frames=sum(r.get("frames", 0) for r in good),
                    wall_s=round(wall, 2),
-                   per_stream_fps=[r.get("fps") for r in runs],
+                   per_stream_fps=[r.get("fps") for r in good],
                    rc=(bad[0].get("rc") if bad else 0))
         if bad:
             out["error"] = bad[0].get("error") or f"stream rc={bad[0].get('rc')}"
@@ -329,6 +341,17 @@ def _encode_one(clip, frames, preset, crf, lp, label):
     m = re.search(r"(\d+)\s*(?:kB|KB)", err)
     if m:
         rss = int(m.group(1))
+    if p1.returncode not in (0, None):
+        # A dead decoder feeds the encoder clean EOF: it finalizes a short
+        # stream, exits 0, and the run would be reported as a successful
+        # N-frame encode at inflated fps. That poisons every phase of the
+        # measurement, so a decoder failure is an error like any other.
+        # frames is 0 because the delivered count is unknown -- claiming the
+        # requested count here is exactly the poisoned number this guards
+        # against, and solo_encode consumes this dict unaggregated.
+        return dict(frames=0, wall_s=round(wall, 2), rss_kb=rss,
+                    rc=p2.returncode, fps=0.0,
+                    error=f"decoder exited {p1.returncode}")
     return dict(frames=frames, wall_s=round(wall, 2),
                 fps=round(frames / wall, 2) if wall else 0.0, rss_kb=rss,
                 rc=p2.returncode)
